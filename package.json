@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@headlessui/react": "^2.2.4",
     "@shadcn/ui": "^0.0.4",
     "@supabase/supabase-js": "^2.50.3",
     "@types/react-select": "^5.0.0",

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+
 import { supabase } from "@/lib/supabaseClient";
 import SignOutButton from "@/components/SignOutButton";
 
@@ -30,6 +31,7 @@ const SURAHS = [
 const GRADES = ["mumtaz", "jayyid jiddan", "jayyid"];
 
 export default function TeacherPage() {
+  const [studentInput, setStudentInput] = useState("");
   const [students, setStudents] = useState<Student[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
   const [form, setForm] = useState({
@@ -41,7 +43,9 @@ export default function TeacherPage() {
     ayat_to: "",
     page_from: "",
     page_to: "",
-    grade: ""
+    grade: "",
+    answer: "",
+    date: new Date().toISOString().slice(0, 10)
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -134,7 +138,8 @@ export default function TeacherPage() {
         page_from: form.page_from ? parseInt(form.page_from) : null,
         page_to: form.page_to ? parseInt(form.page_to) : null,
         grade: form.grade || null,
-        date: today
+        answer: form.answer || null,
+        date: form.date || today
       }
     ]);
     if (insertError) {
@@ -150,7 +155,9 @@ export default function TeacherPage() {
         ayat_to: "",
         page_from: "",
         page_to: "",
-        grade: ""
+        grade: "",
+        answer: "",
+        date: new Date().toISOString().slice(0, 10)
       });
       // Refresh reports
       const { data, error } = await supabase
@@ -184,18 +191,19 @@ export default function TeacherPage() {
       <form onSubmit={handleSubmit} className="space-y-4 border p-4 rounded mb-8">
         <div>
           <label className="block mb-1">Student</label>
-          <select
-            value={form.student_id}
-            onChange={e => setForm(f => ({ ...f, student_id: e.target.value }))}
-            required
-            className="w-full border rounded px-3 py-2"
-          >
-            <option value="">Select a student</option>
-            {students.map(s => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
+<select
+  value={form.student_id}
+  onChange={e => setForm(f => ({ ...f, student_id: e.target.value }))}
+  required
+  className="w-full border rounded px-3 py-2"
+>
+  <option value="">Select a student</option>
+  {students.map(s => (
+    <option key={s.id} value={s.id}>{s.name}</option>
+  ))}
+</select>
         </div>
+        
         <div>
           <label className="block mb-1">Type</label>
           <select
@@ -277,6 +285,15 @@ export default function TeacherPage() {
           </div>
         </div>
         <div>
+          <label className="block mb-1">Date</label>
+          <input
+            type="date"
+            value={form.date || new Date().toISOString().slice(0, 10)}
+            onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
+            className="w-full border rounded px-3 py-2"
+          />
+        </div>
+        <div>
           <label className="block mb-1">Grade</label>
           <select
             value={form.grade || ""}
@@ -290,62 +307,78 @@ export default function TeacherPage() {
             ))}
           </select>
         </div>
-        <div>
-          <label className="block mb-1">Date</label>
-          <input
-            type="text"
-            value={new Date().toISOString().slice(0, 10)}
-            readOnly
-            className="w-full border rounded px-3 py-2 bg-gray-100"
-          />
-        </div>
-        {error && <div className="text-red-500 text-sm">{error}</div>}
-        {success && <div className="text-green-600 text-sm">{success}</div>}
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
-        >
+        <button type="submit" className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded" disabled={loading}>
           {loading ? "Submitting..." : "Submit Report"}
         </button>
       </form>
-      <h2 className="text-xl font-semibold mb-2">Previous Reports for Selected Student</h2>
-      <div className="overflow-x-auto">
-        {form.student_id ? (
-          studentReports.length > 0 ? (
-            <table className="min-w-full border">
-              <thead>
-                <tr>
-                  <th className="border px-2 py-1">Type</th>
-                  <th className="border px-2 py-1">Surah</th>
-                  <th className="border px-2 py-1">Juzuk</th>
-                  <th className="border px-2 py-1">Ayat</th>
-                  <th className="border px-2 py-1">Page</th>
-                  <th className="border px-2 py-1">Grade</th>
-                  <th className="border px-2 py-1">Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {studentReports.map(r => (
-                  <tr key={r.id}>
-                    <td className="border px-2 py-1">{r.type}</td>
-                    <td className="border px-2 py-1">{r.surah}</td>
-                    <td className="border px-2 py-1">{r.juzuk}</td>
-                    <td className="border px-2 py-1">{r.ayat_from} - {r.ayat_to}</td>
-                    <td className="border px-2 py-1">{r.page_from ?? ""} - {r.page_to ?? ""}</td>
-                    <td className="border px-2 py-1">{r.grade ? r.grade.charAt(0).toUpperCase() + r.grade.slice(1) : ""}</td>
-                    <td className="border px-2 py-1">{r.date}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <div className="text-center py-2">No previous reports for this student.</div>
-          )
-        ) : (
-          <div className="text-center py-2">Select a student to view previous reports.</div>
-        )}
-      </div>
+      <h2 className="text-xl font-semibold mb-2">Previous Reports</h2>
+<div className="overflow-x-auto">
+  {form.student_id ? (
+    studentReports.length > 0 ? (
+      <table className="min-w-full border">
+        <thead>
+          <tr>
+            <th className="border px-2 py-1">Type</th>
+            <th className="border px-2 py-1">Surah</th>
+            <th className="border px-2 py-1">Juzuk</th>
+            <th className="border px-2 py-1">Ayat</th>
+            <th className="border px-2 py-1">Page</th>
+            <th className="border px-2 py-1">Grade</th>
+            <th className="border px-2 py-1">Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          {studentReports.map(r => (
+            <tr key={r.id}>
+              <td className="border px-2 py-1">{r.type}</td>
+              <td className="border px-2 py-1">{r.surah}</td>
+              <td className="border px-2 py-1">{r.juzuk}</td>
+              <td className="border px-2 py-1">{r.ayat_from} - {r.ayat_to}</td>
+              <td className="border px-2 py-1">{r.page_from ?? ""} - {r.page_to ?? ""}</td>
+              <td className="border px-2 py-1">{r.grade ? r.grade.charAt(0).toUpperCase() + r.grade.slice(1) : ""}</td>
+              <td className="border px-2 py-1">{r.date}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    ) : (
+      <div className="text-center py-2">No previous reports for this student.</div>
+    )
+  ) : (
+    reports.length > 0 ? (
+      <table className="min-w-full border">
+        <thead>
+          <tr>
+            <th className="border px-2 py-1">Student</th>
+            <th className="border px-2 py-1">Type</th>
+            <th className="border px-2 py-1">Surah</th>
+            <th className="border px-2 py-1">Juzuk</th>
+            <th className="border px-2 py-1">Ayat</th>
+            <th className="border px-2 py-1">Page</th>
+            <th className="border px-2 py-1">Grade</th>
+            <th className="border px-2 py-1">Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          {reports.map(r => (
+            <tr key={r.id}>
+              <td className="border px-2 py-1">{r.student_name || r.student_id}</td>
+              <td className="border px-2 py-1">{r.type}</td>
+              <td className="border px-2 py-1">{r.surah}</td>
+              <td className="border px-2 py-1">{r.juzuk}</td>
+              <td className="border px-2 py-1">{r.ayat_from} - {r.ayat_to}</td>
+              <td className="border px-2 py-1">{r.page_from ?? ""} - {r.page_to ?? ""}</td>
+              <td className="border px-2 py-1">{r.grade ? r.grade.charAt(0).toUpperCase() + r.grade.slice(1) : ""}</td>
+              <td className="border px-2 py-1">{r.date}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    ) : (
+      <div className="text-center py-2">No previous reports for your class.</div>
+    )
+  )}
+</div>
     </main>
   );
 }
