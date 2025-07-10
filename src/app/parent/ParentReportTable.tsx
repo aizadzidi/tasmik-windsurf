@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import jsPDF from "jspdf";
-import { Line } from "react-chartjs-2";
+import { Line, Bar } from "react-chartjs-2";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -20,11 +20,12 @@ import {
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
   Title,
   Tooltip,
   Legend,
 } from "chart.js";
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend);
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -74,6 +75,129 @@ function QuranProgressBar({ reports }: { reports: Report[] }) {
         <span>{maxPage} / 604 pages ({percent.toFixed(1)}%)</span>
       </div>
       <Progress value={percent} />
+    </div>
+  );
+}
+
+function ActivityBarChart({ reports }: { reports: Report[] }) {
+  const [mode, setMode] = useState<'weekly' | 'monthly'>('weekly');
+  if (!reports.length) return null;
+
+  // Helper to format date to week or month
+  function getPeriod(date: string) {
+    const d = new Date(date);
+    if (mode === 'weekly') {
+      // ISO week: year + week number
+      const onejan = new Date(d.getFullYear(),0,1);
+      const week = Math.ceil((((d.getTime() - onejan.getTime())/86400000) + onejan.getDay()+1)/7);
+      return `${d.getFullYear()}-W${week.toString().padStart(2,'0')}`;
+    } else {
+      return `${d.getFullYear()}-${(d.getMonth()+1).toString().padStart(2,'0')}`;
+    }
+  }
+
+  // Aggregate counts
+  const counts: Record<string, number> = {};
+  reports.forEach(r => {
+    const period = getPeriod(r.date);
+    counts[period] = (counts[period] || 0) + 1;
+  });
+  // Sort periods
+  const periods = Object.keys(counts).sort();
+  const data = periods.map(p => counts[p]);
+
+  // Chart.js data/config
+  const chartData = {
+    labels: periods,
+    datasets: [
+      {
+        label: 'Reports',
+        data,
+        backgroundColor: '#60a5fa',
+        borderRadius: 4,
+        barPercentage: 0.6,
+        categoryPercentage: 0.7,
+      },
+    ],
+  };
+  const options = {
+    responsive: true,
+    plugins: {
+      legend: { display: false },
+      title: { display: false },
+      tooltip: {
+        callbacks: {
+          label: (ctx: any) => `Reports: ${ctx.parsed.y}`,
+        },
+      },
+    },
+    scales: {
+      x: {
+        title: {
+          display: true,
+          text: mode === 'weekly' ? 'Week' : 'Month',
+        },
+      },
+      y: {
+        title: {
+          display: true,
+          text: 'Number of Reports',
+        },
+        beginAtZero: true,
+        precision: 0,
+        stepSize: 1,
+      },
+    },
+  };
+
+  return (
+    <div>
+      <div className="flex gap-2 mb-1 text-xs">
+        <button
+          className={`px-2 py-1 rounded ${mode==='weekly' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700'}`}
+          onClick={() => setMode('weekly')}
+        >
+          Weekly
+        </button>
+        <button
+          className={`px-2 py-1 rounded ${mode==='monthly' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700'}`}
+          onClick={() => setMode('monthly')}
+        >
+          Monthly
+        </button>
+      </div>
+      <Bar data={chartData} options={options} height={120} />
+    </div>
+  );
+}
+
+function ChartTabs({ reports }: { reports: Report[] }) {
+  const [tab, setTab] = useState<'activity' | 'grades'>('activity');
+  return (
+    <div className="mb-2">
+      <div className="flex gap-2 mb-2">
+        <button
+          className={`px-3 py-1 rounded-t border-b-2 transition-colors duration-150 font-medium text-sm ${tab==='activity' ? 'border-blue-500 text-blue-700 bg-blue-50' : 'border-transparent text-gray-500 bg-gray-100 hover:text-blue-600'}`}
+          onClick={() => setTab('activity')}
+          aria-selected={tab==='activity'}
+        >
+          Activity
+        </button>
+        <button
+          className={`px-3 py-1 rounded-t border-b-2 transition-colors duration-150 font-medium text-sm ${tab==='grades' ? 'border-blue-500 text-blue-700 bg-blue-50' : 'border-transparent text-gray-500 bg-gray-100 hover:text-blue-600'}`}
+          onClick={() => setTab('grades')}
+          aria-selected={tab==='grades'}
+        >
+          Grades
+        </button>
+      </div>
+      <div>
+        {tab === 'activity' ? (
+          <ActivityBarChart reports={reports} />
+        ) : (
+          <GradeChart reports={reports} />
+        )}
+      </div>
     </div>
   );
 }
@@ -264,9 +388,7 @@ export default function ParentReportTable({ parentId }: { parentId: string }) {
                   <>
                     {/* Progress Bar for Quran Completion */}
                     <QuranProgressBar reports={studentReports} />
-                    <div className="mb-2">
-                      <GradeChart reports={studentReports} />
-                    </div>
+                    <ChartTabs reports={studentReports} />
                     <Table>
                       <TableHeader>
                         <TableRow>
