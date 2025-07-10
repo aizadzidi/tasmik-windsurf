@@ -13,6 +13,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
+import { Progress } from "@/components/ui/progress";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -57,6 +58,24 @@ function gradeToNumber(grade: string | null) {
     case "jayyid": return 1;
     default: return null;
   }
+}
+
+function QuranProgressBar({ reports }: { reports: Report[] }) {
+  // Find the highest page_to value
+  const maxPage = Math.max(
+    ...reports.map(r => (r.page_to !== null && !isNaN(r.page_to) ? r.page_to : 0)),
+    0
+  );
+  const percent = Math.min((maxPage / 604) * 100, 100);
+  return (
+    <div className="mb-2 flex flex-col gap-1">
+      <div className="flex justify-between items-center text-xs text-gray-600">
+        <span>Quran Progress</span>
+        <span>{maxPage} / 604 pages ({percent.toFixed(1)}%)</span>
+      </div>
+      <Progress value={percent} />
+    </div>
+  );
 }
 
 function GradeChart({ reports }: { reports: Report[] }) {
@@ -243,6 +262,8 @@ export default function ParentReportTable({ parentId }: { parentId: string }) {
               <div className={studentReports.length > 0 ? "p-4" : "p-2"}>
                 {studentReports.length > 0 ? (
                   <>
+                    {/* Progress Bar for Quran Completion */}
+                    <QuranProgressBar reports={studentReports} />
                     <div className="mb-2">
                       <GradeChart reports={studentReports} />
                     </div>
