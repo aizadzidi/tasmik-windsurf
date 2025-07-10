@@ -31,7 +31,7 @@ const SURAHS = [
 const GRADES = ["mumtaz", "jayyid jiddan", "jayyid"];
 
 export default function TeacherPage() {
-  const [studentInput, setStudentInput] = useState("");
+
   const [students, setStudents] = useState<Student[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
   const [form, setForm] = useState({
@@ -44,7 +44,6 @@ export default function TeacherPage() {
     page_from: "",
     page_to: "",
     grade: "",
-    answer: "",
     date: new Date().toISOString().slice(0, 10)
   });
   const [loading, setLoading] = useState(false);
@@ -138,7 +137,6 @@ export default function TeacherPage() {
         page_from: form.page_from ? parseInt(form.page_from) : null,
         page_to: form.page_to ? parseInt(form.page_to) : null,
         grade: form.grade || null,
-        answer: form.answer || null,
         date: form.date || today
       }
     ]);
@@ -156,7 +154,6 @@ export default function TeacherPage() {
         page_from: "",
         page_to: "",
         grade: "",
-        answer: "",
         date: new Date().toISOString().slice(0, 10)
       });
       // Refresh reports
@@ -185,201 +182,217 @@ export default function TeacherPage() {
   }
 
   return (
-    <main className="p-8 max-w-3xl mx-auto">
-      <SignOutButton />
-      <h1 className="text-2xl font-bold mb-6">Teacher Dashboard</h1>
-      <form onSubmit={handleSubmit} className="space-y-4 border p-4 rounded mb-8">
-        <div>
-          <label className="block mb-1">Student</label>
-<select
-  value={form.student_id}
-  onChange={e => setForm(f => ({ ...f, student_id: e.target.value }))}
-  required
-  className="w-full border rounded px-3 py-2"
->
-  <option value="">Select a student</option>
-  {students.map(s => (
-    <option key={s.id} value={s.id}>{s.name}</option>
-  ))}
-</select>
+    <main className="min-h-screen bg-gradient-to-tr from-blue-100 via-blue-200 to-blue-100 py-8 px-2">
+      <div className="max-w-3xl mx-auto">
+        <div className="flex justify-between items-center mb-8">
+          <h1 className="text-3xl font-bold text-gray-800">Teacher Dashboard</h1>
+          <SignOutButton />
         </div>
-        
-        <div>
-          <label className="block mb-1">Type</label>
-          <select
-            value={form.type}
-            onChange={e => setForm(f => ({ ...f, type: e.target.value }))}
-            className="w-full border rounded px-3 py-2"
-          >
-            {REPORT_TYPES.map(t => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
+        {/* Form Card */}
+        <div className="bg-white rounded-xl shadow-md p-8 mb-10">
+          <form className="grid grid-cols-1 md:grid-cols-2 gap-6" onSubmit={handleSubmit}>
+            <div className="col-span-2">
+              <label className="block text-sm font-medium mb-1">Student</label>
+              <select
+                value={form.student_id}
+                onChange={e => setForm(f => ({ ...f, student_id: e.target.value }))}
+                required
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+              >
+                <option value="">Select a student</option>
+                {students.map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Type</label>
+              <select
+                value={form.type}
+                onChange={e => setForm(f => ({ ...f, type: e.target.value }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+              >
+                {REPORT_TYPES.map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Grade</label>
+              <select
+                value={form.grade || ""}
+                onChange={e => setForm(f => ({ ...f, grade: e.target.value }))}
+                required
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+              >
+                <option value="">Select a grade</option>
+                {GRADES.map(g => (
+                  <option key={g} value={g}>{g.charAt(0).toUpperCase() + g.slice(1)}</option>
+                ))}
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-sm font-medium mb-1">Surah</label>
+              <select
+                value={form.surah}
+                onChange={e => setForm(f => ({ ...f, surah: e.target.value }))}
+                required
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+              >
+                <option value="">Select a surah</option>
+                {SURAHS.map(surah => (
+                  <option key={surah} value={surah}>{surah}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Juzuk</label>
+              <input
+                type="number"
+                min="1"
+                max="30"
+                value={form.juzuk || ""}
+                onChange={e => setForm(f => ({ ...f, juzuk: e.target.value }))}
+                required
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-sm font-medium mb-1">Ayat From</label>
+                <input
+                  type="number"
+                  value={form.ayat_from}
+                  onChange={e => setForm(f => ({ ...f, ayat_from: e.target.value }))}
+                  required
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Ayat To</label>
+                <input
+                  type="number"
+                  value={form.ayat_to}
+                  onChange={e => setForm(f => ({ ...f, ayat_to: e.target.value }))}
+                  required
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-sm font-medium mb-1">Page From</label>
+                <input
+                  type="number"
+                  value={form.page_from}
+                  onChange={e => setForm(f => ({ ...f, page_from: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Page To</label>
+                <input
+                  type="number"
+                  value={form.page_to}
+                  onChange={e => setForm(f => ({ ...f, page_to: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+                />
+              </div>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-sm font-medium mb-1">Date</label>
+              <input
+                type="date"
+                value={form.date || new Date().toISOString().slice(0, 10)}
+                onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+              />
+            </div>
+            <div className="col-span-2">
+              <button
+                type="submit"
+                className="w-full bg-blue-600 text-white font-semibold py-2 rounded-lg shadow hover:bg-blue-700 transition"
+                disabled={loading}
+              >
+                {loading ? "Submitting..." : "Submit Report"}
+              </button>
+              {error && <div className="text-red-600 mt-2">{error}</div>}
+              {success && <div className="text-green-600 mt-2">{success}</div>}
+            </div>
+          </form>
         </div>
-        <div>
-          <label className="block mb-1">Surah</label>
-          <select
-            value={form.surah}
-            onChange={e => setForm(f => ({ ...f, surah: e.target.value }))}
-            required
-            className="w-full border rounded px-3 py-2"
-          >
-            <option value="">Select a surah</option>
-            {SURAHS.map(surah => (
-              <option key={surah} value={surah}>{surah}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block mb-1">Juzuk</label>
-          <input
-            type="number"
-            min="1"
-            max="30"
-            value={form.juzuk || ""}
-            onChange={e => setForm(f => ({ ...f, juzuk: e.target.value }))}
-            required
-            className="w-full border rounded px-3 py-2"
-          />
-        </div>
-        <div className="flex gap-2">
-          <div className="flex-1">
-            <label className="block mb-1">Ayat From</label>
-            <input
-              type="number"
-              value={form.ayat_from}
-              onChange={e => setForm(f => ({ ...f, ayat_from: e.target.value }))}
-              required
-              className="w-full border rounded px-3 py-2"
-            />
+        {/* Reports Table Card */}
+        <div className="bg-white rounded-xl shadow-md p-6">
+          <h2 className="text-xl font-semibold mb-4 text-gray-700">Previous Reports</h2>
+          <div className="overflow-x-auto">
+            {form.student_id ? (
+              studentReports.length > 0 ? (
+                <table className="min-w-full text-sm">
+                  <thead className="bg-blue-50 sticky top-0">
+                    <tr>
+                      <th className="border px-2 py-1">Type</th>
+                      <th className="border px-2 py-1">Surah</th>
+                      <th className="border px-2 py-1">Juzuk</th>
+                      <th className="border px-2 py-1">Ayat</th>
+                      <th className="border px-2 py-1">Page</th>
+                      <th className="border px-2 py-1">Grade</th>
+                      <th className="border px-2 py-1">Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {studentReports.map((r, idx) => (
+                      <tr key={r.id} className={idx % 2 === 0 ? 'bg-blue-50' : ''}>
+                        <td className="border px-2 py-1">{r.type}</td>
+                        <td className="border px-2 py-1">{r.surah}</td>
+                        <td className="border px-2 py-1">{r.juzuk}</td>
+                        <td className="border px-2 py-1">{r.ayat_from} - {r.ayat_to}</td>
+                        <td className="border px-2 py-1">{r.page_from ?? ""} - {r.page_to ?? ""}</td>
+                        <td className="border px-2 py-1">{r.grade ? r.grade.charAt(0).toUpperCase() + r.grade.slice(1) : ""}</td>
+                        <td className="border px-2 py-1">{r.date}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="text-center py-2">No previous reports for this student.</div>
+              )
+            ) : (
+              reports.length > 0 ? (
+                <table className="min-w-full text-sm">
+                  <thead className="bg-blue-50 sticky top-0">
+                    <tr>
+                      <th className="border px-2 py-1">Student</th>
+                      <th className="border px-2 py-1">Type</th>
+                      <th className="border px-2 py-1">Surah</th>
+                      <th className="border px-2 py-1">Juzuk</th>
+                      <th className="border px-2 py-1">Ayat</th>
+                      <th className="border px-2 py-1">Page</th>
+                      <th className="border px-2 py-1">Grade</th>
+                      <th className="border px-2 py-1">Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reports.map((r, idx) => (
+                      <tr key={r.id} className={idx % 2 === 0 ? 'bg-blue-50' : ''}>
+                        <td className="border px-2 py-1">{r.student_name || r.student_id}</td>
+                        <td className="border px-2 py-1">{r.type}</td>
+                        <td className="border px-2 py-1">{r.surah}</td>
+                        <td className="border px-2 py-1">{r.juzuk}</td>
+                        <td className="border px-2 py-1">{r.ayat_from} - {r.ayat_to}</td>
+                        <td className="border px-2 py-1">{r.page_from ?? ""} - {r.page_to ?? ""}</td>
+                        <td className="border px-2 py-1">{r.grade ? r.grade.charAt(0).toUpperCase() + r.grade.slice(1) : ""}</td>
+                        <td className="border px-2 py-1">{r.date}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="text-center py-2">No previous reports for your class.</div>
+              )
+            )}
           </div>
-          <div className="flex-1">
-            <label className="block mb-1">Ayat To</label>
-            <input
-              type="number"
-              value={form.ayat_to}
-              onChange={e => setForm(f => ({ ...f, ayat_to: e.target.value }))}
-              required
-              className="w-full border rounded px-3 py-2"
-            />
-          </div>
         </div>
-        <div className="flex gap-2">
-          <div className="flex-1">
-            <label className="block mb-1">Page From</label>
-            <input
-              type="number"
-              value={form.page_from}
-              onChange={e => setForm(f => ({ ...f, page_from: e.target.value }))}
-              className="w-full border rounded px-3 py-2"
-            />
-          </div>
-          <div className="flex-1">
-            <label className="block mb-1">Page To</label>
-            <input
-              type="number"
-              value={form.page_to}
-              onChange={e => setForm(f => ({ ...f, page_to: e.target.value }))}
-              className="w-full border rounded px-3 py-2"
-            />
-          </div>
-        </div>
-        <div>
-          <label className="block mb-1">Date</label>
-          <input
-            type="date"
-            value={form.date || new Date().toISOString().slice(0, 10)}
-            onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-            className="w-full border rounded px-3 py-2"
-          />
-        </div>
-        <div>
-          <label className="block mb-1">Grade</label>
-          <select
-            value={form.grade || ""}
-            onChange={e => setForm(f => ({ ...f, grade: e.target.value }))}
-            required
-            className="w-full border rounded px-3 py-2"
-          >
-            <option value="">Select a grade</option>
-            {GRADES.map(g => (
-              <option key={g} value={g}>{g.charAt(0).toUpperCase() + g.slice(1)}</option>
-            ))}
-          </select>
-        </div>
-        <button type="submit" className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded" disabled={loading}>
-          {loading ? "Submitting..." : "Submit Report"}
-        </button>
-      </form>
-      <h2 className="text-xl font-semibold mb-2">Previous Reports</h2>
-<div className="overflow-x-auto">
-  {form.student_id ? (
-    studentReports.length > 0 ? (
-      <table className="min-w-full border">
-        <thead>
-          <tr>
-            <th className="border px-2 py-1">Type</th>
-            <th className="border px-2 py-1">Surah</th>
-            <th className="border px-2 py-1">Juzuk</th>
-            <th className="border px-2 py-1">Ayat</th>
-            <th className="border px-2 py-1">Page</th>
-            <th className="border px-2 py-1">Grade</th>
-            <th className="border px-2 py-1">Date</th>
-          </tr>
-        </thead>
-        <tbody>
-          {studentReports.map(r => (
-            <tr key={r.id}>
-              <td className="border px-2 py-1">{r.type}</td>
-              <td className="border px-2 py-1">{r.surah}</td>
-              <td className="border px-2 py-1">{r.juzuk}</td>
-              <td className="border px-2 py-1">{r.ayat_from} - {r.ayat_to}</td>
-              <td className="border px-2 py-1">{r.page_from ?? ""} - {r.page_to ?? ""}</td>
-              <td className="border px-2 py-1">{r.grade ? r.grade.charAt(0).toUpperCase() + r.grade.slice(1) : ""}</td>
-              <td className="border px-2 py-1">{r.date}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    ) : (
-      <div className="text-center py-2">No previous reports for this student.</div>
-    )
-  ) : (
-    reports.length > 0 ? (
-      <table className="min-w-full border">
-        <thead>
-          <tr>
-            <th className="border px-2 py-1">Student</th>
-            <th className="border px-2 py-1">Type</th>
-            <th className="border px-2 py-1">Surah</th>
-            <th className="border px-2 py-1">Juzuk</th>
-            <th className="border px-2 py-1">Ayat</th>
-            <th className="border px-2 py-1">Page</th>
-            <th className="border px-2 py-1">Grade</th>
-            <th className="border px-2 py-1">Date</th>
-          </tr>
-        </thead>
-        <tbody>
-          {reports.map(r => (
-            <tr key={r.id}>
-              <td className="border px-2 py-1">{r.student_name || r.student_id}</td>
-              <td className="border px-2 py-1">{r.type}</td>
-              <td className="border px-2 py-1">{r.surah}</td>
-              <td className="border px-2 py-1">{r.juzuk}</td>
-              <td className="border px-2 py-1">{r.ayat_from} - {r.ayat_to}</td>
-              <td className="border px-2 py-1">{r.page_from ?? ""} - {r.page_to ?? ""}</td>
-              <td className="border px-2 py-1">{r.grade ? r.grade.charAt(0).toUpperCase() + r.grade.slice(1) : ""}</td>
-              <td className="border px-2 py-1">{r.date}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    ) : (
-      <div className="text-center py-2">No previous reports for your class.</div>
-    )
-  )}
-</div>
+      </div>
     </main>
   );
 }
-
