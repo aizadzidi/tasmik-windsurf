@@ -244,11 +244,14 @@ function GradeChart({ reports }: { reports: Report[] }) {
         max: 3,
         ticks: {
           stepSize: 1,
-          callback: (val: number) => {
-            if (val === 3) return "Mumtaz";
-            if (val === 2) return "Jayyid Jiddan";
-            if (val === 1) return "Jayyid";
-            return "-";
+          callback: function (this, tickValue: string | number) {
+            if (typeof tickValue === "number") {
+              if (tickValue === 3) return "Mumtaz";
+              if (tickValue === 2) return "Jayyid Jiddan";
+              if (tickValue === 1) return "Jayyid";
+              return "-";
+            }
+            return tickValue;
           }
         }
       }
