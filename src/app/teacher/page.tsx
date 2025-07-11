@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 
 import { supabase } from "@/lib/supabaseClient";
 import SignOutButton from "@/components/SignOutButton";
+import { QuranProgressBar, ChartTabs } from "@/components/ReportCharts";
 
 interface Student {
   id: string;
@@ -188,6 +189,13 @@ export default function TeacherPage() {
           <h1 className="text-3xl font-bold text-gray-800">Teacher Dashboard</h1>
           <SignOutButton />
         </div>
+
+        {/* Visual Graph Section */}
+        <section className="mb-8">
+          <h2 className="text-lg font-semibold mb-4">Class/Student Progress</h2>
+          {form.student_id && <QuranProgressBar reports={studentReports} />}
+          <ChartTabs reports={form.student_id ? studentReports : reports} />
+        </section>
         {/* Form Card */}
         <div className="bg-white rounded-xl shadow-md p-8 mb-10">
           <form className="grid grid-cols-1 md:grid-cols-2 gap-6" onSubmit={handleSubmit}>

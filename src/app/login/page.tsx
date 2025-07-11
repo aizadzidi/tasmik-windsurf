@@ -20,8 +20,8 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     setError("");
-
-    if (isSignUp) {
+    try {
+      if (isSignUp) {
       // Sign up flow
       if (!name.trim()) {
         setError("Please enter your name.");
@@ -50,7 +50,9 @@ export default function LoginPage() {
       router.push("/parent");
     } else {
       // Login flow
+      console.log('Attempting login with', email, '[password omitted]');
       const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+      console.log('signInWithPassword result:', { data, signInError });
       if (signInError) {
         setError(signInError.message);
         setLoading(false);
@@ -58,35 +60,52 @@ export default function LoginPage() {
       }
       // Fetch user role
       const userId = data.user?.id;
+      console.log('User ID after login:', userId);
       if (userId) {
+        console.log('Looking up user in users table...');
         const { data: userData, error: userError } = await supabase
           .from("users")
-          .select("role")
+          .select("role, name, email")
           .eq("id", userId)
           .single();
         if (userError || !userData) {
-          setError("User role not found.");
+          console.log('User not found in users table, creating fallback...');
+          // Fallback: If user exists in Auth but not in users table, create a default user as parent
+          // This ensures login works for users created outside the sign-up flow
+          const emailPrefix = email.split("@")[0];
+          const { error: insertError } = await supabase.from("users").insert([
+            { id: userId, name: emailPrefix, email, role: "parent" },
+          ]);
+          console.log('Fallback user creation result:', { insertError });
+          if (insertError) {
+            setError("Login failed: Could not create user profile. Please contact admin.");
+            setLoading(false);
+            return;
+          }
+          console.log('Redirecting to /parent after fallback user creation');
+          router.push("/parent");
           setLoading(false);
           return;
         }
+        console.log('User found in users table:', userData);
         // Redirect based on role
-        if (userData.role === "admin") router.push("/admin");
-        else if (userData.role === "teacher") router.push("/teacher");
-        else router.push("/parent");
+        if (userData.role === "admin") { console.log('Redirecting to /admin'); router.push("/admin"); }
+        else if (userData.role === "teacher") { console.log('Redirecting to /teacher'); router.push("/teacher"); }
+        else { console.log('Redirecting to /parent'); router.push("/parent"); }
       }
     }
-    setLoading(false);
+    } catch (err) {
+      // Catch-all for unexpected errors
+      console.error('Login error:', err);
+      setError('Unexpected error during login. Please try again or contact support.');
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
     <main className="min-h-screen flex items-center justify-center" style={{ background: "radial-gradient(ellipse at top left, #7c3aed 0%, #0ea5e9 100%)" }}>
       <div className="w-full max-w-md">
-        <Alert variant="info" className="mb-6 shadow-md">
-          <div className="font-semibold text-lg mb-1">Selamat Datang ke Dashboard Ibu Bapa!</div>
-          <div>
-            Sistem ini membolehkan ibu bapa memantau prestasi hafazan dan pembelajaran anak-anak mereka secara langsung. Daftar atau log masuk untuk melihat laporan, perkembangan, dan maklumat terkini dari guru.
-          </div>
-        </Alert>
         <Card className="shadow-2xl">
           <CardHeader>
             <CardTitle>{isSignUp ? "Sign Up" : "Login"}</CardTitle>
