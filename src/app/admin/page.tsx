@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
+import SignOutButton from "@/components/SignOutButton";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -141,20 +142,13 @@ export default function AdminPage() {
   }
 
   return (
-    <main className="p-8 max-w-2xl mx-auto">
-      <div className="flex items-center justify-between mb-4">
-  <h1 className="text-2xl font-bold">Admin Dashboard</h1>
-  <button
-    className="bg-gray-200 text-gray-800 px-3 py-1 rounded hover:bg-gray-300"
-    onClick={async () => {
-      await supabase.auth.signOut();
-      window.location.href = "/login";
-    }}
-  >
-    Sign Out
-  </button>
-</div>
-<p className="mb-6">Welcome, Admin!</p>
+    <main className="min-h-screen bg-gradient-to-tr from-blue-100 via-blue-200 to-blue-100 py-8 px-2">
+      <div className="max-w-3xl mx-auto">
+        <div className="flex justify-between items-center mb-8">
+          <h1 className="text-3xl font-bold text-gray-800">Admin Dashboard</h1>
+          <SignOutButton />
+        </div>
+        <p className="mb-6">Welcome, Admin!</p>
 
       <section className="mb-8">
         <h2 className="text-lg font-semibold mb-2">Add Student</h2>
@@ -324,6 +318,7 @@ export default function AdminPage() {
           </table>
         </div>
       </section>
+      </div>
     </main>
   );
 }
