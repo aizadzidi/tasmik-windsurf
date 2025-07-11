@@ -244,7 +244,12 @@ function GradeChart({ reports }: { reports: Report[] }) {
         max: 3,
         ticks: {
           stepSize: 1,
-          callback: function (this, tickValue: string | number) {
+          callback: function (
+            this: any,
+            tickValue: string | number,
+            index: number,
+            ticks: any[]
+          ) {
             if (typeof tickValue === "number") {
               if (tickValue === 3) return "Mumtaz";
               if (tickValue === 2) return "Jayyid Jiddan";
