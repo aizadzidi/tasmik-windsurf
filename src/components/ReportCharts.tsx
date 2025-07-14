@@ -42,14 +42,17 @@ function gradeToNumber(grade: string | null) {
 }
 
 export function QuranProgressBar({ reports }: { reports: Report[] }) {
-  // Example logic: count unique surahs/pages completed
-  const surahSet = new Set(reports.map(r => r.surah));
-  const percent = Math.min(100, Math.round((surahSet.size / 114) * 100));
+  // Find the highest page_to value
+  const maxPage = Math.max(
+    ...reports.map(r => (r.page_to !== null && !isNaN(r.page_to) ? r.page_to : 0)),
+    0
+  );
+  const percent = Math.min((maxPage / 604) * 100, 100);
   return (
     <div className="mb-4">
       <div className="flex justify-between items-center mb-1">
         <span className="text-sm font-semibold">Quran Progress</span>
-        <span className="text-xs text-gray-600">{surahSet.size}/114 Surahs</span>
+        <span className="text-xs text-gray-600">{maxPage} / 604 pages ({percent.toFixed(1)}%)</span>
       </div>
       <Progress value={percent} />
     </div>
