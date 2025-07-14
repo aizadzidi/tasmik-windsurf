@@ -10,7 +10,7 @@ interface Student {
   name: string;
 }
 
-interface Report {
+export interface Report {
   id: string;
   student_id: string;
   type: string;
@@ -31,7 +31,94 @@ const SURAHS = [
 ];
 const GRADES = ["mumtaz", "jayyid jiddan", "jayyid"];
 
+import EditReportModal from "./EditReportModal";
+
 export default function TeacherPage() {
+  // State for editing and deleting reports
+  const [editingReport, setEditingReport] = useState<Report | null>(null);
+  const [deletingReport, setDeletingReport] = useState<Report | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  function handleEditReport(report: Report) {
+    setEditingReport(report);
+    setShowEditModal(true);
+  }
+  function handleDeleteReport(report: Report) {
+    setDeletingReport(report);
+    setShowDeleteConfirm(true);
+  }
+  // Placeholder for actual update logic
+  async function editReport(updated: Report) {
+    if (!updated.id) return;
+    // Update the report in Supabase
+    await supabase.from("reports").update({
+      type: updated.type,
+      surah: updated.surah,
+      juzuk: updated.juzuk,
+      ayat_from: updated.ayat_from,
+      ayat_to: updated.ayat_to,
+      page_from: updated.page_from,
+      page_to: updated.page_to,
+      grade: updated.grade,
+      date: updated.date,
+    }).eq("id", updated.id);
+    setShowEditModal(false);
+    setEditingReport(null);
+    // Refresh reports
+    if (userId) {
+      const { data, error } = await supabase
+        .from("reports")
+        .select("*, students(name)")
+        .eq("teacher_id", userId)
+        .order("date", { ascending: false });
+      if (!error && data) {
+        setReports(data.map((r: any) => ({ ...r, student_name: r.students?.name || "" })));
+      }
+      // Refresh student-specific reports
+      if (form.student_id) {
+        const { data: sData, error: sErr } = await supabase
+          .from("reports")
+          .select("*")
+          .eq("teacher_id", userId)
+          .eq("student_id", form.student_id)
+          .order("date", { ascending: false });
+        if (!sErr && sData) {
+          setStudentReports(sData);
+        }
+      }
+    }
+  }
+  // Placeholder for actual delete logic
+  async function deleteReport(reportId: string) {
+    if (!reportId) return;
+    await supabase.from("reports").delete().eq("id", reportId);
+    setShowDeleteConfirm(false);
+    setDeletingReport(null);
+    // Refresh reports
+    if (userId) {
+      const { data, error } = await supabase
+        .from("reports")
+        .select("*, students(name)")
+        .eq("teacher_id", userId)
+        .order("date", { ascending: false });
+      if (!error && data) {
+        setReports(data.map((r: any) => ({ ...r, student_name: r.students?.name || "" })));
+      }
+      // Refresh student-specific reports
+      if (form.student_id) {
+        const { data: sData, error: sErr } = await supabase
+          .from("reports")
+          .select("*")
+          .eq("teacher_id", userId)
+          .eq("student_id", form.student_id)
+          .order("date", { ascending: false });
+        if (!sErr && sData) {
+          setStudentReports(sData);
+        }
+      }
+    }
+  }
 
   const [students, setStudents] = useState<Student[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
@@ -185,6 +272,37 @@ export default function TeacherPage() {
   return (
     <main className="min-h-screen bg-gradient-to-tr from-blue-100 via-blue-200 to-blue-100 py-8 px-2">
       <div className="max-w-3xl mx-auto">
+        {/* Edit Report Modal */}
+        {showEditModal && editingReport && (
+          <EditReportModal
+            report={editingReport}
+            onSave={editReport}
+            onCancel={() => { setShowEditModal(false); setEditingReport(null); }}
+            reportTypes={REPORT_TYPES}
+            grades={GRADES}
+            surahs={SURAHS}
+          />
+        )}
+
+        {/* Delete Confirmation Modal */}
+        {showDeleteConfirm && deletingReport && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+            <div className="bg-white rounded-lg p-6 shadow-lg w-full max-w-xs">
+              <h3 className="text-lg font-semibold mb-2">Delete Report</h3>
+              <p className="mb-4">Are you sure you want to delete this report?</p>
+              <div className="flex justify-end gap-2">
+                <button
+                  className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300"
+                  onClick={() => { setShowDeleteConfirm(false); setDeletingReport(null); }}
+                >Cancel</button>
+                <button
+                  className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+                  onClick={() => deleteReport(deletingReport.id)}
+                >Delete</button>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold text-gray-800">Teacher Dashboard</h1>
           <SignOutButton />
@@ -345,6 +463,7 @@ export default function TeacherPage() {
                       <th className="border px-2 py-1">Page</th>
                       <th className="border px-2 py-1">Grade</th>
                       <th className="border px-2 py-1">Date</th>
+                      <th className="border px-2 py-1">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -357,6 +476,18 @@ export default function TeacherPage() {
                         <td className="border px-2 py-1">{r.page_from ?? ""} - {r.page_to ?? ""}</td>
                         <td className="border px-2 py-1">{r.grade ? r.grade.charAt(0).toUpperCase() + r.grade.slice(1) : ""}</td>
                         <td className="border px-2 py-1">{r.date}</td>
+                        <td className="border px-2 py-1">
+                          <button
+                            className="text-blue-600 hover:underline mr-2"
+                            onClick={() => handleEditReport(r)}
+                            type="button"
+                          >Edit</button>
+                          <button
+                            className="text-red-600 hover:underline"
+                            onClick={() => handleDeleteReport(r)}
+                            type="button"
+                          >Delete</button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -377,6 +508,7 @@ export default function TeacherPage() {
                       <th className="border px-2 py-1">Page</th>
                       <th className="border px-2 py-1">Grade</th>
                       <th className="border px-2 py-1">Date</th>
+                      <th className="border px-2 py-1">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -390,6 +522,18 @@ export default function TeacherPage() {
                         <td className="border px-2 py-1">{r.page_from ?? ""} - {r.page_to ?? ""}</td>
                         <td className="border px-2 py-1">{r.grade ? r.grade.charAt(0).toUpperCase() + r.grade.slice(1) : ""}</td>
                         <td className="border px-2 py-1">{r.date}</td>
+                        <td className="border px-2 py-1">
+                          <button
+                            className="text-blue-600 hover:underline mr-2"
+                            onClick={() => handleEditReport(r)}
+                            type="button"
+                          >Edit</button>
+                          <button
+                            className="text-red-600 hover:underline"
+                            onClick={() => handleDeleteReport(r)}
+                            type="button"
+                          >Delete</button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
