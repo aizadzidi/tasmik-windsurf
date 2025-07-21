@@ -11,7 +11,7 @@ export function Select({ value, onValueChange, children, className, ...props }: 
     <div className={cn("relative", className)} {...props}>
       {React.Children.map(children, child => {
         if (React.isValidElement(child) && child.type === SelectTrigger) {
-          return React.cloneElement(child, { value, onValueChange })
+          return React.cloneElement(child as React.ReactElement<any>, { value, onValueChange })
         }
         return child
       })}
