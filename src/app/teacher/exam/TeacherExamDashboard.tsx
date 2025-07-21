@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import { Card, CardContent } from "@/components/ui/Card";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/Tabs";
+
 import { RadioGroup } from "@/components/ui/RadioGroup";
 import { Select } from "@/components/ui/Select";
 import { Switch } from "@/components/ui/Switch";
@@ -194,16 +194,20 @@ export default function TeacherExamDashboard() {
       {/* Navbar */}
       <nav className="bg-white shadow flex items-center px-4 py-2 gap-4">
         <span className="font-bold text-lg">Teacher Dashboard</span>
-        <Tabs defaultValue="hafazan" className="ml-4">
-          <TabsList>
-            <TabsTrigger value="hafazan" asChild>
-              <a href="/teacher">Hafazan</a>
-            </TabsTrigger>
-            <TabsTrigger value="exam" asChild>
-              <a href="/teacher/exam">Exam</a>
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <div className="ml-4 flex gap-2">
+          <a 
+            href="/teacher" 
+            className="px-3 py-1 rounded-md text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+          >
+            Hafazan
+          </a>
+          <a 
+            href="/teacher/exam" 
+            className="px-3 py-1 rounded-md text-sm font-medium bg-blue-100 text-blue-700"
+          >
+            Exam
+          </a>
+        </div>
       </nav>
       {/* Main Content */}
       <main className="flex-1 p-4 flex flex-col gap-6 max-w-5xl mx-auto w-full">
