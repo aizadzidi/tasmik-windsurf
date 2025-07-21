@@ -394,7 +394,7 @@ export default function ParentReportTable({ parentId }: { parentId: string }) {
         doc.setFontSize(9);
         doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 12, 285);
         doc.text('Principal/Authorized Signature: __________________', 120, 285);
-        doc.text(`Page ${doc.internal.getNumberOfPages ? doc.internal.getNumberOfPages() : ''}`, 200, 285, { align: 'right' });
+        doc.text(`Page ${doc.getNumberOfPages()}`, 200, 285, { align: 'right' });
         doc.addPage();
         y = 18;
       }
@@ -404,7 +404,7 @@ export default function ParentReportTable({ parentId }: { parentId: string }) {
     doc.setFontSize(9);
     doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 12, 285);
     doc.text('Principal/Authorized Signature: __________________', 120, 285);
-    doc.text(`Page ${doc.internal.getNumberOfPages ? doc.internal.getNumberOfPages() : ''}`, 200, 285, { align: 'right' });
+    doc.text(`Page ${doc.getNumberOfPages()}`, 200, 285, { align: 'right' });
 
     // --- Save ---
     doc.save(`${student.name}-reports.pdf`);
