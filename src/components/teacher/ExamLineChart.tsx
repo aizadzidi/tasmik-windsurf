@@ -23,14 +23,12 @@ export default function ExamLineChart({ students }: { students: Student[] }) {
         xScale={{ type: "point" }}
         yScale={{ type: "linear", min: 0, max: 100, stacked: false }}
         axisBottom={{
-          orient: "bottom",
           tickRotation: -30,
           legend: "Student",
           legendOffset: 40,
           legendPosition: "middle",
         }}
         axisLeft={{
-          orient: "left",
           legend: "Mark (%)",
           legendOffset: -32,
           legendPosition: "middle",
