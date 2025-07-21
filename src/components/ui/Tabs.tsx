@@ -11,7 +11,7 @@ export function Tabs({ defaultValue, children, className }: {
     <div className={cn("flex flex-col", className)}>
       {React.Children.map(children, child => {
         if (React.isValidElement(child) && child.type === TabsList) {
-          return React.cloneElement(child, { value, setValue })
+          return React.cloneElement(child as React.ReactElement<any>, { value, setValue })
         }
         return child
       })}
@@ -28,7 +28,7 @@ export function TabsList({ value, setValue, children }: {
     <div className="flex gap-2 border-b pb-1">
       {React.Children.map(children, child => {
         if (React.isValidElement(child) && child.type === TabsTrigger) {
-          return React.cloneElement(child, { value, setValue })
+          return React.cloneElement(child as React.ReactElement<any>, { value, setValue })
         }
         return child
       })}
@@ -44,8 +44,8 @@ export function TabsTrigger({ value: triggerValue, value, setValue, children, as
 }) {
   const isActive = value === triggerValue
   if (asChild && React.isValidElement(children)) {
-    return React.cloneElement(children, {
-      className: cn(children.props.className, isActive ? "font-bold border-b-2 border-primary" : "text-muted-foreground"),
+    return React.cloneElement(children as React.ReactElement<any>, {
+      className: cn((children as any).props.className, isActive ? "font-bold border-b-2 border-primary" : "text-muted-foreground"),
       onClick: () => setValue?.(triggerValue),
     })
   }
