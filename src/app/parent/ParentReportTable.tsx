@@ -269,6 +269,10 @@ export default function ParentReportTable({ parentId }: { parentId: string }) {
   const [students, setStudents] = useState<Student[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
+  // Pagination state: studentId -> page number
+  const [page, setPage] = useState<{ [studentId: string]: number }>({});
+  const recordsPerPage = 10;
+
 
   useEffect(() => {
     async function fetchData() {
@@ -322,19 +326,56 @@ export default function ParentReportTable({ parentId }: { parentId: string }) {
 
   // PDF download utility
   function downloadPDF(student: Student, studentReports: Report[]) {
-    const doc = new jsPDF();
-    doc.setFontSize(16);
-    doc.text(`${student.name} - Reports`, 10, 15);
-    const headers = ["Date","Type","Surah","Juzuk","Ayat","Page","Grade"];
-    let y = 25;
-    doc.setFontSize(10);
-    // Table header
-    headers.forEach((h, i) => {
-      doc.text(h, 10 + i * 28, y);
+  // Helper to convert image to base64
+  function loadImageAsBase64(url: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const img = new window.Image();
+      img.crossOrigin = 'Anonymous';
+      img.onload = function () {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.onerror = reject;
+      img.src = url;
     });
-    y += 7;
-    // Table rows
-    studentReports.forEach(r => {
+  }
+
+  loadImageAsBase64('/logo-akademi.png').then((imgData) => {
+    const doc = new jsPDF();
+    // --- Header ---
+    doc.setFontSize(18);
+    doc.text('AKADEMI AL-KHAYR', 105, 18, { align: 'center' });
+    // Add the logo image (width: 18, height: 18)
+    doc.addImage(imgData, 'PNG', 15, 10, 18, 18);
+    doc.setFontSize(10);
+    doc.text('Akademi Al Khayr, White Resort Camp,', 105, 25, { align: 'center' });
+    doc.text('Mukim 7 & Mukim J, Kampung Genting,', 105, 30, { align: 'center' });
+    doc.text('11000 Balik Pulau, Penang', 105, 35, { align: 'center' });
+    doc.text('Phone: 019-381 8616 | Email: akademialkhayrofficial@gmail.com', 105, 40, { align: 'center' });
+    doc.setLineWidth(0.5);
+    doc.line(10, 44, 200, 44);
+
+    // --- Student Info ---
+    doc.setFontSize(12);
+    doc.text(`Student Name: ${student.name}`, 14, 52);
+    doc.text(`Report Date: ${new Date().toLocaleDateString()}`, 14, 58);
+
+    // --- Table ---
+    const headers = ["Date","Type","Surah","Juzuk","Ayat","Page","Grade"];
+    let y = 68;
+    doc.setFontSize(11);
+    headers.forEach((h, i) => {
+      doc.setFillColor(220, 230, 241);
+      doc.rect(10 + i * 27, y, 27, 8, 'F');
+      doc.text(h, 10 + i * 27 + 2, y + 6);
+    });
+    y += 10;
+    doc.setFontSize(10);
+    studentReports.forEach((r, idx) => {
       const row = [
         r.date,
         r.type,
@@ -345,23 +386,45 @@ export default function ParentReportTable({ parentId }: { parentId: string }) {
         r.grade ?? '-'
       ];
       row.forEach((cell, i) => {
-        doc.text(String(cell), 10 + i * 28, y);
+        doc.text(String(cell), 10 + i * 27 + 2, y + 6);
       });
-      y += 7;
-      if (y > 270) {
+      y += 8;
+      if (y > 250) {
+        // --- Footer ---
+        doc.setFontSize(9);
+        doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 12, 285);
+        doc.text('Principal/Authorized Signature: __________________', 120, 285);
+        doc.text(`Page ${doc.internal.getNumberOfPages ? doc.internal.getNumberOfPages() : ''}`, 200, 285, { align: 'right' });
         doc.addPage();
-        y = 15;
+        y = 18;
       }
     });
+
+    // --- Final Footer on last page ---
+    doc.setFontSize(9);
+    doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 12, 285);
+    doc.text('Principal/Authorized Signature: __________________', 120, 285);
+    doc.text(`Page ${doc.internal.getNumberOfPages ? doc.internal.getNumberOfPages() : ''}`, 200, 285, { align: 'right' });
+
+    // --- Save ---
     doc.save(`${student.name}-reports.pdf`);
-  }
+  });
+} // Correctly close the downloadPDF function here
 
   return (
     <div className="mt-8">
       <h2 className="text-2xl font-bold mb-6 text-gray-900 dark:text-white">Your Children's Reports</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {students.map((student) => {
-          const studentReports = reports.filter((r) => r.student_id === student.id);
+          const studentReports = reports
+            .filter((r) => r.student_id === student.id)
+            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()); // Descending
+          const currentPage = page[student.id] || 1;
+          const totalPages = Math.ceil(studentReports.length / recordsPerPage);
+          const pagedReports = studentReports.slice(
+            (currentPage - 1) * recordsPerPage,
+            currentPage * recordsPerPage
+          );
           return (
             <Card key={student.id} className="rounded-xl shadow-md bg-white/60 min-h-[120px] flex flex-col justify-between">
               <div className="flex items-center justify-between px-4 pt-4 pb-2">
@@ -382,10 +445,18 @@ export default function ParentReportTable({ parentId }: { parentId: string }) {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem onClick={() => downloadCSV(student, studentReports)}>
-                        Download as CSV
+                        <span title="Download as CSV" aria-label="Download as CSV">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="inline w-4 h-4 text-blue-600 hover:text-blue-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 011-2h2.586a2 2 0 011.707.293l3.686.814 3.686-.814a2 2 0 01.707.293h2.586a3 3 0 01-2 2.5 2.5 0 01-2.5-2.5V6a2.5 2.5 0 00-2.5-2.5H9a2.5 2.5 0 00-2.5 2.5V16a2.5 2.5 0 012.5 2.5z" />
+                          </svg>
+                        </span>
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => downloadPDF(student, studentReports)}>
-                        Download as PDF
+                        <span title="Download as PDF" aria-label="Download as PDF">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="inline w-4 h-4 text-blue-600 hover:text-blue-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 011-2h2.586a2 2 0 011.707.293l3.686.814 3.686-.814a2 2 0 01.707.293h2.586a3 3 0 01-2 2.5 2.5 0 01-2.5-2.5V6a2.5 2.5 0 00-2.5-2.5H9a2.5 2.5 0 00-2.5 2.5V16a2.5 2.5 0 012.5 2.5z" />
+                          </svg>
+                        </span>
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -400,6 +471,7 @@ export default function ParentReportTable({ parentId }: { parentId: string }) {
                     <Table>
                       <TableHeader>
                         <TableRow>
+                          <TableHead>Student</TableHead>
                           <TableHead>Date</TableHead>
                           <TableHead>Type</TableHead>
                           <TableHead>Surah</TableHead>
@@ -410,8 +482,9 @@ export default function ParentReportTable({ parentId }: { parentId: string }) {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {studentReports.map((r) => (
+                        {pagedReports.map((r: Report) => (
                           <TableRow key={r.id}>
+                            <TableCell>{student.name}</TableCell>
                             <TableCell>{r.date}</TableCell>
                             <TableCell>{r.type}</TableCell>
                             <TableCell>{r.surah}</TableCell>
@@ -423,6 +496,33 @@ export default function ParentReportTable({ parentId }: { parentId: string }) {
                         ))}
                       </TableBody>
                     </Table>
+                    {totalPages > 1 && (
+                      <div className="flex justify-center mt-4 gap-2">
+                        <button
+                          className="px-2 py-1 border rounded disabled:opacity-50"
+                          onClick={() => setPage((prev) => ({ ...prev, [student.id]: Math.max(1, currentPage - 1) }))}
+                          disabled={currentPage === 1}
+                        >
+                          Prev
+                        </button>
+                        {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                          <button
+                            key={p}
+                            className={`px-2 py-1 border rounded ${p === currentPage ? 'bg-blue-500 text-white' : ''}`}
+                            onClick={() => setPage((prev) => ({ ...prev, [student.id]: p }))}
+                          >
+                            {p}
+                          </button>
+                        ))}
+                        <button
+                          className="px-2 py-1 border rounded disabled:opacity-50"
+                          onClick={() => setPage((prev) => ({ ...prev, [student.id]: Math.min(totalPages, currentPage + 1) }))}
+                          disabled={currentPage === totalPages}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div className="flex flex-col items-center justify-center py-4 text-gray-400">

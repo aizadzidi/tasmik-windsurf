@@ -23,8 +23,8 @@ export default function ParentPage() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-gradient-to-tr from-blue-100 via-blue-200 to-blue-100 py-8 px-2">
-      <div className="max-w-3xl mx-auto">
+    <main className="min-h-screen bg-gradient-to-tr from-blue-100 via-blue-200 to-blue-100 py-8 px-0">
+      <div className="max-w-5xl mx-auto">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold text-gray-800">Parent Dashboard</h1>
           <SignOutButton />

@@ -58,6 +58,46 @@ A web application for schools to record, monitor, and share students' tasmik and
 
 ---
 
+### 2.6 Teacher Exam Dashboard (NEW)
+
+#### Purpose
+A dynamic dashboard for teachers to record, edit, and visualize students' marks and conduct for exams and quizzes, based on their assigned classes and subjects.
+
+#### Features
+
+- **Dynamic Assignment-Based Controls**
+  - Teachers only see classes, subjects, and students assigned to them by the admin.
+  - Class, subject, assessment type (Exam/Quiz), and specific assessment (e.g., Midterm, Quiz 1) are all selectable via a modern, grouped picker UI.
+
+- **Editable Student Table**
+  - Displays list of students for the selected class and subject.
+  - Teachers can enter/edit marks (%) and conduct breakdown for each student.
+  - Grades are auto-calculated based on mark.
+  - Expandable row for detailed conduct input (multiple categories, e.g., Discipline, Effort, etc.).
+  - All edits are saved in real time (auto-save planned for backend).
+
+- **Live Visualizations**
+  - Marks overview (line chart).
+  - Class conduct radar (radar chart, averages per conduct category).
+  - Charts update instantly as teacher edits data.
+
+- **Assessment Management**
+  - Teachers can toggle between Exam and Quiz.
+  - Assessment dropdown updates dynamically based on class, subject, and type.
+  - "+ Create Quiz" button for quick quiz creation (UI only for now).
+
+- **Responsive and Accessible UI**
+  - Controls are grouped in a visually distinct, accessible card at the top.
+  - Layout adapts for mobile and desktop.
+
+#### Out of Scope (for now)
+- Backend integration (currently uses mock data).
+- Advanced permissions or analytics.
+- Full quiz creation workflow and backend.
+- Parent/Student access to exam dashboard.
+
+---
+
 ## 3. Tech Stack
 - **Frontend**: Next.js, TypeScript, Tailwind CSS, shadcn/ui
 - **Backend/DB**: Supabase (auth, database)

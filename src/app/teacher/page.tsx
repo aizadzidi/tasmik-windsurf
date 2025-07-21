@@ -269,9 +269,74 @@ export default function TeacherPage() {
     setLoading(false);
   }
 
+  // Pagination state
+  const [studentReportPage, setStudentReportPage] = useState(1);
+  const [allReportPage, setAllReportPage] = useState(1);
+  const recordsPerPage = 10;
+
+  // Pagination for studentReports
+  const studentTotalPages = Math.ceil(studentReports.length / recordsPerPage);
+  const pagedStudentReports = studentReports.slice(
+    (studentReportPage - 1) * recordsPerPage,
+    studentReportPage * recordsPerPage
+  );
+  // Pagination for all reports
+  const allTotalPages = Math.ceil(reports.length / recordsPerPage);
+  const pagedAllReports = reports.slice(
+    (allReportPage - 1) * recordsPerPage,
+    allReportPage * recordsPerPage
+  );
+
+  // Hafazan gap calculation
+  const today = new Date();
+  const studentLastRecords = students.map(s => {
+    const studentRecs = reports.filter(r => r.student_id === s.id);
+    if (studentRecs.length === 0) {
+      return { ...s, lastDaysAgo: null, lastDate: null };
+    }
+    const lastDateStr = studentRecs[0].date; // reports sorted descending
+    const lastDate = new Date(lastDateStr);
+    const diffDays = Math.floor((today.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
+    return { ...s, lastDaysAgo: diffDays, lastDate: lastDateStr };
+  });
+  const sortedLastRecords = [...studentLastRecords].sort((a, b) => {
+    if (a.lastDaysAgo === null) return -1;
+    if (b.lastDaysAgo === null) return 1;
+    return b.lastDaysAgo - a.lastDaysAgo;
+  });
+
   return (
     <main className="min-h-screen bg-gradient-to-tr from-blue-100 via-blue-200 to-blue-100 py-8 px-2">
       <div className="max-w-3xl mx-auto">
+        {/* Hafazan Last Record Gap Section */}
+        <div className="bg-white rounded-xl shadow-md p-6 mb-8">
+          <h2 className="text-lg font-semibold mb-4 text-gray-700">Student Last Submission Gaps</h2>
+          <table className="min-w-full text-sm">
+            <thead className="bg-blue-50">
+              <tr>
+                <th className="border px-2 py-1">Student</th>
+                <th className="border px-2 py-1">Last Record (days ago)</th>
+                <th className="border px-2 py-1">Last Submission Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedLastRecords.map(s => (
+                <tr key={s.id} className={
+                  s.lastDaysAgo === null || s.lastDaysAgo >= 7 ? 'bg-red-100' : ''
+                }>
+                  <td className="border px-2 py-1 font-medium">{s.name}</td>
+                  <td className="border px-2 py-1">
+                    {s.lastDaysAgo === null ? <span className="italic text-gray-400">Never</span> : s.lastDaysAgo}
+                  </td>
+                  <td className="border px-2 py-1">
+                    {s.lastDate ? s.lastDate : <span className="italic text-gray-400">-</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="mt-2 text-xs text-gray-500">Students highlighted in red have not submitted for 7 or more days.</div>
+        </div>
         {/* Edit Report Modal */}
         {showEditModal && editingReport && (
           <EditReportModal
@@ -298,7 +363,11 @@ export default function TeacherPage() {
                 <button
                   className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
                   onClick={() => deleteReport(deletingReport.id)}
-                >Delete</button>
+                ><span title="Delete" aria-label="Delete">
+  <svg xmlns="http://www.w3.org/2000/svg" className="inline w-4 h-4 text-red-600 hover:text-red-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3m-4 0h16" />
+  </svg>
+</span></button>
               </div>
             </div>
           </div>
@@ -447,103 +516,153 @@ export default function TeacherPage() {
             </div>
           </form>
         </div>
-        {/* Reports Table Card */}
-        <div className="bg-white rounded-xl shadow-md p-6">
-          <h2 className="text-xl font-semibold mb-4 text-gray-700">Previous Reports</h2>
-          <div className="overflow-x-auto">
-            {form.student_id ? (
-              studentReports.length > 0 ? (
-                <table className="min-w-full text-sm">
-                  <thead className="bg-blue-50 sticky top-0">
-                    <tr>
-                      <th className="border px-2 py-1">Type</th>
-                      <th className="border px-2 py-1">Surah</th>
-                      <th className="border px-2 py-1">Juzuk</th>
-                      <th className="border px-2 py-1">Ayat</th>
-                      <th className="border px-2 py-1">Page</th>
-                      <th className="border px-2 py-1">Grade</th>
-                      <th className="border px-2 py-1">Date</th>
-                      <th className="border px-2 py-1">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {studentReports.map((r, idx) => (
-                      <tr key={r.id} className={idx % 2 === 0 ? 'bg-blue-50' : ''}>
-                        <td className="border px-2 py-1">{r.type}</td>
-                        <td className="border px-2 py-1">{r.surah}</td>
-                        <td className="border px-2 py-1">{r.juzuk}</td>
-                        <td className="border px-2 py-1">{r.ayat_from} - {r.ayat_to}</td>
-                        <td className="border px-2 py-1">{r.page_from ?? ""} - {r.page_to ?? ""}</td>
-                        <td className="border px-2 py-1">{r.grade ? r.grade.charAt(0).toUpperCase() + r.grade.slice(1) : ""}</td>
-                        <td className="border px-2 py-1">{r.date}</td>
-                        <td className="border px-2 py-1">
-                          <button
-                            className="text-blue-600 hover:underline mr-2"
-                            onClick={() => handleEditReport(r)}
-                            type="button"
-                          >Edit</button>
-                          <button
-                            className="text-red-600 hover:underline"
-                            onClick={() => handleDeleteReport(r)}
-                            type="button"
-                          >Delete</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : (
-                <div className="text-center py-2">No previous reports for this student.</div>
-              )
-            ) : (
-              reports.length > 0 ? (
-                <table className="min-w-full text-sm">
-                  <thead className="bg-blue-50 sticky top-0">
-                    <tr>
-                      <th className="border px-2 py-1">Student</th>
-                      <th className="border px-2 py-1">Type</th>
-                      <th className="border px-2 py-1">Surah</th>
-                      <th className="border px-2 py-1">Juzuk</th>
-                      <th className="border px-2 py-1">Ayat</th>
-                      <th className="border px-2 py-1">Page</th>
-                      <th className="border px-2 py-1">Grade</th>
-                      <th className="border px-2 py-1">Date</th>
-                      <th className="border px-2 py-1">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {reports.map((r, idx) => (
-                      <tr key={r.id} className={idx % 2 === 0 ? 'bg-blue-50' : ''}>
-                        <td className="border px-2 py-1">{r.student_name || r.student_id}</td>
-                        <td className="border px-2 py-1">{r.type}</td>
-                        <td className="border px-2 py-1">{r.surah}</td>
-                        <td className="border px-2 py-1">{r.juzuk}</td>
-                        <td className="border px-2 py-1">{r.ayat_from} - {r.ayat_to}</td>
-                        <td className="border px-2 py-1">{r.page_from ?? ""} - {r.page_to ?? ""}</td>
-                        <td className="border px-2 py-1">{r.grade ? r.grade.charAt(0).toUpperCase() + r.grade.slice(1) : ""}</td>
-                        <td className="border px-2 py-1">{r.date}</td>
-                        <td className="border px-2 py-1">
-                          <button
-                            className="text-blue-600 hover:underline mr-2"
-                            onClick={() => handleEditReport(r)}
-                            type="button"
-                          >Edit</button>
-                          <button
-                            className="text-red-600 hover:underline"
-                            onClick={() => handleDeleteReport(r)}
-                            type="button"
-                          >Delete</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : (
-                <div className="text-center py-2">No previous reports for your class.</div>
-              )
-            )}
+        {studentReports.length > 0 ? (
+          <div>
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr>
+                  <th className="border px-2 py-1">Student</th>
+                  <th className="border px-2 py-1">Type</th>
+                  <th className="border px-2 py-1">Surah</th>
+                  <th className="border px-2 py-1">Juzuk</th>
+                  <th className="border px-2 py-1">Ayat</th>
+                  <th className="border px-2 py-1">Page</th>
+                  <th className="border px-2 py-1">Grade</th>
+                  <th className="border px-2 py-1">Date</th>
+                  <th className="border px-2 py-1">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {studentReports.map(r => (
+                  <tr key={r.id}>
+                    <td className="border px-2 py-1">{r.student_name}</td>
+                    <td className="border px-2 py-1">{r.type}</td>
+                    <td className="border px-2 py-1">{r.surah}</td>
+                    <td className="border px-2 py-1">{r.juzuk}</td>
+                    <td className="border px-2 py-1">{r.ayat_from} - {r.ayat_to}</td>
+                    <td className="border px-2 py-1">{r.page_from ?? ""} - {r.page_to ?? ""}</td>
+                    <td className="border px-2 py-1">{r.grade ? r.grade.charAt(0).toUpperCase() + r.grade.slice(1) : ""}</td>
+                    <td className="border px-2 py-1">{r.date}</td>
+                    <td className="border px-2 py-1">
+                      <button
+                        className="text-blue-600 hover:underline mr-2"
+                        onClick={() => handleEditReport(r)}
+                        type="button"
+                      ><span title="Edit" aria-label="Edit">
+  <svg xmlns="http://www.w3.org/2000/svg" className="inline w-4 h-4 text-blue-600 hover:text-blue-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-2.828 0L9 13zm0 0H5v4a2 2 0 002 2h4v-4a2 2 0 00-2-2z" />
+  </svg>
+</span></button>
+                      <button
+                        className="text-red-600 hover:underline"
+                        onClick={() => handleDeleteReport(r)}
+                        type="button"
+                      ><span title="Delete" aria-label="Delete">
+  <svg xmlns="http://www.w3.org/2000/svg" className="inline w-4 h-4 text-red-600 hover:text-red-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3m-4 0h16" />
+  </svg>
+</span></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="flex justify-center mt-4">
+              <button
+                className="px-2 py-1 border rounded disabled:opacity-50"
+                onClick={() => setStudentReportPage(Math.max(1, studentReportPage - 1))}
+                disabled={studentReportPage === 1}
+              >Prev</button>
+              {Array.from({ length: studentTotalPages }, (_, i) => i + 1).map((p) => (
+                <button
+                  key={p}
+                  className={`px-2 py-1 border rounded ${p === studentReportPage ? 'bg-blue-500 text-white' : ''}`}
+                  onClick={() => setStudentReportPage(p)}
+                >
+                  {p}
+                </button>
+              ))}
+              <button
+                className="px-2 py-1 border rounded disabled:opacity-50"
+                onClick={() => setStudentReportPage(Math.min(studentTotalPages, studentReportPage + 1))}
+                disabled={studentReportPage === studentTotalPages}
+              >Next</button>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div>
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr>
+                  <th className="border px-2 py-1">Student</th>
+                  <th className="border px-2 py-1">Type</th>
+                  <th className="border px-2 py-1">Surah</th>
+                  <th className="border px-2 py-1">Juzuk</th>
+                  <th className="border px-2 py-1">Ayat</th>
+                  <th className="border px-2 py-1">Page</th>
+                  <th className="border px-2 py-1">Grade</th>
+                  <th className="border px-2 py-1">Date</th>
+                  <th className="border px-2 py-1">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reports.map(r => (
+                  <tr key={r.id}>
+                    <td className="border px-2 py-1">{r.student_name}</td>
+                    <td className="border px-2 py-1">{r.type}</td>
+                    <td className="border px-2 py-1">{r.surah}</td>
+                    <td className="border px-2 py-1">{r.juzuk}</td>
+                    <td className="border px-2 py-1">{r.ayat_from} - {r.ayat_to}</td>
+                    <td className="border px-2 py-1">{r.page_from ?? ""} - {r.page_to ?? ""}</td>
+                    <td className="border px-2 py-1">{r.grade ? r.grade.charAt(0).toUpperCase() + r.grade.slice(1) : ""}</td>
+                    <td className="border px-2 py-1">{r.date}</td>
+                    <td className="border px-2 py-1">
+                      <button
+                        className="text-blue-600 hover:underline mr-2"
+                        onClick={() => handleEditReport(r)}
+                        type="button"
+                      ><span title="Edit" aria-label="Edit">
+  <svg xmlns="http://www.w3.org/2000/svg" className="inline w-4 h-4 text-blue-600 hover:text-blue-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-2.828 0L9 13zm0 0H5v4a2 2 0 002 2h4v-4a2 2 0 00-2-2z" />
+  </svg>
+</span></button>
+                      <button
+                        className="text-red-600 hover:underline"
+                        onClick={() => handleDeleteReport(r)}
+                        type="button"
+                      ><span title="Delete" aria-label="Delete">
+  <svg xmlns="http://www.w3.org/2000/svg" className="inline w-4 h-4 text-red-600 hover:text-red-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3m-4 0h16" />
+  </svg>
+</span></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="flex justify-center mt-4">
+              <button
+                className="px-2 py-1 border rounded disabled:opacity-50"
+                onClick={() => setAllReportPage(Math.max(1, allReportPage - 1))}
+                disabled={allReportPage === 1}
+              >Prev</button>
+              {Array.from({ length: allTotalPages }, (_, i) => i + 1).map((p) => (
+                <button
+                  key={p}
+                  className={`px-2 py-1 border rounded ${p === allReportPage ? 'bg-blue-500 text-white' : ''}`}
+                  onClick={() => setAllReportPage(p)}
+                >
+                  {p}
+                </button>
+              ))}
+              <button
+                className="px-2 py-1 border rounded disabled:opacity-50"
+                onClick={() => setAllReportPage(Math.min(allTotalPages, allReportPage + 1))}
+                disabled={allReportPage === allTotalPages}
+              >Next</button>
+            </div>
+          </div>
+        )}
       </div>
     </main>
   );
