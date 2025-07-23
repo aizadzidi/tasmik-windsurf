@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import SignOutButton from "@/components/SignOutButton";
 import { QuranProgressBar, ChartTabs } from "@/components/ReportCharts";
+import Navbar from "@/components/Navbar";
 
 interface Student {
   id: string;
@@ -142,8 +143,18 @@ export default function TeacherPage() {
   const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
+    supabase.auth.getUser().then(({ data, error }) => {
+      if (error) {
+        console.error('Authentication error:', error);
+        // Redirect to login if authentication fails
+        window.location.href = '/login';
+        return;
+      }
       setUserId(data.user?.id ?? null);
+    }).catch((error) => {
+      console.error('Failed to get user:', error);
+      // Redirect to login on any auth error
+      window.location.href = '/login';
     });
   }, []);
 
@@ -306,19 +317,13 @@ export default function TeacherPage() {
   });
 
   return (
-    <main className="relative min-h-screen bg-gradient-to-br from-[#b1c7f9] via-[#e0e7ff] to-[#b1f9e6] animate-gradient-move p-4 overflow-hidden">
+    <>
+      <Navbar />
+      <main className="relative min-h-screen bg-gradient-to-br from-[#b1c7f9] via-[#e0e7ff] to-[#b1f9e6] animate-gradient-move p-4 overflow-hidden pt-28">
       <div className="max-w-3xl mx-auto">
         {/* Animated Gradient Blobs */}
         <div className="absolute -top-40 -left-40 w-[500px] h-[500px] bg-gradient-to-tr from-blue-300 via-purple-200 to-blue-100 rounded-full opacity-40 blur-3xl animate-pulse-slow" />
         <div className="absolute -bottom-32 right-0 w-[400px] h-[400px] bg-gradient-to-br from-blue-200 via-blue-100 to-purple-200 rounded-full opacity-30 blur-2xl animate-pulse-slow" />
-        
-        {/* Header */}
-        <div className="relative z-10 bg-white/30 backdrop-blur-xl border border-white/40 rounded-3xl shadow-2xl p-6 mb-6">
-          <div className="flex justify-between items-center">
-            <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Teacher Dashboard</h1>
-            <SignOutButton />
-          </div>
-        </div>
         
         {/* Hafazan Last Record Gap Section */}
         <div className="relative z-10 bg-white/30 backdrop-blur-xl border border-white/40 rounded-3xl shadow-2xl p-6 mb-6">
@@ -499,7 +504,8 @@ export default function TeacherPage() {
           <h2 className="text-2xl font-bold mb-6 text-gray-900 tracking-tight">Reports</h2>
           {studentReports.length > 0 ? (
             <div className="overflow-hidden rounded-2xl border border-white/20 shadow-lg bg-white/10 backdrop-blur-sm">
-              <table className="min-w-full">
+              <div className="overflow-x-auto">
+                <table className="min-w-full" style={{minWidth: '800px'}}>
                 <thead className="bg-gradient-to-r from-blue-50/80 to-purple-50/80 backdrop-blur-sm">
                   <tr>
                     <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30 text-sm">Student</th>
@@ -544,38 +550,43 @@ export default function TeacherPage() {
                           {r.grade ? r.grade.charAt(0).toUpperCase() + r.grade.slice(1) : ""}
                         </span>
                       </td>
-                    <td className="border px-2 py-1">{r.date}</td>
-                    <td className="border px-2 py-1">
-                      <button
-                        className="text-blue-600 hover:underline mr-2"
-                        onClick={() => handleEditReport(r)}
-                        type="button"
-                      ><span title="Edit" aria-label="Edit">
-  <svg xmlns="http://www.w3.org/2000/svg" className="inline w-4 h-4 text-blue-600 hover:text-blue-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-2.828 0L9 13zm0 0H5v4a2 2 0 002 2h4v-4a2 2 0 00-2-2z" />
-  </svg>
-</span></button>
-                      <button
-                        className="text-red-600 hover:underline"
-                        onClick={() => handleDeleteReport(r)}
-                        type="button"
-                      ><span title="Delete" aria-label="Delete">
-  <svg xmlns="http://www.w3.org/2000/svg" className="inline w-4 h-4 text-red-600 hover:text-red-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3m-4 0h16" />
-  </svg>
-</span></button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="flex justify-center mt-4">
-              <button
-                className="px-2 py-1 border rounded disabled:opacity-50"
-                onClick={() => setStudentReportPage(Math.max(1, studentReportPage - 1))}
-                disabled={studentReportPage === 1}
-              >Prev</button>
-              {Array.from({ length: studentTotalPages }, (_, i) => i + 1).map((p) => (
+                      <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
+                        <span className="text-sm font-medium">{r.date}</span>
+                      </td>
+                      <td className="px-4 py-3 text-center border-b border-white/10">
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-blue-100 text-blue-600 hover:bg-blue-200 transition-colors"
+                            onClick={() => handleEditReport(r)}
+                            type="button"
+                          ><span title="Edit" aria-label="Edit">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="inline w-4 h-4 text-blue-600 hover:text-blue-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-2.828 0L9 13zm0 0H5v4a2 2 0 002 2h4v-4a2 2 0 00-2-2z" />
+                            </svg>
+                          </span></button>
+                          <button
+                            className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-red-100 text-red-600 hover:bg-red-200 transition-colors"
+                            onClick={() => handleDeleteReport(r)}
+                            type="button"
+                          ><span title="Delete" aria-label="Delete">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="inline w-4 h-4 text-red-600 hover:text-red-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3m-4 0h16" />
+                            </svg>
+                          </span></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              </div>
+              <div className="flex justify-center mt-4">
+                <button
+                  className="px-2 py-1 border rounded disabled:opacity-50"
+                  onClick={() => setStudentReportPage(Math.max(1, studentReportPage - 1))}
+                  disabled={studentReportPage === 1}
+                >Prev</button>
+                {Array.from({ length: studentTotalPages }, (_, i) => i + 1).map((p) => (
                 <button
                   key={p}
                   className={`px-2 py-1 border rounded ${p === studentReportPage ? 'bg-blue-500 text-white' : ''}`}
@@ -591,57 +602,90 @@ export default function TeacherPage() {
               >Next</button>
             </div>
           </div>
-        ) : (
-          <div>
-            <table className="min-w-full text-sm">
-              <thead>
+        ) : reports.length > 0 ? (
+          <div className="overflow-hidden rounded-2xl border border-white/20 shadow-lg bg-white/10 backdrop-blur-sm">
+            <div className="overflow-x-auto">
+              <table className="min-w-full" style={{minWidth: '800px'}}>
+              <thead className="bg-gradient-to-r from-blue-50/80 to-purple-50/80 backdrop-blur-sm">
                 <tr>
-                  <th className="border px-2 py-1">Student</th>
-                  <th className="border px-2 py-1">Type</th>
-                  <th className="border px-2 py-1">Surah</th>
-                  <th className="border px-2 py-1">Juzuk</th>
-                  <th className="border px-2 py-1">Ayat</th>
-                  <th className="border px-2 py-1">Page</th>
-                  <th className="border px-2 py-1">Grade</th>
-                  <th className="border px-2 py-1">Date</th>
-                  <th className="border px-2 py-1">Actions</th>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30 text-sm">Student</th>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30 text-sm">Type</th>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30 text-sm">Surah</th>
+                  <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30 text-sm">Juzuk</th>
+                  <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30 text-sm">Ayat</th>
+                  <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30 text-sm">Page</th>
+                  <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30 text-sm">Grade</th>
+                  <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30 text-sm">Date</th>
+                  <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30 text-sm">Actions</th>
                 </tr>
               </thead>
-              <tbody>
-                {reports.map(r => (
-                  <tr key={r.id}>
-                    <td className="border px-2 py-1">{r.student_name}</td>
-                    <td className="border px-2 py-1">{r.type}</td>
-                    <td className="border px-2 py-1">{r.surah}</td>
-                    <td className="border px-2 py-1">{r.juzuk}</td>
-                    <td className="border px-2 py-1">{r.ayat_from} - {r.ayat_to}</td>
-                    <td className="border px-2 py-1">{r.page_from ?? ""} - {r.page_to ?? ""}</td>
-                    <td className="border px-2 py-1">{r.grade ? r.grade.charAt(0).toUpperCase() + r.grade.slice(1) : ""}</td>
-                    <td className="border px-2 py-1">{r.date}</td>
-                    <td className="border px-2 py-1">
-                      <button
-                        className="text-blue-600 hover:underline mr-2"
-                        onClick={() => handleEditReport(r)}
-                        type="button"
-                      ><span title="Edit" aria-label="Edit">
-  <svg xmlns="http://www.w3.org/2000/svg" className="inline w-4 h-4 text-blue-600 hover:text-blue-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-2.828 0L9 13zm0 0H5v4a2 2 0 002 2h4v-4a2 2 0 00-2-2z" />
-  </svg>
-</span></button>
-                      <button
-                        className="text-red-600 hover:underline"
-                        onClick={() => handleDeleteReport(r)}
-                        type="button"
-                      ><span title="Delete" aria-label="Delete">
-  <svg xmlns="http://www.w3.org/2000/svg" className="inline w-4 h-4 text-red-600 hover:text-red-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3m-4 0h16" />
-  </svg>
-</span></button>
+              <tbody className="bg-white/5">
+                {pagedAllReports.map((r, index) => (
+                  <tr key={r.id} className={`transition-colors hover:bg-white/20 ${index % 2 === 0 ? 'bg-white/5' : 'bg-white/10'}`}>
+                    <td className="px-4 py-3 text-gray-800 font-medium border-b border-white/10">{r.student_name}</td>
+                    <td className="px-4 py-3 text-gray-700 border-b border-white/10">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                        {r.type}
+                      </span>
                     </td>
+                    <td className="px-4 py-3 text-gray-800 font-medium border-b border-white/10">{r.surah}</td>
+                    <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
+                      <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-purple-100 text-purple-800 text-sm font-semibold">
+                        {r.juzuk}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
+                      <span className="text-sm font-mono">{r.ayat_from} - {r.ayat_to}</span>
+                    </td>
+                    <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
+                      <span className="text-sm font-mono">{r.page_from ?? ""} - {r.page_to ?? ""}</span>
+                    </td>
+                    <td className="px-4 py-3 text-center border-b border-white/10">
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        r.grade === 'mumtaz' ? 'bg-green-100 text-green-800' :
+                        r.grade === 'jayyid jiddan' ? 'bg-yellow-100 text-yellow-800' :
+                        r.grade === 'jayyid' ? 'bg-orange-100 text-orange-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {r.grade ? r.grade.charAt(0).toUpperCase() + r.grade.slice(1) : ""}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
+                      <span className="text-sm font-medium">{r.date}</span>
+                    </td>
+                    <td className="px-4 py-3 text-center border-b border-white/10">
+  <div className="flex items-center justify-center gap-3">
+    {/* Edit Button */}
+    <button
+      className="group relative inline-flex items-center justify-center w-9 h-9 rounded-xl bg-white/60 shadow-md ring-1 ring-blue-300/30 hover:bg-blue-100 hover:scale-105 transition-all duration-150"
+      onClick={() => handleEditReport(r)}
+      type="button"
+      aria-label="Edit"
+    >
+      <svg className="w-5 h-5 text-blue-600 group-hover:text-blue-800 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 5.487a2.25 2.25 0 113.182 3.182l-8.25 8.25a2 2 0 01-.879.513l-4.25 1.25 1.25-4.25a2 2 0 01.513-.879l8.25-8.25z" />
+      </svg>
+      <span className="absolute left-1/2 bottom-[-2.2rem] -translate-x-1/2 px-2 py-1 rounded-md text-xs bg-blue-700 text-white opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 shadow-lg z-10">Edit</span>
+    </button>
+    {/* Delete Button */}
+    <button
+      className="group relative inline-flex items-center justify-center w-9 h-9 rounded-xl bg-white/60 shadow-md ring-1 ring-red-300/30 hover:bg-red-100 hover:scale-105 transition-all duration-150"
+      onClick={() => handleDeleteReport(r)}
+      type="button"
+      aria-label="Delete"
+    >
+      <svg className="w-5 h-5 text-red-500 group-hover:text-red-700 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M6 19a2 2 0 002 2h8a2 2 0 002-2V7H6v12zm3-9v6m4-6v6m5-8V5a2 2 0 00-2-2H8a2 2 0 00-2 2v2h14z" />
+      </svg>
+      <span className="absolute left-1/2 bottom-[-2.2rem] -translate-x-1/2 px-2 py-1 rounded-md text-xs bg-red-600 text-white opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 shadow-lg z-10">Delete</span>
+    </button>
+  </div>
+</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
             <div className="flex justify-center mt-4">
               <button
                 className="px-2 py-1 border rounded disabled:opacity-50"
@@ -664,6 +708,10 @@ export default function TeacherPage() {
               >Next</button>
             </div>
           </div>
+        ) : (
+          <div className="text-center py-8 text-gray-600">
+            <p>No reports found.</p>
+          </div>
         )}
         </div>
       </div>
@@ -683,5 +731,6 @@ export default function TeacherPage() {
         }
       `}</style>
     </main>
+    </>
   );
 }

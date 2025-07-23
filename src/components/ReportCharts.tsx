@@ -42,16 +42,19 @@ function gradeToNumber(grade: string | null) {
 }
 
 export function QuranProgressBar({ reports }: { reports: Report[] }) {
-  // Find the highest page_to value
+  // Filter to only include "Tasmi" type reports
+  const tasmiReports = reports.filter(r => r.type === "Tasmi");
+  
+  // Find the highest page_to value from Tasmi reports only
   const maxPage = Math.max(
-    ...reports.map(r => (r.page_to !== null && !isNaN(r.page_to) ? r.page_to : 0)),
+    ...tasmiReports.map(r => (r.page_to !== null && !isNaN(r.page_to) ? r.page_to : 0)),
     0
   );
   const percent = Math.min((maxPage / 604) * 100, 100);
   return (
     <div className="mb-4">
       <div className="flex justify-between items-center mb-1">
-        <span className="text-sm font-semibold">Quran Progress</span>
+        <span className="text-sm font-semibold">Quran Progress (Tasmi)</span>
         <span className="text-xs text-gray-600">{maxPage} / 604 pages ({percent.toFixed(1)}%)</span>
       </div>
       <Progress value={percent} />
