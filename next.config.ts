@@ -3,8 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   // Enable React strict mode for highlighting potential problems
   reactStrictMode: true,
-  // Enable SWC minification for production
-  swcMinify: true,
+
   // Ignore ESLint errors during builds
   eslint: {
     ignoreDuringBuilds: true,
