@@ -8,6 +8,13 @@ export default function Home() {
     <main className="relative min-h-screen flex flex-col items-center justify-center py-8 px-2 bg-gradient-to-br from-[#b1c7f9] via-[#e0e7ff] to-[#b1f9e6] animate-gradient-move overflow-hidden">
       {/* Glassmorphism card */}
       <div className="z-10 max-w-2xl w-full bg-white/30 backdrop-blur-xl border border-white/40 rounded-3xl shadow-2xl p-10 flex flex-col items-center text-center">
+        <Image
+          src="/logo-akademi.png"
+          alt="Al Khayr Academy Logo"
+          width={150}
+          height={150}
+          className="mb-8"
+        />
         <h1 className="text-6xl md:text-7xl font-extrabold text-gray-900 mb-6 tracking-tight leading-tight">
           Al Khayr <span className="text-blue-600">Tasmik</span>
         </h1>

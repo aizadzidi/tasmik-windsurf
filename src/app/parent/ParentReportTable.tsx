@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import jsPDF from "jspdf";
+import autoTable from 'jspdf-autotable';
 import { Line, Bar } from "react-chartjs-2";
 import {
   DropdownMenu,
@@ -304,112 +305,190 @@ export default function ParentReportTable({ parentId }: { parentId: string }) {
 
   // CSV download utility
   function downloadCSV(student: Student, studentReports: Report[]) {
-    const headers = ["Date","Type","Surah","Juzuk","Ayat","Page","Grade"];
-    const rows = studentReports.map(r => [
-      r.date,
-      r.type,
-      r.surah,
-      r.juzuk ?? '-',
-      `${r.ayat_from} - ${r.ayat_to}`,
-      `${r.page_from ?? '-'} - ${r.page_to ?? '-'}`,
-      r.grade ?? '-'
-    ]);
-    const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv" });
+    // --- Data Processing ---
+    const reportsByMonth = studentReports.reduce((acc, report) => {
+      const month = new Date(report.date).toLocaleString('default', { month: 'long', year: 'numeric' });
+      if (!acc[month]) {
+        acc[month] = { tasmi: [], murajaah: [] };
+      }
+      if (report.type.toLowerCase().includes('tasmi')) {
+        acc[month].tasmi.push(report);
+      } else {
+        acc[month].murajaah.push(report);
+      }
+      return acc;
+    }, {} as Record<string, { tasmi: Report[], murajaah: Report[] }>);
+
+    const sortedMonths = Object.keys(reportsByMonth).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+
+    // --- CSV Generation ---
+    const headers = ["Date", "Type", "Surah", "Juzuk", "Ayat", "Page", "Grade"];
+    let csvString = `Hafazan Report for ${student.name}\n\n`;
+
+    for (const month of sortedMonths) {
+      csvString += `${month}\n`;
+      const { tasmi, murajaah } = reportsByMonth[month];
+
+      if (tasmi.length > 0) {
+        csvString += `Tasmi Reports\n`;
+        csvString += headers.join(',') + '\n';
+        tasmi.forEach(r => {
+          const row = [r.date, r.type, r.surah, r.juzuk ?? '', `${r.ayat_from}-${r.ayat_to}`, `${r.page_from ?? ''}-${r.page_to ?? ''}`, r.grade ?? ''];
+          csvString += row.map(val => `"${val}"`).join(',') + '\n';
+        });
+        csvString += '\n';
+      }
+
+      if (murajaah.length > 0) {
+        csvString += `Murajaah Reports\n`;
+        csvString += headers.join(',') + '\n';
+        murajaah.forEach(r => {
+          const row = [r.date, r.type, r.surah, r.juzuk ?? '', `${r.ayat_from}-${r.ayat_to}`, `${r.page_from ?? ''}-${r.page_to ?? ''}`, r.grade ?? ''];
+          csvString += row.map(val => `"${val}"`).join(',') + '\n';
+        });
+        csvString += '\n';
+      }
+    }
+
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${student.name}-reports.csv`;
+    const a = document.createElement('a');
+    a.setAttribute('href', url);
+    a.setAttribute('download', `${student.name}_report_${new Date().toISOString().slice(0,10)}.csv`);
+    a.style.visibility = 'hidden';
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    document.body.removeChild(a);
   }
 
   // PDF download utility
-  function downloadPDF(student: Student, studentReports: Report[]) {
-  // Helper to convert image to base64
-  function loadImageAsBase64(url: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const img = new window.Image();
-      img.crossOrigin = 'Anonymous';
-      img.onload = function () {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0);
-        resolve(canvas.toDataURL('image/png'));
-      };
-      img.onerror = reject;
-      img.src = url;
-    });
-  }
-
-  loadImageAsBase64('/logo-akademi.png').then((imgData) => {
+  async function downloadPDF(student: Student, studentReports: Report[]) {
     const doc = new jsPDF();
-    // --- Header ---
-    doc.setFontSize(18);
-    doc.text('AKADEMI AL-KHAYR', 105, 18, { align: 'center' });
-    // Add the logo image (width: 18, height: 18)
-    doc.addImage(imgData, 'PNG', 15, 10, 18, 18);
-    doc.setFontSize(10);
-    doc.text('Akademi Al Khayr, White Resort Camp,', 105, 25, { align: 'center' });
-    doc.text('Mukim 7 & Mukim J, Kampung Genting,', 105, 30, { align: 'center' });
-    doc.text('11000 Balik Pulau, Penang', 105, 35, { align: 'center' });
-    doc.text('Phone: 019-381 8616 | Email: akademialkhayrofficial@gmail.com', 105, 40, { align: 'center' });
-    doc.setLineWidth(0.5);
-    doc.line(10, 44, 200, 44);
 
-    // --- Student Info ---
-    doc.setFontSize(12);
-    doc.text(`Student Name: ${student.name}`, 14, 52);
-    doc.text(`Report Date: ${new Date().toLocaleDateString()}`, 14, 58);
-
-    // --- Table ---
-    const headers = ["Date","Type","Surah","Juzuk","Ayat","Page","Grade"];
-    let y = 68;
-    doc.setFontSize(11);
-    headers.forEach((h, i) => {
-      doc.setFillColor(220, 230, 241);
-      doc.rect(10 + i * 27, y, 27, 8, 'F');
-      doc.text(h, 10 + i * 27 + 2, y + 6);
-    });
-    y += 10;
-    doc.setFontSize(10);
-    studentReports.forEach((r, idx) => {
-      const row = [
-        r.date,
-        r.type,
-        r.surah,
-        r.juzuk ?? '-',
-        `${r.ayat_from} - ${r.ayat_to}`,
-        `${r.page_from ?? '-'} - ${r.page_to ?? '-'}`,
-        r.grade ?? '-'
-      ];
-      row.forEach((cell, i) => {
-        doc.text(String(cell), 10 + i * 27 + 2, y + 6);
+    // --- Helper to load image ---
+    async function loadImageAsBase64(url: string): Promise<string> {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
       });
-      y += 8;
-      if (y > 250) {
-        // --- Footer ---
-        doc.setFontSize(9);
-        doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 12, 285);
-        doc.text('Principal/Authorized Signature: __________________', 120, 285);
-        doc.text(`Page ${doc.getNumberOfPages()}`, 200, 285, { align: 'right' });
-        doc.addPage();
-        y = 18;
-      }
-    });
+    }
 
-    // --- Final Footer on last page ---
+    // --- Data Processing ---
+    const reportsByMonth = studentReports.reduce((acc, report) => {
+      const month = new Date(report.date).toLocaleString('default', { month: 'long', year: 'numeric' });
+      if (!acc[month]) acc[month] = { tasmi: [], murajaah: [] };
+      if (report.type.toLowerCase().includes('tasmi')) acc[month].tasmi.push(report);
+      else acc[month].murajaah.push(report);
+      return acc;
+    }, {} as Record<string, { tasmi: Report[], murajaah: Report[] }>);
+
+    const sortedMonths = Object.keys(reportsByMonth).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+
+    // --- PDF Styling & Content ---
+    const TASMI_COLOR: [number, number, number] = [22, 163, 74];
+    const MURAJAAH_COLOR: [number, number, number] = [37, 99, 235];
+    const pageHeight = doc.internal.pageSize.height;
+
+    // --- Header --- 
+    const logoImg = await loadImageAsBase64('/logo-akademi.png');
+    doc.addImage(logoImg, 'PNG', 14, 12, 20, 20);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.text('AKADEMI AL-KHAYR', 40, 18);
+    doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
-    doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 12, 285);
-    doc.text('Principal/Authorized Signature: __________________', 120, 285);
-    doc.text(`Page ${doc.getNumberOfPages()}`, 200, 285, { align: 'right' });
+    doc.text('White Resort Camp, Mukim 7 & Mukim J, Kampung Genting,', 40, 23);
+    doc.text('11000 Balik Pulau, Penang | 019-381 8616', 40, 28);
+    doc.setDrawColor(200);
+    doc.line(14, 38, 196, 38);
 
-    // --- Save ---
-    doc.save(`${student.name}-reports.pdf`);
-  });
-} // Correctly close the downloadPDF function here
+    // --- Report Title & Student Info ---
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Hafazan Progress Report', 14, 50);
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Student: ${student.name}`, 14, 58);
+    doc.text(`Date: ${new Date().toLocaleDateString()}`, 196, 58, { align: 'right' });
+
+    // --- Completion Bar ---
+    const maxPage = Math.max(...studentReports.map(r => r.page_to ?? 0), 0);
+    const totalQuranPages = 604;
+    const percent = Math.min((maxPage / totalQuranPages) * 100, 100);
+    doc.setFontSize(10);
+    doc.text('Overall Quran Completion', 14, 72);
+    doc.setFontSize(9);
+    doc.text(`${maxPage} / ${totalQuranPages} pages`, 196, 72, { align: 'right' });
+    doc.setDrawColor(220);
+    doc.rect(14, 75, 182, 6, 'S');
+    doc.setFillColor(230, 242, 255);
+    doc.rect(14, 75, 182, 6, 'F');
+    doc.setFillColor(59, 130, 246);
+    doc.rect(14, 75, 182 * (percent / 100), 6, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(255);
+    if (percent > 10) { // Only show text if there's enough space
+      doc.text(`${percent.toFixed(1)}%`, 14 + (182 * (percent / 100)) / 2, 79.5, { align: 'center' });
+    }
+    doc.setTextColor(0);
+
+    let yPos = 90;
+
+    // --- Footer --- 
+    const addFooter = () => {
+      const pageCount = doc.getNumberOfPages();
+      doc.setFontSize(9);
+      doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 14, pageHeight - 10);
+      doc.text(`Page ${pageCount}`, 196, pageHeight - 10, { align: 'right' });
+    };
+
+    // --- Report Tables ---
+    for (const month of sortedMonths) {
+      if (yPos > pageHeight - 40) { // Check space for month header
+        addFooter();
+        doc.addPage();
+        yPos = 20;
+      }
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text(month, 14, yPos);
+      yPos += 8;
+
+      const { tasmi, murajaah } = reportsByMonth[month];
+      const tableCols = ["Date", "Surah", "Ayat", "Page", "Grade"];
+
+      if (tasmi.length > 0) {
+        autoTable(doc, {
+          startY: yPos,
+          head: [[{ content: 'Tasmi Reports', colSpan: 5, styles: { fillColor: TASMI_COLOR, textColor: 255, fontStyle: 'bold' } } ], tableCols],
+          body: tasmi.map(r => [r.date, r.surah, `${r.ayat_from}-${r.ayat_to}`, `${r.page_from ?? '-'}-${r.page_to ?? '-'}`, r.grade ?? '-']),
+          theme: 'grid',
+          headStyles: { fillColor: [240, 240, 240], textColor: 30, fontStyle: 'bold' },
+          didDrawPage: (data) => { addFooter(); if (data.cursor) { yPos = data.cursor.y; } }
+        });
+        yPos = (doc as any).lastAutoTable.finalY + 10;
+      }
+
+      if (murajaah.length > 0) {
+        autoTable(doc, {
+          startY: yPos,
+          head: [[{ content: 'Murajaah Reports', colSpan: 5, styles: { fillColor: MURAJAAH_COLOR, textColor: 255, fontStyle: 'bold' } } ], tableCols],
+          body: murajaah.map(r => [r.date, r.surah, `${r.ayat_from}-${r.ayat_to}`, `${r.page_from ?? '-'}-${r.page_to ?? '-'}`, r.grade ?? '-']),
+          theme: 'grid',
+          headStyles: { fillColor: [240, 240, 240], textColor: 30, fontStyle: 'bold' },
+          didDrawPage: (data) => { addFooter(); if (data.cursor) { yPos = data.cursor.y; } }
+        });
+        yPos = (doc as any).lastAutoTable.finalY + 10;
+      }
+    }
+    
+    addFooter();
+    doc.save(`${student.name}_report_${new Date().toISOString().slice(0,10)}.pdf`);
+  }
 
   return (
     <div className="mt-8">
@@ -437,26 +516,18 @@ export default function ParentReportTable({ parentId }: { parentId: string }) {
                 {studentReports.length > 0 && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="icon" title="Download">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 16v-8m0 8l-3-3m3 3l3-3m-9 5a2 2 0 002 2h8a2 2 0 002-2V6a2 2 0 00-2-2h-3.5a.5.5 0 01-.5-.5V3.5a.5.5 0 00-.5-.5h-1a.5.5 0 00-.5.5V4a.5.5 0 01-.5.5H6a2 2 0 00-2 2v12z" />
+                      <Button variant="ghost" size="icon" className="rounded-full hover:bg-blue-100/50 text-gray-600 hover:text-blue-700 transition-colors">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
                         </svg>
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem onClick={() => downloadCSV(student, studentReports)}>
-                        <span title="Download as CSV" aria-label="Download as CSV">
-                          <svg xmlns="http://www.w3.org/2000/svg" className="inline w-4 h-4 text-blue-600 hover:text-blue-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 011-2h2.586a2 2 0 011.707.293l3.686.814 3.686-.814a2 2 0 01.707.293h2.586a3 3 0 01-2 2.5 2.5 0 01-2.5-2.5V6a2.5 2.5 0 00-2.5-2.5H9a2.5 2.5 0 00-2.5 2.5V16a2.5 2.5 0 012.5 2.5z" />
-                          </svg>
-                        </span>
+                        Download as CSV
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => downloadPDF(student, studentReports)}>
-                        <span title="Download as PDF" aria-label="Download as PDF">
-                          <svg xmlns="http://www.w3.org/2000/svg" className="inline w-4 h-4 text-blue-600 hover:text-blue-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 011-2h2.586a2 2 0 011.707.293l3.686.814 3.686-.814a2 2 0 01.707.293h2.586a3 3 0 01-2 2.5 2.5 0 01-2.5-2.5V6a2.5 2.5 0 00-2.5-2.5H9a2.5 2.5 0 00-2.5 2.5V16a2.5 2.5 0 012.5 2.5z" />
-                          </svg>
-                        </span>
+                        Download as PDF
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
