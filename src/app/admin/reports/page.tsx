@@ -1,0 +1,393 @@
+"use client";
+
+import React, { useState, useEffect, useMemo } from "react";
+import { supabase } from "@/lib/supabaseClient";
+import AdminNavbar from "@/components/admin/AdminNavbar";
+import { Card } from "@/components/ui/Card";
+import {
+  StudentProgressData,
+  calculateDaysSinceLastRead,
+  formatRelativeDate,
+  formatAbsoluteDate,
+  getInactivityRowClass,
+  getActivityStatus,
+  sortStudentsByActivity,
+  filterStudentsBySearch,
+  filterStudentsByTeacher,
+  getUniqueTeachers,
+  getSummaryStats,
+  SummaryStats
+} from "@/lib/reportUtils";
+
+type ViewMode = 'tasmik' | 'murajaah';
+
+export default function AdminReportsPage() {
+  const [students, setStudents] = useState<StudentProgressData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  
+  // View and filter state
+  const [viewMode, setViewMode] = useState<ViewMode>('tasmik');
+  const [searchTerm, setSearchTerm] = useState("");
+  const [teacherFilter, setTeacherFilter] = useState("");
+  const [sortBy, setSortBy] = useState<'activity' | 'name' | 'teacher'>('activity');
+
+  // Fetch all student progress data
+  useEffect(() => {
+    async function fetchStudentProgress() {
+      setLoading(true);
+      setError("");
+
+      try {
+        // Fetch students with their latest reports for each type
+        const { data: studentsData, error: studentsError } = await supabase
+          .from("students")
+          .select(`
+            id,
+            name,
+            assigned_teacher_id,
+            class_id,
+            users!assigned_teacher_id (name),
+            classes (name)
+          `);
+
+        if (studentsError) {
+          setError("Failed to fetch students: " + studentsError.message);
+          return;
+        }
+
+        if (!studentsData) {
+          setStudents([]);
+          return;
+        }
+
+        // For each student, get their latest report for the current view mode
+        const studentProgressPromises = studentsData.map(async (student) => {
+          const reportType = viewMode === 'tasmik' ? 'Tasmi' : 
+                           viewMode === 'murajaah' ? ['Old Murajaah', 'New Murajaah'] : 'Tasmi';
+
+          let query = supabase
+            .from("reports")
+            .select("*")
+            .eq("student_id", student.id);
+
+          // Apply type filter
+          if (Array.isArray(reportType)) {
+            query = query.in("type", reportType);
+          } else {
+            query = query.eq("type", reportType);
+          }
+
+          const { data: reports } = await query
+            .order("date", { ascending: false })
+            .limit(1);
+
+          const latestReport = reports?.[0];
+          const daysSinceLastRead = latestReport 
+            ? calculateDaysSinceLastRead(latestReport.date)
+            : 999;
+
+          // Format latest reading based on report type and data available
+          let latestReading = null;
+          if (latestReport) {
+            if (viewMode === 'tasmik') {
+              latestReading = `${latestReport.surah} (${latestReport.ayat_from}-${latestReport.ayat_to})`;
+            } else {
+              // Murajaah format - create from existing data
+              if (latestReport.juzuk) {
+                if (latestReport.page_from && latestReport.page_to) {
+                  const pagesDiff = latestReport.page_to - latestReport.page_from + 1;
+                  if (pagesDiff >= 10) {
+                    // Estimate hizb (every 10 pages ≈ 1 hizb)
+                    const estimatedHizb = Math.floor(latestReport.page_from / 10) + 1;
+                    latestReading = `Juz ${latestReport.juzuk} - Hizb ${estimatedHizb}`;
+                  } else {
+                    // Show as quarter
+                    const quarter = Math.ceil(pagesDiff / 2.5);
+                    latestReading = `Juz ${latestReport.juzuk} - ${quarter}/4`;
+                  }
+                } else {
+                  latestReading = `Juz ${latestReport.juzuk}`;
+                }
+              } else {
+                latestReading = latestReport.surah;
+              }
+            }
+          }
+
+          return {
+            id: student.id,
+            name: student.name,
+            teacher_name: (student.users as any)?.name || null,
+            class_name: (student.classes as any)?.name || null,
+            latest_reading: latestReading,
+            last_read_date: latestReport?.date || null,
+            days_since_last_read: daysSinceLastRead,
+            report_type: latestReport?.type || null
+          } as StudentProgressData;
+        });
+
+        const progressData = await Promise.all(studentProgressPromises);
+        setStudents(progressData);
+      } catch (err) {
+        setError("Failed to fetch data: " + (err as Error).message);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchStudentProgress();
+  }, [viewMode]);
+
+  // Filtered and sorted students
+  const filteredStudents = useMemo(() => {
+    let filtered = students;
+    
+    // Apply search filter
+    filtered = filterStudentsBySearch(filtered, searchTerm);
+    
+    // Apply teacher filter
+    filtered = filterStudentsByTeacher(filtered, teacherFilter);
+    
+    // Apply sorting
+    switch (sortBy) {
+      case 'activity':
+        filtered = sortStudentsByActivity(filtered);
+        break;
+      case 'name':
+        filtered = [...filtered].sort((a, b) => a.name.localeCompare(b.name));
+        break;
+      case 'teacher':
+        filtered = [...filtered].sort((a, b) => 
+          (a.teacher_name || '').localeCompare(b.teacher_name || ''));
+        break;
+      default:
+        filtered = sortStudentsByActivity(filtered);
+    }
+    
+    return filtered;
+  }, [students, searchTerm, teacherFilter, sortBy]);
+
+  // Summary statistics
+  const summaryStats: SummaryStats = useMemo(() => 
+    getSummaryStats(filteredStudents), [filteredStudents]);
+
+  // Unique teachers for filter dropdown
+  const uniqueTeachers = useMemo(() => 
+    getUniqueTeachers(students), [students]);
+
+  const handleViewRecord = (studentId: string) => {
+    // For now, just show alert. In the future, this could open a modal or navigate to student detail
+    alert(`View record functionality for student ${studentId} - to be implemented`);
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#b1c7f9] via-[#e0e7ff] to-[#b1f9e6] flex items-center justify-center">
+        <div className="text-xl text-gray-800">Loading student progress...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <AdminNavbar />
+      <div className="relative bg-gradient-to-br from-[#b1c7f9] via-[#e0e7ff] to-[#b1f9e6] animate-gradient-move p-4 sm:p-6 min-h-screen overflow-hidden">
+        {/* Animated Background Blobs */}
+        <div className="absolute -top-40 -left-40 w-[500px] h-[500px] bg-gradient-to-tr from-blue-300 via-purple-200 to-blue-100 rounded-full opacity-40 blur-3xl animate-pulse-slow -z-10" />
+        <div className="absolute -bottom-32 right-0 w-[400px] h-[400px] bg-gradient-to-br from-blue-200 via-blue-100 to-purple-200 rounded-full opacity-30 blur-2xl animate-pulse-slow -z-10" />
+        
+        <div className="relative z-20 max-w-7xl mx-auto">
+          {/* Header */}
+          <header className="mb-6">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-800">Student Progress Reports</h1>
+              <p className="text-gray-600 mt-1">Monitor tasmik and murajaah activity across all students</p>
+            </div>
+          </header>
+
+        {/* Summary Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <Card className="bg-white/30 backdrop-blur-xl border border-white/40 p-6">
+            <div className="text-3xl font-bold text-gray-900">{summaryStats.totalStudents}</div>
+            <div className="text-sm text-gray-600">Total Students</div>
+          </Card>
+          <Card className="bg-white/30 backdrop-blur-xl border border-white/40 p-6">
+            <div className="text-3xl font-bold text-orange-600">{summaryStats.inactive7Days}</div>
+            <div className="text-sm text-gray-600">Inactive &gt; 7 Days</div>
+          </Card>
+          <Card className="bg-white/30 backdrop-blur-xl border border-white/40 p-6">
+            <div className="text-3xl font-bold text-red-600">{summaryStats.inactive14Days}</div>
+            <div className="text-sm text-gray-600">Inactive &gt; 14 Days</div>
+          </Card>
+        </div>
+
+        {/* Main Content Card */}
+        <Card className="bg-white/30 backdrop-blur-xl border border-white/40 p-6">
+          {/* View Toggle */}
+          <div className="flex items-center justify-center mb-6">
+            <div className="bg-gray-100 rounded-full p-1">
+              <div className="flex">
+                <button
+                  onClick={() => setViewMode('tasmik')}
+                  className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${
+                    viewMode === 'tasmik' 
+                      ? 'bg-blue-600 text-white shadow-md'
+                      : 'text-gray-600 hover:text-gray-800'
+                  }`}
+                >
+                  Tasmik
+                </button>
+                <button
+                  onClick={() => setViewMode('murajaah')}
+                  className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${
+                    viewMode === 'murajaah'
+                      ? 'bg-blue-600 text-white shadow-md'
+                      : 'text-gray-600 hover:text-gray-800'
+                  }`}
+                >
+                  Murajaah
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Filters */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div>
+              <select
+                value={teacherFilter}
+                onChange={(e) => setTeacherFilter(e.target.value)}
+                className="w-full border-gray-300 rounded-lg px-3 py-2 bg-white/80 backdrop-blur-sm focus:ring-2 focus:ring-blue-400"
+              >
+                <option value="">Filter by Teacher</option>
+                {uniqueTeachers.map(teacher => (
+                  <option key={teacher} value={teacher}>{teacher}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as 'activity' | 'name' | 'teacher')}
+                className="w-full border-gray-300 rounded-lg px-3 py-2 bg-white/80 backdrop-blur-sm focus:ring-2 focus:ring-blue-400"
+              >
+                <option value="activity">Sort by Activity</option>
+                <option value="name">Sort by Name</option>
+                <option value="teacher">Sort by Teacher</option>
+              </select>
+            </div>
+            <div className="md:col-span-2">
+              <input
+                type="text"
+                placeholder="Search students, teachers, or classes..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full border-gray-300 rounded-lg px-3 py-2 bg-white/80 backdrop-blur-sm focus:ring-2 focus:ring-blue-400"
+              />
+            </div>
+          </div>
+
+          {/* Error Message */}
+          {error && (
+            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-6">
+              {error}
+            </div>
+          )}
+
+          {/* Student Progress Table */}
+          <div className="overflow-hidden rounded-xl border border-white/20 shadow-lg">
+            <div className="overflow-x-auto">
+              <table className="min-w-full">
+                <thead className="bg-gradient-to-r from-blue-50/80 to-purple-50/80 backdrop-blur-sm">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30">Name</th>
+                    <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30">Teacher</th>
+                    <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30">Latest Reading</th>
+                    <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Last Read</th>
+                    <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Days</th>
+                    <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white/5">
+                  {filteredStudents.map((student, index) => {
+                    const rowClass = getInactivityRowClass(student.days_since_last_read);
+                    const activityStatus = getActivityStatus(student.days_since_last_read);
+                    
+                    return (
+                      <tr key={student.id} className={`transition-colors hover:bg-white/20 ${index % 2 === 0 ? 'bg-white/5' : 'bg-white/10'} ${rowClass}`}>
+                        <td className="px-4 py-3 text-gray-800 font-medium border-b border-white/10">
+                          <div>
+                            <div className="font-semibold">{student.name}</div>
+                            {student.class_name && (
+                              <div className="text-xs text-gray-600">{student.class_name}</div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-gray-700 border-b border-white/10">
+                          {student.teacher_name || <span className="italic text-gray-400">Unassigned</span>}
+                        </td>
+                        <td className="px-4 py-3 text-gray-800 border-b border-white/10">
+                          {student.latest_reading || <span className="italic text-gray-400">No records</span>}
+                        </td>
+                        <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
+                          <div className="text-sm">
+                            <div>{formatAbsoluteDate(student.last_read_date)}</div>
+                            <div className="text-xs text-gray-500">
+                              {formatRelativeDate(student.last_read_date)}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-center border-b border-white/10">
+                          <div className="flex flex-col items-center">
+                            <span className="text-lg font-bold text-gray-800">
+                              {student.days_since_last_read === 999 ? '∞' : student.days_since_last_read}
+                            </span>
+                            <span className={`text-xs font-medium ${activityStatus.color}`}>
+                              {activityStatus.text}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-center border-b border-white/10">
+                          <button
+                            onClick={() => handleViewRecord(student.id)}
+                            className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1 rounded-lg text-sm font-medium transition-colors"
+                          >
+                            View Record
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filteredStudents.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="text-center py-8 text-gray-600">
+                        <p>No students match the current filters.</p>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </Card>
+        
+        {/* Custom Styles */}
+        <style jsx global>{`
+          @keyframes gradient-move {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+          }
+          .animate-gradient-move {
+            background-size: 200% 200%;
+            animation: gradient-move 10s ease-in-out infinite;
+          }
+          .animate-pulse-slow {
+            animation: pulse 8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+          }
+        `}</style>
+        </div>
+      </div>
+    </div>
+  );
+}

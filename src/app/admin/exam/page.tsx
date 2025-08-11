@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import AdminNavbar from "@/components/admin/AdminNavbar";
 import { Card } from "@/components/ui/Card";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'recharts';
 
@@ -109,13 +110,15 @@ export default function AdminExamPage() {
   }
 
   return (
-    <div className="p-4 sm:p-6 bg-gray-50 min-h-screen">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">Exam Monitoring</h1>
-        <button onClick={() => setCreateModalOpen(true)} className="inline-flex items-center justify-center rounded-md text-sm font-medium h-10 px-4 py-2 bg-blue-600 text-white hover:bg-blue-700">
-          Create Exam/Quiz
-        </button>
-      </div>
+    <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
+      <AdminNavbar />
+      <div className="relative p-4 sm:p-6">
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-2xl font-bold text-gray-800">Exam Monitoring</h1>
+          <button onClick={() => setCreateModalOpen(true)} className="inline-flex items-center justify-center rounded-md text-sm font-medium h-10 px-4 py-2 bg-blue-600 text-white hover:bg-blue-700">
+            Create Exam/Quiz
+          </button>
+        </div>
 
       {isCreateModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-40 flex justify-center items-center">
@@ -245,6 +248,7 @@ export default function AdminExamPage() {
           </div>
         </Card>
       )}
+      </div>
     </div>
   );
 }

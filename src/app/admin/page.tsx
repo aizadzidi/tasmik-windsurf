@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useEffect, useMemo } from "react";
 import { createClient } from "@supabase/supabase-js";
-import SignOutButton from "@/components/SignOutButton";
+import AdminNavbar from "@/components/admin/AdminNavbar";
 import { Card } from "@/components/ui/Card";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -36,15 +36,17 @@ interface Class {
 export default function AdminPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [parents, setParents] = useState<Parent[]>([]);
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [classes, setClasses] = useState<Class[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
   // Form states
+  const [showAddForm, setShowAddForm] = useState(false);
   const [newStudentName, setNewStudentName] = useState("");
-  const [newStudentParentSearch, setNewStudentParentSearch] = useState("");
   const [newStudentParentId, setNewStudentParentId] = useState("");
+  const [newStudentTeacherId, setNewStudentTeacherId] = useState("");
   const [newStudentClassId, setNewStudentClassId] = useState("");
   
   // Filter states
@@ -54,7 +56,7 @@ export default function AdminPage() {
   
   // Edit states
   const [editStudentId, setEditStudentId] = useState<string | null>(null);
-  const [editStudentForm, setEditStudentForm] = useState<{ name: string; parent_id: string; parentSearch: string }>({ name: '', parent_id: '', parentSearch: '' });
+  const [editStudentForm, setEditStudentForm] = useState<{ name: string; parent_id: string; assigned_teacher_id: string; class_id: string }>({ name: '', parent_id: '', assigned_teacher_id: '', class_id: '' });
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState("");
 
@@ -65,6 +67,9 @@ export default function AdminPage() {
 
       const { data: parentsData } = await supabase.from("users").select("id, name, email").eq("role", "parent");
       if (parentsData) setParents(parentsData);
+
+      const { data: teachersData } = await supabase.from("users").select("id, name, email").eq("role", "teacher");
+      if (teachersData) setTeachers(teachersData);
 
       const { data: classesData } = await supabase.from("classes").select("id, name").order("name");
       if (classesData) setClasses(classesData);
@@ -79,6 +84,7 @@ export default function AdminPage() {
     const { data: newStudent, error: insertError } = await supabase.from("students").insert([{ 
       name: newStudentName.trim(),
       parent_id: newStudentParentId || null,
+      assigned_teacher_id: newStudentTeacherId || null,
       class_id: newStudentClassId || null
     }]).select().single();
     
@@ -87,9 +93,10 @@ export default function AdminPage() {
     } else if (newStudent) {
       setStudents([...students, newStudent].sort((a, b) => a.name.localeCompare(b.name)));
       setNewStudentName("");
-      setNewStudentParentSearch("");
       setNewStudentParentId("");
+      setNewStudentTeacherId("");
       setNewStudentClassId("");
+      setShowAddForm(false);
       setSuccess("Student added successfully!");
       setTimeout(() => setSuccess(""), 3000);
     }
@@ -98,11 +105,11 @@ export default function AdminPage() {
 
   const handleEditStudent = (student: Student) => {
     setEditStudentId(student.id);
-    const parent = parents.find(p => p.id === student.parent_id);
     setEditStudentForm({
       name: student.name,
       parent_id: student.parent_id || '',
-      parentSearch: parent ? `${parent.name} (${parent.email})` : ''
+      assigned_teacher_id: student.assigned_teacher_id || '',
+      class_id: student.class_id || ''
     });
   };
 
@@ -112,7 +119,9 @@ export default function AdminPage() {
     setEditError("");
     const { data: updatedStudent, error: updateError } = await supabase.from("students").update({ 
       name: editStudentForm.name.trim(),
-      parent_id: editStudentForm.parent_id || null
+      parent_id: editStudentForm.parent_id || null,
+      assigned_teacher_id: editStudentForm.assigned_teacher_id || null,
+      class_id: editStudentForm.class_id || null
     }).eq("id", studentId).select().single();
     
     if (updateError) {
@@ -138,34 +147,139 @@ export default function AdminPage() {
     s.name.toLowerCase().includes(searchTerm.toLowerCase()) &&
     (filterClass === "" || s.class_id === filterClass) &&
     (filterParent === "" || s.parent_id === filterParent)
-  ), [students, searchTerm, filterClass, filterParent]);
-
-  const groupedStudents = useMemo(() => filteredStudents.reduce((acc, student) => {
-    const classInfo = classes.find(c => c.id === student.class_id);
-    const className = classInfo ? classInfo.name : 'Unassigned';
-    if (!acc[className]) acc[className] = [];
-    acc[className].push(student);
-    return acc;
-  }, {} as Record<string, Student[]>), [filteredStudents, classes]);
+  ).sort((a, b) => a.name.localeCompare(b.name)), [students, searchTerm, filterClass, filterParent]);
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col p-4 sm:p-6">
-      <header className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">Admin Dashboard</h1>
-          <p className="text-gray-600">Manage students, classes, and parents.</p>
-        </div>
-        <SignOutButton />
-      </header>
+    <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
+      <AdminNavbar />
+      <div className="relative p-4 sm:p-6">
+        <header className="mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800">Student Management</h1>
+            <p className="text-gray-600">Manage students, assign parents, teachers, and classes.</p>
+          </div>
+        </header>
 
-      <Card className="p-4"><h2 className="text-xl font-semibold text-gray-900 mb-4">Students Management</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-          <input type="text" placeholder="Search by name..." className="lg:col-span-1 w-full border-gray-300 rounded-md shadow-sm" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-          <select className="w-full border-gray-300 rounded-md shadow-sm" value={filterClass} onChange={e => setFilterClass(e.target.value)}>
+      {/* Add Student Section */}
+      <Card className="p-4 mb-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold text-gray-900">Add Student</h2>
+          <button
+            onClick={() => setShowAddForm(!showAddForm)}
+            className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
+          >
+            {showAddForm ? 'Cancel' : 'Add Student'}
+          </button>
+        </div>
+
+        {showAddForm && (
+          <div className="space-y-4 border-t pt-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Student Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="Enter student name"
+                  className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                  value={newStudentName}
+                  onChange={e => setNewStudentName(e.target.value)}
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Parent (Optional)
+                </label>
+                <select
+                  className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                  value={newStudentParentId}
+                  onChange={e => setNewStudentParentId(e.target.value)}
+                >
+                  <option value="">Select parent (optional)</option>
+                  {parents.map(p => (
+                    <option key={p.id} value={p.id}>{p.name} ({p.email})</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Teacher (Optional)
+                </label>
+                <select
+                  className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                  value={newStudentTeacherId}
+                  onChange={e => setNewStudentTeacherId(e.target.value)}
+                >
+                  <option value="">Select teacher (optional)</option>
+                  {teachers.map(t => (
+                    <option key={t.id} value={t.id}>{t.name} ({t.email})</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Class (Optional)
+                </label>
+                <select
+                  className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                  value={newStudentClassId}
+                  onChange={e => setNewStudentClassId(e.target.value)}
+                >
+                  <option value="">Select class (optional)</option>
+                  {classes.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            
+            {error && <p className="text-red-500 text-sm">{error}</p>}
+            {success && <p className="text-green-500 text-sm">{success}</p>}
+            
+            <div className="flex gap-2">
+              <button
+                onClick={handleAddStudent}
+                disabled={!newStudentName.trim() || loading}
+                className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {loading ? 'Adding...' : 'Add Student'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {/* Students List Section */}
+      <Card className="p-4">
+        <h2 className="text-xl font-semibold text-gray-900 mb-4">Students List</h2>
+        
+        {/* Filters */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <input 
+            type="text" 
+            placeholder="Search by name..." 
+            className="w-full border-gray-300 rounded-md shadow-sm p-2 border" 
+            value={searchTerm} 
+            onChange={e => setSearchTerm(e.target.value)} 
+          />
+          <select 
+            className="w-full border-gray-300 rounded-md shadow-sm p-2 border" 
+            value={filterClass} 
+            onChange={e => setFilterClass(e.target.value)}
+          >
             <option value="">All Classes</option>
             {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
-          <select className="w-full border-gray-300 rounded-md shadow-sm" value={filterParent} onChange={e => setFilterParent(e.target.value)}>
+          <select 
+            className="w-full border-gray-300 rounded-md shadow-sm p-2 border" 
+            value={filterParent} 
+            onChange={e => setFilterParent(e.target.value)}
+          >
             <option value="">All Parents</option>
             {parents.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
@@ -175,58 +289,120 @@ export default function AdminPage() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Student Name</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Parent</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Student Name</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Parent</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Teacher</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Class</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {Object.keys(groupedStudents).sort().map(className => (
-                <React.Fragment key={className}>
-                  <tr className="bg-gray-100">
-                    <td colSpan={3} className="px-4 py-2 text-sm font-bold text-gray-800">
-                      {className} ({groupedStudents[className].length} students)
+              {filteredStudents.map(s => (
+                <tr key={s.id}>
+                  {editStudentId === s.id ? (
+                    <td className="px-4 py-3" colSpan={5}>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Student Name</label>
+                          <input 
+                            type="text" 
+                            className="w-full border-gray-300 rounded-md shadow-sm p-2 border text-sm" 
+                            value={editStudentForm.name} 
+                            onChange={e => setEditStudentForm({ ...editStudentForm, name: e.target.value })} 
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Parent</label>
+                          <select
+                            className="w-full border-gray-300 rounded-md shadow-sm p-2 border text-sm"
+                            value={editStudentForm.parent_id}
+                            onChange={e => setEditStudentForm({ ...editStudentForm, parent_id: e.target.value })}
+                          >
+                            <option value="">No parent assigned</option>
+                            {parents.map(p => (
+                              <option key={p.id} value={p.id}>{p.name} ({p.email})</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Teacher</label>
+                          <select
+                            className="w-full border-gray-300 rounded-md shadow-sm p-2 border text-sm"
+                            value={editStudentForm.assigned_teacher_id}
+                            onChange={e => setEditStudentForm({ ...editStudentForm, assigned_teacher_id: e.target.value })}
+                          >
+                            <option value="">No teacher assigned</option>
+                            {teachers.map(t => (
+                              <option key={t.id} value={t.id}>{t.name} ({t.email})</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Class</label>
+                          <select
+                            className="w-full border-gray-300 rounded-md shadow-sm p-2 border text-sm"
+                            value={editStudentForm.class_id}
+                            onChange={e => setEditStudentForm({ ...editStudentForm, class_id: e.target.value })}
+                          >
+                            <option value="">No class assigned</option>
+                            {classes.map(c => (
+                              <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      {editError && <p className="text-red-500 text-sm mt-2">{editError}</p>}
+                      <div className="flex gap-2 items-center mt-4">
+                        <button 
+                          onClick={() => handleSaveEditStudent(s.id)} 
+                          disabled={editLoading} 
+                          className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          {editLoading ? 'Saving...' : 'Save'}
+                        </button>
+                        <button 
+                          onClick={() => setEditStudentId(null)} 
+                          className="bg-gray-500 text-white px-3 py-1 rounded text-sm hover:bg-gray-600"
+                        >
+                          Cancel
+                        </button>
+                      </div>
                     </td>
-                  </tr>
-                  {groupedStudents[className].map(s => (
-                    <tr key={s.id}>
-                      {editStudentId === s.id ? (
-                        <td className="px-4 py-2" colSpan={3}>
-                          <div className="space-y-2">
-                            <input type="text" className="w-full border-gray-300 rounded-md shadow-sm" value={editStudentForm.name} onChange={e => setEditStudentForm({ ...editStudentForm, name: e.target.value })} />
-                            <input type="text" className="w-full border-gray-300 rounded-md shadow-sm" placeholder="Search parent..." value={editStudentForm.parentSearch} onChange={e => setEditStudentForm({ ...editStudentForm, parentSearch: e.target.value })} list={`edit-parent-list-${s.id}`} onBlur={() => {
-                              const match = parents.find(p => `${p.name} (${p.email})` === editStudentForm.parentSearch);
-                              setEditStudentForm({ ...editStudentForm, parent_id: match ? match.id : '' });
-                            }} />
-                            <datalist id={`edit-parent-list-${s.id}`}>
-                              {parents.map(p => <option key={p.id} value={`${p.name} (${p.email})`} />)}
-                            </datalist>
-                            {editError && <p className="text-red-500 text-xs">{editError}</p>}
-                            <div className="flex gap-2 items-center">
-                              <button onClick={() => handleSaveEditStudent(s.id)} disabled={editLoading} className="text-blue-600 hover:underline text-xs">{editLoading ? 'Saving...' : 'Save'}</button>
-                              <button onClick={() => setEditStudentId(null)} className="text-gray-600 hover:underline text-xs">Cancel</button>
-                            </div>
-                          </div>
-                        </td>
-                      ) : (
-                        <>
-                          <td className="px-4 py-2 font-medium text-gray-900">{s.name}</td>
-                          <td className="px-4 py-2 text-gray-600">{parents.find(p => p.id === s.parent_id)?.name || '-'}</td>
-                          <td className="px-4 py-2">
-                            <div className="flex gap-3">
-                              <button onClick={() => handleEditStudent(s)} className="text-blue-600 hover:underline text-xs">Edit</button>
-                              <button onClick={() => handleDeleteStudent(s.id)} className="text-red-600 hover:underline text-xs">Delete</button>
-                            </div>
-                          </td>
-                        </>
-                      )}
-                    </tr>
-                  ))}
-                </React.Fragment>
+                  ) : (
+                    <>
+                      <td className="px-4 py-3 font-medium text-gray-900">{s.name}</td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {parents.find(p => p.id === s.parent_id)?.name || '-'}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {teachers.find(t => t.id === s.assigned_teacher_id)?.name || '-'}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {classes.find(c => c.id === s.class_id)?.name || '-'}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => handleEditStudent(s)} 
+                            className="bg-blue-600 text-white px-3 py-1 rounded text-xs hover:bg-blue-700"
+                          >
+                            Edit
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteStudent(s.id)} 
+                            className="bg-red-600 text-white px-3 py-1 rounded text-xs hover:bg-red-700"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </>
+                  )}
+                </tr>
               ))}
               {filteredStudents.length === 0 && (
                 <tr>
-                  <td colSpan={3} className="text-center py-6 text-gray-500">
+                  <td colSpan={5} className="text-center py-8 text-gray-500">
                     No students match the current filters.
                   </td>
                 </tr>
@@ -241,6 +417,7 @@ export default function AdminPage() {
         <Card className="p-4"><div className="text-2xl font-bold text-green-600">{students.filter(s => s.class_id).length}</div><div className="text-sm text-gray-600">In a Class</div></Card>
         <Card className="p-4"><div className="text-2xl font-bold text-orange-600">{students.filter(s => s.assigned_teacher_id).length}</div><div className="text-sm text-gray-600">With a Teacher</div></Card>
         {filteredStudents.length !== students.length && <Card className="p-4"><div className="text-2xl font-bold text-blue-600">{filteredStudents.length}</div><div className="text-sm text-gray-600">Filtered Results</div></Card>}
+      </div>
       </div>
     </div>
   );
