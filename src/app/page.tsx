@@ -16,7 +16,7 @@ export default function Home() {
           className="mb-8"
         />
         <h1 className="text-6xl md:text-7xl font-extrabold text-gray-900 mb-6 tracking-tight leading-tight">
-          Al Khayr <span className="text-blue-600">Tasmik</span>
+          Al Khayr <span className="text-blue-600">Class</span>
         </h1>
         <p className="text-xl md:text-2xl text-gray-700 mb-10 max-w-2xl font-medium">
           Empowering parents and teachers to track Quran memorization and student progress with clarity and ease.
