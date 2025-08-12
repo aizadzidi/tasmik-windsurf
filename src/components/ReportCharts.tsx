@@ -70,11 +70,18 @@ function groupReportsIntoWeeklySummaries(reports: Report[]): WeeklySummary[] {
     const combinedAyatFrom = Math.min(...ayatFromValues);
     const combinedAyatTo = Math.max(...ayatToValues);
     
-    // Combine page ranges
-    const pageFromValues = groupReports.map(r => r.page_from).filter(p => p !== null) as number[];
-    const pageToValues = groupReports.map(r => r.page_to).filter(p => p !== null) as number[];
-    const combinedPageFrom = pageFromValues.length > 0 ? Math.min(...pageFromValues) : null;
-    const combinedPageTo = pageToValues.length > 0 ? Math.max(...pageToValues) : null;
+    // Combine page ranges - ensure proper from/to ordering for each report first
+    const normalizedPageRanges = groupReports
+      .filter(r => r.page_from !== null && r.page_to !== null)
+      .map(r => ({
+        from: Math.min(r.page_from!, r.page_to!),
+        to: Math.max(r.page_from!, r.page_to!)
+      }));
+    
+    const combinedPageFrom = normalizedPageRanges.length > 0 ? 
+      Math.min(...normalizedPageRanges.map(p => p.from)) : null;
+    const combinedPageTo = normalizedPageRanges.length > 0 ? 
+      Math.max(...normalizedPageRanges.map(p => p.to)) : null;
     
     // Calculate average grade
     const grades = groupReports.map(r => r.grade);

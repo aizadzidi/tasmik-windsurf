@@ -1,10 +1,14 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import AdminNavbar from "@/components/admin/AdminNavbar";
 import { Card } from "@/components/ui/Card";
 import JuzTestModal from "@/components/admin/JuzTestModal";
+import AdminViewRecordsModal from "@/components/admin/AdminViewRecordsModal";
+import ActivityTrendChart from "@/components/admin/ActivityTrendChart";
+import TeacherPerformanceChart from "@/components/admin/TeacherPerformanceChart";
+import JuzTestProgressChart from "@/components/admin/JuzTestProgressChart";
 import {
   StudentProgressData,
   calculateDaysSinceLastRead,
@@ -37,9 +41,13 @@ export default function AdminReportsPage() {
   const [showJuzTestModal, setShowJuzTestModal] = useState(false);
   const [selectedStudentForTest, setSelectedStudentForTest] = useState<string | null>(null);
   const [selectedJuzNumber, setSelectedJuzNumber] = useState<number>(1);
+  
+  // View Records modal state
+  const [showViewRecordsModal, setShowViewRecordsModal] = useState(false);
+  const [selectedStudentForView, setSelectedStudentForView] = useState<{ id: string; name: string } | null>(null);
 
-  // Fetch all student progress data
-  const fetchStudentProgress = async () => {
+  // Optimized fetch function to reduce API calls
+  const fetchStudentProgress = useCallback(async () => {
       setLoading(true);
       setError("");
 
@@ -61,47 +69,52 @@ export default function AdminReportsPage() {
           return;
         }
 
-        if (!studentsData) {
+        if (!studentsData || studentsData.length === 0) {
           setStudents([]);
           return;
         }
 
-        // For each student, get their latest report for the current view mode
-        const studentProgressPromises = studentsData.map(async (student) => {
-          if (viewMode === 'juz_tests') {
-            // For Juz Tests view, get memorization progress and test progress
-            const [memorizationResult, juzTestsResult] = await Promise.all([
-              // Get highest memorized juz from Tasmi reports
-              supabase
-                .from("reports")
-                .select("juzuk")
-                .eq("student_id", student.id)
-                .eq("type", "Tasmi")
-                .not("juzuk", "is", null)
-                .order("juzuk", { ascending: false })
-                .limit(1),
-              
-              // Get highest tested juz (passed or failed) - for gap detection
-              supabase
-                .from("juz_tests")
-                .select("juz_number, test_date, passed, total_percentage")
-                .eq("student_id", student.id)
-                .order("juz_number", { ascending: false })
-                .limit(1)
-                .then(result => {
-                  // If table doesn't exist, return empty result
-                  if (result.error?.message?.includes('relation "public.juz_tests" does not exist')) {
-                    return { data: [], error: null };
-                  }
-                  return result;
-                })
-            ]);
+        const studentIds = studentsData.map(s => s.id);
 
-            const highestMemorizedJuz = memorizationResult.data?.[0]?.juzuk || 0;
-            const latestTest = juzTestsResult.data?.[0] || null;
+        if (viewMode === 'juz_tests') {
+          // Batch fetch all memorization data and juz tests
+          const [memorizationResults, juzTestResults] = await Promise.all([
+            // Get all memorization data in one query
+            supabase
+              .from("reports")
+              .select("student_id, juzuk")
+              .in("student_id", studentIds)
+              .eq("type", "Tasmi")
+              .not("juzuk", "is", null)
+              .order("juzuk", { ascending: false }),
+            
+            // Get all juz test data in one query
+            supabase
+              .from("juz_tests")
+              .select("student_id, juz_number, test_date, passed, total_percentage")
+              .in("student_id", studentIds)
+              .order("juz_number", { ascending: false })
+              .then(result => {
+                if (result.error?.message?.includes('relation "public.juz_tests" does not exist')) {
+                  return { data: [], error: null };
+                }
+                return result;
+              })
+          ]);
+
+          // Process the batched data
+          const studentProgressData = studentsData.map(student => {
+            // Find highest memorized juz for this student
+            const studentMemorization = memorizationResults.data?.filter(r => r.student_id === student.id) || [];
+            const highestMemorizedJuz = studentMemorization.length > 0 
+              ? Math.max(...studentMemorization.map(r => r.juzuk || 0))
+              : 0;
+
+            // Find latest test for this student
+            const studentTests = juzTestResults.data?.filter(r => r.student_id === student.id) || [];
+            const latestTest = studentTests.length > 0 ? studentTests[0] : null;
             const highestTestedJuz = latestTest?.juz_number || 0;
             
-            // Gap is between memorized and tested (regardless of pass/fail)
             const gap = highestMemorizedJuz - highestTestedJuz;
 
             return {
@@ -111,9 +124,8 @@ export default function AdminReportsPage() {
               class_name: (student.classes as { name?: string })?.name || null,
               latest_reading: `Memorized: Juz ${highestMemorizedJuz}`,
               last_read_date: latestTest?.test_date || null,
-              days_since_last_read: gap, // Using gap instead of days for sorting
+              days_since_last_read: latestTest?.test_date ? calculateDaysSinceLastRead(latestTest.test_date) : 999,
               report_type: 'juz_test',
-              // Additional fields for juz tests
               highest_memorized_juz: highestMemorizedJuz,
               highest_passed_juz: highestTestedJuz,
               juz_test_gap: gap,
@@ -122,50 +134,57 @@ export default function AdminReportsPage() {
               highest_memorized_juz?: number;
               highest_passed_juz?: number;
               juz_test_gap?: number;
-              latest_test_result?: any;
+              latest_test_result?: {
+                juz_number: number;
+                test_date: string;
+                passed: boolean;
+                total_percentage: number;
+              };
             };
+          });
+
+          setStudents(studentProgressData);
+        } else {
+          // Batch fetch for Tasmik and Murajaah
+          const reportType = viewMode === 'tasmik' ? 'Tasmi' : 
+                           viewMode === 'murajaah' ? ['Old Murajaah', 'New Murajaah'] : 'Tasmi';
+
+          let query = supabase
+            .from("reports")
+            .select("*")
+            .in("student_id", studentIds);
+
+          if (Array.isArray(reportType)) {
+            query = query.in("type", reportType);
           } else {
-            // Original logic for Tasmik and Murajaah
-            const reportType = viewMode === 'tasmik' ? 'Tasmi' : 
-                             viewMode === 'murajaah' ? ['Old Murajaah', 'New Murajaah'] : 'Tasmi';
+            query = query.eq("type", reportType);
+          }
 
-            let query = supabase
-              .from("reports")
-              .select("*")
-              .eq("student_id", student.id);
+          const { data: allReports } = await query.order("date", { ascending: false });
 
-            // Apply type filter
-            if (Array.isArray(reportType)) {
-              query = query.in("type", reportType);
-            } else {
-              query = query.eq("type", reportType);
-            }
-
-            const { data: reports } = await query
-              .order("date", { ascending: false })
-              .limit(1);
-
-            const latestReport = reports?.[0];
+          // Process the batched data
+          const studentProgressData = studentsData.map(student => {
+            // Find latest report for this student
+            const studentReports = allReports?.filter(r => r.student_id === student.id) || [];
+            const latestReport = studentReports.length > 0 ? studentReports[0] : null;
+            
             const daysSinceLastRead = latestReport 
               ? calculateDaysSinceLastRead(latestReport.date)
               : 999;
 
-            // Format latest reading based on report type and data available
+            // Format latest reading
             let latestReading = null;
             if (latestReport) {
               if (viewMode === 'tasmik') {
                 latestReading = `${latestReport.surah} (${latestReport.ayat_from}-${latestReport.ayat_to})`;
               } else {
-                // Murajaah format - create from existing data
                 if (latestReport.juzuk) {
                   if (latestReport.page_from && latestReport.page_to) {
-                    const pagesDiff = latestReport.page_to - latestReport.page_from + 1;
+                    const pagesDiff = Math.abs(latestReport.page_to - latestReport.page_from) + 1;
                     if (pagesDiff >= 10) {
-                      // Estimate hizb (every 10 pages ≈ 1 hizb)
                       const estimatedHizb = Math.floor(latestReport.page_from / 10) + 1;
                       latestReading = `Juz ${latestReport.juzuk} - Hizb ${estimatedHizb}`;
                     } else {
-                      // Show as quarter
                       const quarter = Math.ceil(pagesDiff / 2.5);
                       latestReading = `Juz ${latestReport.juzuk} - ${quarter}/4`;
                     }
@@ -188,21 +207,20 @@ export default function AdminReportsPage() {
               days_since_last_read: daysSinceLastRead,
               report_type: latestReport?.type || null
             } as StudentProgressData;
-          }
-        });
+          });
 
-        const progressData = await Promise.all(studentProgressPromises);
-        setStudents(progressData);
+          setStudents(studentProgressData);
+        }
       } catch (err) {
         setError("Failed to fetch data: " + (err as Error).message);
       } finally {
         setLoading(false);
       }
-    };
+    }, [viewMode]);
 
   useEffect(() => {
     fetchStudentProgress();
-  }, [viewMode]);
+  }, [fetchStudentProgress]);
 
   // Filtered and sorted students
   const filteredStudents = useMemo(() => {
@@ -277,8 +295,12 @@ export default function AdminReportsPage() {
         alert("Failed to fetch test history. Please ensure the database is properly set up.");
       }
     } else {
-      // Original functionality for Tasmik/Murajaah
-      alert(`View record functionality for student ${studentId} - to be implemented`);
+      // Show records modal for Tasmik/Murajaah
+      const student = students.find(s => s.id === studentId);
+      if (student) {
+        setSelectedStudentForView({ id: student.id, name: student.name });
+        setShowViewRecordsModal(true);
+      }
     }
   };
 
@@ -321,6 +343,24 @@ export default function AdminReportsPage() {
             <div className="text-3xl font-bold text-red-600">{summaryStats.inactive14Days}</div>
             <div className="text-sm text-gray-600">Inactive &gt; 14 Days</div>
           </Card>
+        </div>
+
+        {/* Charts Section */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          <Card className="bg-white/30 backdrop-blur-xl border border-white/40 p-6">
+            <h3 className="text-lg font-semibold text-gray-800 mb-4">Student Activity Trend</h3>
+            <ActivityTrendChart students={filteredStudents} />
+          </Card>
+          <Card className="bg-white/30 backdrop-blur-xl border border-white/40 p-6">
+            <h3 className="text-lg font-semibold text-gray-800 mb-4">Teacher Performance</h3>
+            <TeacherPerformanceChart students={filteredStudents} />
+          </Card>
+          {viewMode === 'juz_tests' && (
+            <Card className="bg-white/30 backdrop-blur-xl border border-white/40 p-6">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">Juz Test Progress</h3>
+              <JuzTestProgressChart students={filteredStudents} />
+            </Card>
+          )}
         </div>
 
         {/* Main Content Card */}
@@ -437,7 +477,12 @@ export default function AdminReportsPage() {
                       highest_memorized_juz?: number;
                       highest_passed_juz?: number;
                       juz_test_gap?: number;
-                      latest_test_result?: any;
+                      latest_test_result?: {
+                        juz_number: number;
+                        test_date: string;
+                        passed: boolean;
+                        total_percentage: number;
+                      };
                     };
 
                     const rowClass = viewMode === 'juz_tests' 
@@ -623,6 +668,18 @@ export default function AdminReportsPage() {
               // Force re-fetch by updating a dependency
               fetchStudentProgress();
             }}
+          />
+        )}
+
+        {/* View Records Modal */}
+        {showViewRecordsModal && selectedStudentForView && (
+          <AdminViewRecordsModal
+            student={selectedStudentForView}
+            onClose={() => {
+              setShowViewRecordsModal(false);
+              setSelectedStudentForView(null);
+            }}
+            viewMode={viewMode === 'tasmik' ? 'tasmik' : viewMode === 'murajaah' ? 'murajaah' : 'all'}
           />
         )}
         

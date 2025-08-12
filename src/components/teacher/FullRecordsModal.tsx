@@ -164,7 +164,10 @@ export default function FullRecordsModal({
                         </td>
                         <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
                           <span className="text-xs font-mono">
-                            {report.page_from && report.page_to ? `${report.page_from}-${report.page_to}` : '-'}
+                            {report.page_from && report.page_to ? 
+                              `${Math.min(report.page_from, report.page_to)}-${Math.max(report.page_from, report.page_to)}` : 
+                              '-'
+                            }
                           </span>
                         </td>
                         <td className="px-4 py-3 text-center border-b border-gray-100">

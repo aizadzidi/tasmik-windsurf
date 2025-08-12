@@ -26,7 +26,8 @@ export function calculateDaysSinceLastRead(lastReadDate: string | null): number 
   const diffTime = today.getTime() - lastDate.getTime();
   const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
   
-  return diffDays;
+  // For future dates, return 0 to indicate "today" or recent activity
+  return Math.max(0, diffDays);
 }
 
 // Format date to relative time (e.g., "3 days ago", "2 weeks ago")
@@ -37,6 +38,13 @@ export function formatRelativeDate(dateString: string | null): string {
   const today = new Date();
   const diffTime = today.getTime() - date.getTime();
   const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  
+  // Handle future dates
+  if (diffDays < 0) {
+    const futureDays = Math.abs(diffDays);
+    if (futureDays === 1) return 'Tomorrow';
+    return `In ${futureDays} days`;
+  }
   
   if (diffDays === 0) return 'Today';
   if (diffDays === 1) return '1 day ago';

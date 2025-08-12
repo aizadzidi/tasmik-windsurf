@@ -503,13 +503,35 @@ export default function TeacherPage() {
                   <div className="bg-white/50 backdrop-blur-sm rounded-xl p-4">
                     <h4 className="text-md font-medium mb-3 text-gray-700">Student Progress Overview</h4>
                     {viewMode !== 'juz_tests' && filteredMonitorStudents.length > 0 && (
-                      <QuranProgressBar reports={reports.filter(r => filteredMonitorStudents.some(s => s.id === r.student_id))} />
+                      <QuranProgressBar reports={reports.filter(r => {
+                        const isRelevantStudent = filteredMonitorStudents.some(s => s.id === r.student_id);
+                        if (!isRelevantStudent) return false;
+                        
+                        // Filter by report type based on viewMode
+                        if (viewMode === 'tasmik') {
+                          return r.type === 'Tasmi';
+                        } else if (viewMode === 'murajaah') {
+                          return ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
+                        }
+                        return true;
+                      })} />
                     )}
                   </div>
                   <div className="bg-white/50 backdrop-blur-sm rounded-xl p-4">
                     <h4 className="text-md font-medium mb-3 text-gray-700">Class Analytics</h4>
                     {viewMode !== 'juz_tests' && (
-                      <ChartTabs reports={reports.filter(r => filteredMonitorStudents.some(s => s.id === r.student_id))} />
+                      <ChartTabs reports={reports.filter(r => {
+                        const isRelevantStudent = filteredMonitorStudents.some(s => s.id === r.student_id);
+                        if (!isRelevantStudent) return false;
+                        
+                        // Filter by report type based on viewMode
+                        if (viewMode === 'tasmik') {
+                          return r.type === 'Tasmi';
+                        } else if (viewMode === 'murajaah') {
+                          return ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
+                        }
+                        return true;
+                      })} />
                     )}
                   </div>
                 </div>

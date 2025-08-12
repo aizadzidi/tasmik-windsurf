@@ -3,6 +3,8 @@ import React, { useState, useEffect, useMemo } from "react";
 import { createClient } from "@supabase/supabase-js";
 import AdminNavbar from "@/components/admin/AdminNavbar";
 import { Card } from "@/components/ui/Card";
+import ClassDistributionChart from "@/components/admin/ClassDistributionChart";
+import TeacherAssignmentChart from "@/components/admin/TeacherAssignmentChart";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -52,7 +54,7 @@ export default function AdminPage() {
   // Filter states
   const [searchTerm, setSearchTerm] = useState("");
   const [filterClass, setFilterClass] = useState("");
-  const [filterParent, setFilterParent] = useState("");
+  const [filterTeacher, setFilterTeacher] = useState("");
   
   // Edit states
   const [editStudentId, setEditStudentId] = useState<string | null>(null);
@@ -146,8 +148,8 @@ export default function AdminPage() {
   const filteredStudents = useMemo(() => students.filter(s => 
     s.name.toLowerCase().includes(searchTerm.toLowerCase()) &&
     (filterClass === "" || s.class_id === filterClass) &&
-    (filterParent === "" || s.parent_id === filterParent)
-  ).sort((a, b) => a.name.localeCompare(b.name)), [students, searchTerm, filterClass, filterParent]);
+    (filterTeacher === "" || s.assigned_teacher_id === filterTeacher)
+  ).sort((a, b) => a.name.localeCompare(b.name)), [students, searchTerm, filterClass, filterTeacher]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
@@ -159,6 +161,40 @@ export default function AdminPage() {
             <p className="text-gray-600">Manage students, assign parents, teachers, and classes.</p>
           </div>
         </header>
+
+        {/* Summary Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <Card className="p-4">
+            <div className="text-2xl font-bold">{students.length}</div>
+            <div className="text-sm text-gray-600">Total Students</div>
+          </Card>
+          <Card className="p-4">
+            <div className="text-2xl font-bold text-green-600">{students.filter(s => s.class_id).length}</div>
+            <div className="text-sm text-gray-600">In a Class</div>
+          </Card>
+          <Card className="p-4">
+            <div className="text-2xl font-bold text-orange-600">{students.filter(s => s.assigned_teacher_id).length}</div>
+            <div className="text-sm text-gray-600">With a Teacher</div>
+          </Card>
+          {filteredStudents.length !== students.length && (
+            <Card className="p-4">
+              <div className="text-2xl font-bold text-blue-600">{filteredStudents.length}</div>
+              <div className="text-sm text-gray-600">Filtered Results</div>
+            </Card>
+          )}
+        </div>
+
+        {/* Charts Section */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          <Card className="p-6">
+            <h3 className="text-lg font-semibold text-gray-800 mb-4">Class Distribution</h3>
+            <ClassDistributionChart students={students} classes={classes} />
+          </Card>
+          <Card className="p-6">
+            <h3 className="text-lg font-semibold text-gray-800 mb-4">Teacher Assignments</h3>
+            <TeacherAssignmentChart students={students} teachers={teachers} />
+          </Card>
+        </div>
 
       {/* Add Student Section */}
       <Card className="p-4 mb-6">
@@ -277,11 +313,11 @@ export default function AdminPage() {
           </select>
           <select 
             className="w-full border-gray-300 rounded-md shadow-sm p-2 border" 
-            value={filterParent} 
-            onChange={e => setFilterParent(e.target.value)}
+            value={filterTeacher} 
+            onChange={e => setFilterTeacher(e.target.value)}
           >
-            <option value="">All Parents</option>
-            {parents.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            <option value="">All Teachers</option>
+            {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
         </div>
 
@@ -411,13 +447,6 @@ export default function AdminPage() {
           </table>
         </div>
       </Card>
-
-      <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card className="p-4"><div className="text-2xl font-bold">{students.length}</div><div className="text-sm text-gray-600">Total Students</div></Card>
-        <Card className="p-4"><div className="text-2xl font-bold text-green-600">{students.filter(s => s.class_id).length}</div><div className="text-sm text-gray-600">In a Class</div></Card>
-        <Card className="p-4"><div className="text-2xl font-bold text-orange-600">{students.filter(s => s.assigned_teacher_id).length}</div><div className="text-sm text-gray-600">With a Teacher</div></Card>
-        {filteredStudents.length !== students.length && <Card className="p-4"><div className="text-2xl font-bold text-blue-600">{filteredStudents.length}</div><div className="text-sm text-gray-600">Filtered Results</div></Card>}
-      </div>
       </div>
     </div>
   );

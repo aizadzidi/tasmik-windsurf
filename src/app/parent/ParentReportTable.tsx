@@ -333,7 +333,10 @@ export default function ParentReportTable({ parentId }: { parentId: string }) {
         csvString += `Tasmi Reports\n`;
         csvString += headers.join(',') + '\n';
         tasmi.forEach(r => {
-          const row = [r.date, r.type, r.surah, r.juzuk ?? '', `${r.ayat_from}-${r.ayat_to}`, `${r.page_from ?? ''}-${r.page_to ?? ''}`, r.grade ?? ''];
+          const pageRange = (r.page_from && r.page_to) ? 
+            `${Math.min(r.page_from, r.page_to)}-${Math.max(r.page_from, r.page_to)}` : 
+            `${r.page_from ?? ''}-${r.page_to ?? ''}`;
+          const row = [r.date, r.type, r.surah, r.juzuk ?? '', `${r.ayat_from}-${r.ayat_to}`, pageRange, r.grade ?? ''];
           csvString += row.map(val => `"${val}"`).join(',') + '\n';
         });
         csvString += '\n';
@@ -343,7 +346,10 @@ export default function ParentReportTable({ parentId }: { parentId: string }) {
         csvString += `Murajaah Reports\n`;
         csvString += headers.join(',') + '\n';
         murajaah.forEach(r => {
-          const row = [r.date, r.type, r.surah, r.juzuk ?? '', `${r.ayat_from}-${r.ayat_to}`, `${r.page_from ?? ''}-${r.page_to ?? ''}`, r.grade ?? ''];
+          const pageRange = (r.page_from && r.page_to) ? 
+            `${Math.min(r.page_from, r.page_to)}-${Math.max(r.page_from, r.page_to)}` : 
+            `${r.page_from ?? ''}-${r.page_to ?? ''}`;
+          const row = [r.date, r.type, r.surah, r.juzuk ?? '', `${r.ayat_from}-${r.ayat_to}`, pageRange, r.grade ?? ''];
           csvString += row.map(val => `"${val}"`).join(',') + '\n';
         });
         csvString += '\n';
@@ -465,7 +471,15 @@ export default function ParentReportTable({ parentId }: { parentId: string }) {
         autoTable(doc, {
           startY: yPos,
           head: [[{ content: 'Tasmi Reports', colSpan: 5, styles: { fillColor: TASMI_COLOR, textColor: 255, fontStyle: 'bold' } } ], tableCols],
-          body: tasmi.map(r => [r.date, r.surah, `${r.ayat_from}-${r.ayat_to}`, `${r.page_from ?? '-'}-${r.page_to ?? '-'}`, r.grade ?? '-']),
+          body: tasmi.map(r => [
+            r.date, 
+            r.surah, 
+            `${r.ayat_from}-${r.ayat_to}`, 
+            (r.page_from && r.page_to) ? 
+              `${Math.min(r.page_from, r.page_to)}-${Math.max(r.page_from, r.page_to)}` : 
+              `${r.page_from ?? '-'}-${r.page_to ?? '-'}`,
+            r.grade ?? '-'
+          ]),
           theme: 'grid',
           headStyles: { fillColor: [240, 240, 240], textColor: 30, fontStyle: 'bold' },
           didDrawPage: (data) => { addFooter(); if (data.cursor) { yPos = data.cursor.y; } }
@@ -477,7 +491,15 @@ export default function ParentReportTable({ parentId }: { parentId: string }) {
         autoTable(doc, {
           startY: yPos,
           head: [[{ content: 'Murajaah Reports', colSpan: 5, styles: { fillColor: MURAJAAH_COLOR, textColor: 255, fontStyle: 'bold' } } ], tableCols],
-          body: murajaah.map(r => [r.date, r.surah, `${r.ayat_from}-${r.ayat_to}`, `${r.page_from ?? '-'}-${r.page_to ?? '-'}`, r.grade ?? '-']),
+          body: murajaah.map(r => [
+            r.date, 
+            r.surah, 
+            `${r.ayat_from}-${r.ayat_to}`, 
+            (r.page_from && r.page_to) ? 
+              `${Math.min(r.page_from, r.page_to)}-${Math.max(r.page_from, r.page_to)}` : 
+              `${r.page_from ?? '-'}-${r.page_to ?? '-'}`,
+            r.grade ?? '-'
+          ]),
           theme: 'grid',
           headStyles: { fillColor: [240, 240, 240], textColor: 30, fontStyle: 'bold' },
           didDrawPage: (data) => { addFooter(); if (data.cursor) { yPos = data.cursor.y; } }
@@ -561,7 +583,12 @@ export default function ParentReportTable({ parentId }: { parentId: string }) {
                             <TableCell>{r.surah}</TableCell>
                             <TableCell>{r.juzuk ?? '-'}</TableCell>
                             <TableCell>{r.ayat_from} - {r.ayat_to}</TableCell>
-                            <TableCell>{r.page_from ?? '-'} - {r.page_to ?? '-'}</TableCell>
+                            <TableCell>
+                              {(r.page_from && r.page_to) ? 
+                                `${Math.min(r.page_from, r.page_to)} - ${Math.max(r.page_from, r.page_to)}` : 
+                                `${r.page_from ?? '-'} - ${r.page_to ?? '-'}`
+                              }
+                            </TableCell>
                             <TableCell>{r.grade ?? '-'}</TableCell>
                           </TableRow>
                         ))}
