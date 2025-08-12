@@ -10,26 +10,14 @@ import {
   Title,
   Tooltip,
   Legend,
+  Filler,
 } from "chart.js";
 import { Progress } from "@/components/ui/progress";
 import React from "react";
+import type { Report } from "@/types/teacher";
+import { calculateAverageGrade, getWeekBoundaries, getWeekIdentifier } from "@/lib/gradeUtils";
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend);
-
-export interface Report {
-  id: string;
-  student_id: string;
-  type: string;
-  surah: string;
-  juzuk: number | null;
-  ayat_from: number;
-  ayat_to: number;
-  page_from: number | null;
-  page_to: number | null;
-  grade: string | null;
-  date: string;
-  student_name?: string;
-}
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, Filler);
 
 function gradeToNumber(grade: string | null) {
   if (!grade) return null;
@@ -41,13 +29,81 @@ function gradeToNumber(grade: string | null) {
   }
 }
 
-export function QuranProgressBar({ reports }: { reports: Report[] }) {
-  // Filter to only include "Tasmi" type reports
-  const tasmiReports = reports.filter(r => r.type === "Tasmi");
+// Weekly summary interface for combined reports
+interface WeeklySummary {
+  weekIdentifier: string;
+  weekRange: string;
+  studentId: string;
+  reportType: string;
+  surah: string;
+  combinedAyatFrom: number;
+  combinedAyatTo: number;
+  combinedPageFrom: number | null;
+  combinedPageTo: number | null;
+  averageGrade: string | null;
+  sessionCount: number;
+}
+
+// Function to group individual reports into weekly summaries
+function groupReportsIntoWeeklySummaries(reports: Report[]): WeeklySummary[] {
+  const weeklyGroups: Record<string, Report[]> = {};
   
-  // Find the highest page_to value from Tasmi reports only
+  // Group reports by week + student + type + surah
+  reports.forEach(report => {
+    const weekId = getWeekIdentifier(report.date);
+    const groupKey = `${weekId}-${report.student_id}-${report.type}-${report.surah}`;
+    
+    if (!weeklyGroups[groupKey]) {
+      weeklyGroups[groupKey] = [];
+    }
+    weeklyGroups[groupKey].push(report);
+  });
+  
+  // Convert groups to weekly summaries
+  return Object.entries(weeklyGroups).map(([groupKey, groupReports]) => {
+    const firstReport = groupReports[0];
+    const { weekRange } = getWeekBoundaries(firstReport.date);
+    
+    // Combine ayat ranges
+    const ayatFromValues = groupReports.map(r => r.ayat_from);
+    const ayatToValues = groupReports.map(r => r.ayat_to);
+    const combinedAyatFrom = Math.min(...ayatFromValues);
+    const combinedAyatTo = Math.max(...ayatToValues);
+    
+    // Combine page ranges
+    const pageFromValues = groupReports.map(r => r.page_from).filter(p => p !== null) as number[];
+    const pageToValues = groupReports.map(r => r.page_to).filter(p => p !== null) as number[];
+    const combinedPageFrom = pageFromValues.length > 0 ? Math.min(...pageFromValues) : null;
+    const combinedPageTo = pageToValues.length > 0 ? Math.max(...pageToValues) : null;
+    
+    // Calculate average grade
+    const grades = groupReports.map(r => r.grade);
+    const averageGrade = calculateAverageGrade(grades);
+    
+    return {
+      weekIdentifier: getWeekIdentifier(firstReport.date),
+      weekRange,
+      studentId: firstReport.student_id,
+      reportType: firstReport.type,
+      surah: firstReport.surah,
+      combinedAyatFrom,
+      combinedAyatTo,
+      combinedPageFrom,
+      combinedPageTo,
+      averageGrade,
+      sessionCount: groupReports.length
+    };
+  });
+}
+
+export function QuranProgressBar({ reports }: { reports: Report[] }) {
+  // Get weekly summaries for Tasmi reports
+  const tasmiReports = reports.filter(r => r.type === "Tasmi");
+  const weeklySummaries = groupReportsIntoWeeklySummaries(tasmiReports);
+  
+  // Find the highest combined page_to value from weekly summaries
   const maxPage = Math.max(
-    ...tasmiReports.map(r => (r.page_to !== null && !isNaN(r.page_to) ? r.page_to : 0)),
+    ...weeklySummaries.map(s => (s.combinedPageTo !== null && !isNaN(s.combinedPageTo) ? s.combinedPageTo : 0)),
     0
   );
   const percent = Math.min((maxPage / 604) * 100, 100);
@@ -92,20 +148,49 @@ function getWeekLabel(date: Date) {
   return `Week ${weekNum} of ${monthName} ${year}`;
 }
 
+// Convert week range format back to week number format for charts
+function convertToWeekLabel(weekRange: string): string {
+  // Parse "Dec 9-13, 2024" format back to "Week X of Month Year"
+  const parts = weekRange.split(' ');
+  if (parts.length >= 3) {
+    const month = parts[0]; // "Dec"
+    const year = parts[2].replace(',', ''); // "2024"
+    const dayRange = parts[1]; // "9-13"
+    const startDay = parseInt(dayRange.split('-')[0]);
+    
+    // Create a date from the start day to calculate week number
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthIndex = monthNames.indexOf(month);
+    if (monthIndex !== -1) {
+      const sampleDate = new Date(parseInt(year), monthIndex, startDay);
+      return getWeekLabel(sampleDate);
+    }
+  }
+  return weekRange; // fallback
+}
+
 export function ActivityBarChart({ reports }: { reports: Report[] }) {
-  // Group by week and sum pages
+  // Get weekly summaries and calculate combined pages per week
+  const weeklySummaries = groupReportsIntoWeeklySummaries(reports);
   const weeklyPages: Record<string, number> = {};
   
-  reports.forEach(r => {
-    const reportDate = new Date(r.date);
-    const weekLabel = getWeekLabel(reportDate);
-    const pages = r.page_to && r.page_from ? (r.page_to - r.page_from + 1) : 0;
-    weeklyPages[weekLabel] = (weeklyPages[weekLabel] || 0) + pages;
+  weeklySummaries.forEach(summary => {
+    const pages = summary.combinedPageTo && summary.combinedPageFrom 
+      ? (summary.combinedPageTo - summary.combinedPageFrom + 1) 
+      : 0;
+    
+    // Convert week range to week label format
+    const weekLabel = convertToWeekLabel(summary.weekRange);
+    
+    if (!weeklyPages[weekLabel]) {
+      weeklyPages[weekLabel] = 0;
+    }
+    weeklyPages[weekLabel] += pages;
   });
   
-  // Sort by date for proper chronological order
+  // Sort weeks chronologically (same logic as before)
   const sortedWeeks = Object.keys(weeklyPages).sort((a, b) => {
-    // Extract date info for sorting
     const weekA = a.match(/Week (\d+) of (\w+) (\d+)/);
     const weekB = b.match(/Week (\d+) of (\w+) (\d+)/);
     if (!weekA || !weekB) return 0;
@@ -158,28 +243,24 @@ export function ActivityBarChart({ reports }: { reports: Report[] }) {
 }
 
 export function GradeChart({ reports }: { reports: Report[] }) {
-  // Group reports by week and calculate average grade per week
-  const weeklyGrades: Record<string, number[]> = {};
-  
-  reports.forEach(r => {
-    if (!r.grade) return;
-    const reportDate = new Date(r.date);
-    const weekLabel = getWeekLabel(reportDate);
-    const gradeValue = gradeToNumber(r.grade);
-    
-    if (gradeValue !== null) {
-      if (!weeklyGrades[weekLabel]) {
-        weeklyGrades[weekLabel] = [];
-      }
-      weeklyGrades[weekLabel].push(gradeValue);
-    }
-  });
-  
-  // Calculate average grade per week and sort chronologically
+  // Get weekly summaries with pre-calculated average grades
+  const weeklySummaries = groupReportsIntoWeeklySummaries(reports);
   const weeklyAverages: Record<string, number> = {};
-  Object.keys(weeklyGrades).forEach(week => {
-    const grades = weeklyGrades[week];
-    weeklyAverages[week] = grades.reduce((sum, grade) => sum + grade, 0) / grades.length;
+  
+  weeklySummaries.forEach(summary => {
+    if (summary.averageGrade) {
+      const gradeValue = gradeToNumber(summary.averageGrade);
+      if (gradeValue !== null) {
+        // Convert week range to week label format
+        const weekLabel = convertToWeekLabel(summary.weekRange);
+        
+        if (!weeklyAverages[weekLabel]) {
+          weeklyAverages[weekLabel] = 0;
+        }
+        // For multiple report types in same week, take average
+        weeklyAverages[weekLabel] = gradeValue;
+      }
+    }
   });
   
   // Sort weeks chronologically (same logic as activity chart)
@@ -195,6 +276,7 @@ export function GradeChart({ reports }: { reports: Report[] }) {
     const monthA = new Date(weekA[2] + ' 1, 2025').getMonth();
     const monthB = new Date(weekB[2] + ' 1, 2025').getMonth();
     if (monthA !== monthB) return monthA - monthB;
+    
     
     return parseInt(weekA[1]) - parseInt(weekB[1]);
   });

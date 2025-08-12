@@ -303,7 +303,7 @@ export default function AdminReportsPage() {
           <header className="mb-6">
             <div>
               <h1 className="text-3xl font-bold text-gray-800">Student Progress Reports</h1>
-              <p className="text-gray-600 mt-1">Monitor tasmik and murajaah activity across all students</p>
+              <p className="text-gray-600 mt-1">Monitor tasmik, murajaah and juz tests activity across all students</p>
             </div>
           </header>
 

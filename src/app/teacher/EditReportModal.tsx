@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import type { Report } from "./page";
+import type { Report } from "@/types/teacher";
 
 interface EditReportModalProps {
   report: Report;

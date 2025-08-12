@@ -1,231 +1,76 @@
 "use client";
-import { useEffect, useState } from "react";
-
+import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { QuranProgressBar, ChartTabs } from "@/components/ReportCharts";
 import Navbar from "@/components/Navbar";
+import { Card } from "@/components/ui/Card";
+import QuickReportModal from "@/components/teacher/QuickReportModal";
+import EditReportModal from "./EditReportModal";
+import FullRecordsModal from "@/components/teacher/FullRecordsModal";
+import {
+  StudentProgressData,
+  calculateDaysSinceLastRead,
+  formatRelativeDate,
+  formatAbsoluteDate,
+  getInactivityRowClass,
+  getActivityStatus,
+  filterStudentsBySearch,
+  getSummaryStats,
+  SummaryStats
+} from "@/lib/reportUtils";
+import type { Student, Report, ViewMode } from "@/types/teacher";
 
-interface Student {
-  id: string;
-  name: string;
-}
-
-export interface Report {
-  id: string;
-  student_id: string;
-  type: string;
-  surah: string;
-  juzuk: number | null;
-  ayat_from: number;
-  ayat_to: number;
-  page_from: number | null;
-  page_to: number | null;
-  grade: string | null;
-  date: string;
-  student_name?: string;
-}
-
-const REPORT_TYPES = ["Tasmi", "Old Murajaah", "New Murajaah"];
 const SURAHS = [
   "Al-Fatihah", "Al-Baqarah", "Aali Imran", "An-Nisa'", "Al-Ma'idah", "Al-An'am", "Al-A'raf", "Al-Anfal", "At-Tawbah", "Yunus", "Hud", "Yusuf", "Ar-Ra'd", "Ibrahim", "Al-Hijr", "An-Nahl", "Al-Isra'", "Al-Kahf", "Maryam", "Ta-Ha", "Al-Anbiya'", "Al-Hajj", "Al-Mu'minun", "An-Nur", "Al-Furqan", "Ash-Shu'ara'", "An-Naml", "Al-Qasas", "Al-Ankabut", "Ar-Rum", "Luqman", "As-Sajda", "Al-Ahzab", "Saba'", "Fatir", "Ya-Sin", "As-Saffat", "Sad", "Az-Zumar", "Ghafir", "Fussilat", "Ash-Shura", "Az-Zukhruf", "Ad-Dukhan", "Al-Jathiyah", "Al-Ahqaf", "Muhammad", "Al-Fath", "Al-Hujurat", "Qaf", "Adh-Dhariyat", "At-Tur", "An-Najm", "Al-Qamar", "Ar-Rahman", "Al-Waqi'ah", "Al-Hadid", "Al-Mujadila", "Al-Hashr", "Al-Mumtahanah", "As-Saff", "Al-Jumu'ah", "Al-Munafiqun", "At-Taghabun", "At-Talaq", "At-Tahrim", "Al-Mulk", "Al-Qalam", "Al-Haqqah", "Al-Ma'arij", "Nuh", "Al-Jinn", "Al-Muzzammil", "Al-Muddathir", "Al-Qiyamah", "Al-Insan", "Al-Mursalat", "An-Naba'", "An-Nazi'at", "Abasa", "At-Takwir", "Al-Infitar", "Al-Mutaffifin", "Al-Inshiqaq", "Al-Buruj", "At-Tariq", "Al-A'la", "Al-Ghashiyah", "Al-Fajr", "Al-Balad", "Ash-Shams", "Al-Layl", "Ad-Duhaa", "Ash-Sharh", "At-Tin", "Al-Alaq", "Al-Qadr", "Al-Bayyinah", "Az-Zalzalah", "Al-Adiyat", "Al-Qari'ah", "At-Takathur", "Al-Asr", "Al-Humazah", "Al-Fil", "Quraysh", "Al-Ma'un", "Al-Kawthar", "Al-Kafirun", "An-Nasr", "Al-Masad", "Al-Ikhlas", "Al-Falaq", "An-Nas"
 ];
+
+const REPORT_TYPES = ["Tasmi", "Murajaah"];
 const GRADES = ["mumtaz", "jayyid jiddan", "jayyid"];
 
-import EditReportModal from "./EditReportModal";
-
-// Helper functions for weekly reporting
-function getCurrentWeekInfo() {
-  const today = new Date();
-  const dayOfWeek = today.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // Get Monday of current week
-  
-  const monday = new Date(today);
-  monday.setDate(today.getDate() + mondayOffset);
-  
-  const friday = new Date(monday);
-  friday.setDate(monday.getDate() + 4); // Friday is 4 days after Monday
-  
-  const weekInMonth = getWeekOfMonth(monday);
-  
-  return {
-    monday,
-    friday,
-    weekNumber: weekInMonth,
-    year: monday.getFullYear(),
-    month: monday.getMonth() + 1,
-    monthName: monday.toLocaleDateString('en-US', { month: 'long' })
-  };
-}
-
-function getWeekOfMonth(date: Date) {
-  // Get the first day of the month
-  const firstDayOfMonth = new Date(date.getFullYear(), date.getMonth(), 1);
-  
-  // Find the first Monday of the month
-  const firstMondayOfMonth = new Date(firstDayOfMonth);
-  const daysToFirstMonday = (1 - firstDayOfMonth.getDay() + 7) % 7; // Days until first Monday
-  if (daysToFirstMonday === 7) {
-    // If the first day is already Monday, don't add 7 days
-    firstMondayOfMonth.setDate(1);
-  } else {
-    firstMondayOfMonth.setDate(1 + daysToFirstMonday);
-  }
-  
-  // If the current date is before the first Monday of the month,
-  // it's considered part of week 1 if it's within the first few days
-  if (date < firstMondayOfMonth) {
-    // If it's within the first 6 days of the month, consider it week 1
-    if (date.getDate() <= 6) {
-      return 1;
-    }
-    // Otherwise, it belongs to the previous month's last week
-    const lastDayOfPreviousMonth = new Date(date.getFullYear(), date.getMonth(), 0);
-    return getWeekOfMonth(lastDayOfPreviousMonth);
-  }
-  
-  // Calculate the week number within the month
-  const daysDiff = Math.floor((date.getTime() - firstMondayOfMonth.getTime()) / (1000 * 60 * 60 * 24));
-  return Math.floor(daysDiff / 7) + 1;
-}
-
-function formatDateRange(monday: Date, friday: Date) {
-  const formatDate = (date: Date) => {
-    return date.toLocaleDateString('en-GB', { 
-      day: '2-digit', 
-      month: '2-digit', 
-      year: 'numeric' 
-    });
-  };
-  return `${formatDate(monday)} - ${formatDate(friday)}`;
-}
-
 export default function TeacherPage() {
-  // State for editing and deleting reports
-  const [editingReport, setEditingReport] = useState<Report | null>(null);
-  const [deletingReport, setDeletingReport] = useState<Report | null>(null);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  
-  // Current week info
-  const currentWeek = getCurrentWeekInfo();
-
-  function handleEditReport(report: Report) {
-    setEditingReport(report);
-    setShowEditModal(true);
-  }
-  function handleDeleteReport(report: Report) {
-    setDeletingReport(report);
-    setShowDeleteConfirm(true);
-  }
-  // Placeholder for actual update logic
-  async function editReport(updated: Report) {
-    if (!updated.id) return;
-    // Update the report in Supabase
-    await supabase.from("reports").update({
-      type: updated.type,
-      surah: updated.surah,
-      juzuk: updated.juzuk,
-      ayat_from: updated.ayat_from,
-      ayat_to: updated.ayat_to,
-      page_from: updated.page_from,
-      page_to: updated.page_to,
-      grade: updated.grade,
-      date: updated.date,
-    }).eq("id", updated.id);
-    setShowEditModal(false);
-    setEditingReport(null);
-    // Refresh reports
-    if (userId) {
-      const { data, error } = await supabase
-        .from("reports")
-        .select("*, students(name)")
-        .eq("teacher_id", userId)
-        .order("date", { ascending: false });
-      if (!error && data) {
-        setReports(data.map((r: any) => ({ ...r, student_name: r.students?.name || "" })));
-      }
-      // Refresh student-specific reports
-      if (form.student_id) {
-        const { data: sData, error: sErr } = await supabase
-          .from("reports")
-          .select("*")
-          .eq("teacher_id", userId)
-          .eq("student_id", form.student_id)
-          .order("date", { ascending: false });
-        if (!sErr && sData) {
-          setStudentReports(sData);
-        }
-      }
-    }
-  }
-  // Placeholder for actual delete logic
-  async function deleteReport(reportId: string) {
-    if (!reportId) return;
-    await supabase.from("reports").delete().eq("id", reportId);
-    setShowDeleteConfirm(false);
-    setDeletingReport(null);
-    // Refresh reports
-    if (userId) {
-      const { data, error } = await supabase
-        .from("reports")
-        .select("*, students(name)")
-        .eq("teacher_id", userId)
-        .order("date", { ascending: false });
-      if (!error && data) {
-        setReports(data.map((r: any) => ({ ...r, student_name: r.students?.name || "" })));
-      }
-      // Refresh student-specific reports
-      if (form.student_id) {
-        const { data: sData, error: sErr } = await supabase
-          .from("reports")
-          .select("*")
-          .eq("teacher_id", userId)
-          .eq("student_id", form.student_id)
-          .order("date", { ascending: false });
-        if (!sErr && sData) {
-          setStudentReports(sData);
-        }
-      }
-    }
-  }
-
   const [students, setStudents] = useState<Student[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
-  const [form, setForm] = useState({
-    student_id: "",
-    type: REPORT_TYPES[0],
-    surah: "",
-    juzuk: "",
-    ayat_from: "",
-    ayat_to: "",
-    page_from: "",
-    page_to: "",
-    grade: "",
-    date: currentWeek.friday.toISOString().slice(0, 10) // End of current week
-  });
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-
-  // Get current user id
   const [userId, setUserId] = useState<string | null>(null);
+  
+  // Monitor state
+  const [monitorStudents, setMonitorStudents] = useState<StudentProgressData[]>([]);
+  const [viewMode, setViewMode] = useState<ViewMode>('tasmik');
+  const [searchTerm, setSearchTerm] = useState("");
+  const [sortBy, setSortBy] = useState<'activity' | 'name'>('activity');
+  const [monitorLoading, setMonitorLoading] = useState(false);
 
+  // Quick report modal
+  const [showQuickModal, setShowQuickModal] = useState(false);
+  const [quickModalData, setQuickModalData] = useState<{
+    student: Student;
+    reportType: "Tasmi" | "Murajaah";
+    suggestions?: any;
+  } | null>(null);
+
+  // Edit modal
+  const [editingReport, setEditingReport] = useState<Report | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+
+  // Full records modal
+  const [showFullRecordsModal, setShowFullRecordsModal] = useState(false);
+  const [fullRecordsStudent, setFullRecordsStudent] = useState<Student | null>(null);
+
+  // Auth check
   useEffect(() => {
     supabase.auth.getUser().then(({ data, error }) => {
       if (error) {
         console.error('Authentication error:', error);
-        // Redirect to login if authentication fails
         window.location.href = '/login';
         return;
       }
       setUserId(data.user?.id ?? null);
     }).catch((error) => {
       console.error('Failed to get user:', error);
-      // Redirect to login on any auth error
       window.location.href = '/login';
     });
   }, []);
 
-  // Fetch students assigned to this teacher
+  // Fetch students
   useEffect(() => {
     if (!userId) return;
     async function fetchStudents() {
@@ -238,7 +83,7 @@ export default function TeacherPage() {
     fetchStudents();
   }, [userId]);
 
-  // Fetch all reports by this teacher (for future use, not shown in table)
+  // Fetch reports
   useEffect(() => {
     if (!userId) return;
     async function fetchReports() {
@@ -254,73 +99,298 @@ export default function TeacherPage() {
     fetchReports();
   }, [userId]);
 
-  // Fetch previous reports for selected student
-  const [studentReports, setStudentReports] = useState<Report[]>([]);
-  useEffect(() => {
-    if (!userId || !form.student_id) {
-      setStudentReports([]);
-      return;
-    }
-    async function fetchStudentReports() {
-      const { data, error } = await supabase
-        .from("reports")
-        .select("*")
-        .eq("teacher_id", userId)
-        .eq("student_id", form.student_id)
-        .order("date", { ascending: false });
-      if (!error && data) {
-        setStudentReports(data);
+  // Smart suggestions for next progression
+  const getSmartSuggestions = (studentId: string, reportType: "Tasmi" | "Murajaah") => {
+    const studentReports = reports.filter(r => r.student_id === studentId);
+    
+    if (reportType === "Tasmi") {
+      // Find latest Tasmi report
+      const latestTasmi = studentReports
+        .filter(r => r.type === "Tasmi")
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+      
+      if (latestTasmi) {
+        // Suggest next ayat range in same surah or next surah
+        const currentSurahIndex = SURAHS.indexOf(latestTasmi.surah);
+        const nextAyatFrom = latestTasmi.ayat_to + 1;
+        const nextPageFrom = latestTasmi.page_to ? latestTasmi.page_to + 1 : null;
+        
+        // Simple progression logic - suggest next 50 ayats or next surah
+        if (nextAyatFrom <= 200) { // arbitrary limit for surah length
+          return {
+            surah: latestTasmi.surah,
+            juzuk: latestTasmi.juzuk || 1,
+            ayatFrom: nextAyatFrom,
+            ayatTo: nextAyatFrom + 49,
+            pageFrom: nextPageFrom,
+            pageTo: nextPageFrom ? nextPageFrom + 1 : null
+          };
+        } else if (currentSurahIndex < SURAHS.length - 1) {
+          return {
+            surah: SURAHS[currentSurahIndex + 1],
+            juzuk: (latestTasmi.juzuk || 1) + 1,
+            ayatFrom: 1,
+            ayatTo: 50,
+            pageFrom: nextPageFrom,
+            pageTo: nextPageFrom ? nextPageFrom + 1 : null
+          };
+        }
       }
-    }
-    fetchStudentReports();
-  }, [userId, form.student_id]);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    setSuccess("");
-    if (!userId) {
-      setError("User not found");
-      return;
-    }
-    if (!form.student_id) {
-      setError("Please select a student");
-      return;
-    }
-    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-    const { error: insertError } = await supabase.from("reports").insert([
-      {
-        teacher_id: userId,
-        student_id: form.student_id,
-        type: form.type,
-        surah: form.surah,
-        juzuk: form.juzuk ? parseInt(form.juzuk) : null,
-        ayat_from: parseInt(form.ayat_from),
-        ayat_to: parseInt(form.ayat_to),
-        page_from: form.page_from ? parseInt(form.page_from) : null,
-        page_to: form.page_to ? parseInt(form.page_to) : null,
-        grade: form.grade || null,
-        date: form.date || today
-      }
-    ]);
-    if (insertError) {
-      setError(insertError.message);
+      
+      // Default for new students
+      return {
+        surah: "Al-Fatihah",
+        juzuk: 1,
+        ayatFrom: 1,
+        ayatTo: 7,
+        pageFrom: null,
+        pageTo: null
+      };
     } else {
-      setSuccess("Report submitted!");
-      const newWeek = getCurrentWeekInfo();
-      setForm({
-        student_id: "",
-        type: REPORT_TYPES[0],
-        surah: "",
-        juzuk: "",
-        ayat_from: "",
-        ayat_to: "",
-        page_from: "",
-        page_to: "",
-        grade: "",
-        date: newWeek.friday.toISOString().slice(0, 10)
+      // Murajaah - suggest reviewing previous content
+      const latestMurajaah = studentReports
+        .filter(r => r.type === "Murajaah" || r.type === "Old Murajaah" || r.type === "New Murajaah")
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+      
+      // If no murajaah, use latest Tasmi for review
+      const referenceReport = latestMurajaah || studentReports
+        .filter(r => r.type === "Tasmi")
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+      
+      if (referenceReport) {
+        return {
+          surah: referenceReport.surah,
+          juzuk: referenceReport.juzuk || 1,
+          ayatFrom: referenceReport.ayat_from,
+          ayatTo: referenceReport.ayat_to,
+          pageFrom: referenceReport.page_from,
+          pageTo: referenceReport.page_to
+        };
+      }
+    }
+    
+    return undefined;
+  };
+
+  // Fetch monitor data
+  const fetchMonitorData = async () => {
+    if (!userId) return;
+    setMonitorLoading(true);
+
+    try {
+      const { data: studentsData, error: studentsError } = await supabase
+        .from("students")
+        .select(`
+          id,
+          name,
+          assigned_teacher_id,
+          class_id,
+          users!assigned_teacher_id (name),
+          classes (name)
+        `)
+        .eq("assigned_teacher_id", userId);
+
+      if (studentsError || !studentsData) {
+        setMonitorStudents([]);
+        return;
+      }
+
+      const studentProgressPromises = studentsData.map(async (student) => {
+        if (viewMode === 'juz_tests') {
+          // For Juz Tests view, get memorization progress and test progress
+          const [memorizationResult, juzTestsResult] = await Promise.all([
+            // Get highest memorized juz from Tasmi reports
+            supabase
+              .from("reports")
+              .select("juzuk")
+              .eq("student_id", student.id)
+              .eq("type", "Tasmi")
+              .not("juzuk", "is", null)
+              .order("juzuk", { ascending: false })
+              .limit(1),
+            
+            // Get highest tested juz (passed or failed)
+            supabase
+              .from("juz_tests")
+              .select("juz_number, test_date, passed, total_percentage")
+              .eq("student_id", student.id)
+              .order("juz_number", { ascending: false })
+              .limit(1)
+              .then(result => {
+                if (result.error?.message?.includes('relation "public.juz_tests" does not exist')) {
+                  return { data: [], error: null };
+                }
+                return result;
+              })
+          ]);
+
+          const highestMemorizedJuz = memorizationResult.data?.[0]?.juzuk || 0;
+          const latestTest = juzTestsResult.data?.[0] || null;
+          const highestTestedJuz = latestTest?.juz_number || 0;
+          
+          const gap = highestMemorizedJuz - highestTestedJuz;
+
+          return {
+            id: student.id,
+            name: student.name,
+            teacher_name: (student.users as { name?: string } | null)?.name || null,
+            class_name: (student.classes as { name?: string } | null)?.name || null,
+            latest_reading: `Memorized: Juz ${highestMemorizedJuz}`,
+            last_read_date: latestTest?.test_date || null,
+            days_since_last_read: gap,
+            report_type: 'juz_test',
+            highest_memorized_juz: highestMemorizedJuz,
+            highest_passed_juz: highestTestedJuz,
+            juz_test_gap: gap,
+            latest_test_result: latestTest
+          } as StudentProgressData & {
+            highest_memorized_juz?: number;
+            highest_passed_juz?: number;
+            juz_test_gap?: number;
+            latest_test_result?: {
+              juz_number: number;
+              test_date: string;
+              passed: boolean;
+              total_percentage: number;
+            };
+          };
+        } else {
+          // Regular tasmik/murajaah logic
+          const reportType = viewMode === 'tasmik' ? 'Tasmi' : 
+                           viewMode === 'murajaah' ? ['Murajaah', 'Old Murajaah', 'New Murajaah'] : 'Tasmi';
+
+          let query = supabase
+            .from("reports")
+            .select("*")
+            .eq("student_id", student.id)
+            .eq("teacher_id", userId);
+
+          // Apply type filter
+          if (Array.isArray(reportType)) {
+            query = query.in("type", reportType);
+          } else {
+            query = query.eq("type", reportType);
+          }
+
+          const { data: reports } = await query
+            .order("date", { ascending: false })
+            .limit(1);
+
+          const latestReport = reports?.[0];
+          const daysSinceLastRead = latestReport 
+            ? calculateDaysSinceLastRead(latestReport.date)
+            : 999;
+
+          let latestReading = null;
+          if (latestReport) {
+            if (viewMode === 'tasmik') {
+              latestReading = `${latestReport.surah} (${latestReport.ayat_from}-${latestReport.ayat_to})`;
+            } else {
+              latestReading = latestReport.juzuk ? `Juz ${latestReport.juzuk}` : latestReport.surah;
+            }
+          }
+
+          return {
+            id: student.id,
+            name: student.name,
+            teacher_name: (student.users as { name?: string } | null)?.name || null,
+            class_name: (student.classes as { name?: string } | null)?.name || null,
+            latest_reading: latestReading,
+            last_read_date: latestReport?.date || null,
+            days_since_last_read: daysSinceLastRead,
+            report_type: latestReport?.type || null
+          } as StudentProgressData;
+        }
       });
-      // Refresh reports
+
+      const progressData = await Promise.all(studentProgressPromises);
+      setMonitorStudents(progressData);
+    } catch (err) {
+      console.error("Failed to fetch monitor data:", err);
+    } finally {
+      setMonitorLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (userId) {
+      fetchMonitorData();
+    }
+  }, [viewMode, userId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Filtered and sorted students
+  const filteredMonitorStudents = useMemo(() => {
+    let filtered = filterStudentsBySearch(monitorStudents, searchTerm);
+    
+    if (viewMode === 'juz_tests') {
+      // Sort by highest memorized juz first, then by gap
+      filtered = [...filtered].sort((a, b) => {
+        const extA = a as StudentProgressData & { highest_memorized_juz?: number; juz_test_gap?: number };
+        const extB = b as StudentProgressData & { highest_memorized_juz?: number; juz_test_gap?: number };
+        
+        // First by highest memorized juz (descending)
+        const juzDiff = (extB.highest_memorized_juz || 0) - (extA.highest_memorized_juz || 0);
+        if (juzDiff !== 0) return juzDiff;
+        
+        // Then by gap (descending - larger gaps first)
+        return (extB.juz_test_gap || 0) - (extA.juz_test_gap || 0);
+      });
+    } else {
+      // For tasmik/murajaah: sort by days since last read (descending - longest gaps first)
+      filtered = [...filtered].sort((a, b) => {
+        if (sortBy === 'activity') {
+          return b.days_since_last_read - a.days_since_last_read;
+        } else if (sortBy === 'name') {
+          return a.name.localeCompare(b.name);
+        }
+        return 0;
+      });
+    }
+    
+    return filtered;
+  }, [monitorStudents, searchTerm, sortBy, viewMode]);
+
+  const summaryStats: SummaryStats = useMemo(() => 
+    getSummaryStats(filteredMonitorStudents), [filteredMonitorStudents]);
+
+  // Handle quick report
+  const handleQuickReport = (student: Student, reportType: "Tasmi" | "Murajaah") => {
+    const suggestions = getSmartSuggestions(student.id, reportType);
+    setQuickModalData({ student, reportType, suggestions });
+    setShowQuickModal(true);
+  };
+
+  // Handle edit report
+  const handleEditReport = (report: Report) => {
+    setEditingReport(report);
+    setShowEditModal(true);
+  };
+
+  // Handle full records view
+  const handleFullRecords = (student: Student) => {
+    setFullRecordsStudent(student);
+    setShowFullRecordsModal(true);
+  };
+
+  // Edit report function
+  const editReport = async (updated: Report) => {
+    if (!updated.id) return;
+    await supabase.from("reports").update({
+      type: updated.type,
+      surah: updated.surah,
+      juzuk: updated.juzuk,
+      ayat_from: updated.ayat_from,
+      ayat_to: updated.ayat_to,
+      page_from: updated.page_from,
+      page_to: updated.page_to,
+      grade: updated.grade,
+      date: updated.date,
+    }).eq("id", updated.id);
+    setShowEditModal(false);
+    setEditingReport(null);
+    
+    // Refresh data
+    if (userId) {
       const { data, error } = await supabase
         .from("reports")
         .select("*, students(name)")
@@ -329,519 +399,458 @@ export default function TeacherPage() {
       if (!error && data) {
         setReports(data.map((r: any) => ({ ...r, student_name: r.students?.name || "" })));
       }
-      // Refresh student-specific reports
-      if (form.student_id) {
-        const { data: sData, error: sErr } = await supabase
-          .from("reports")
-          .select("*")
-          .eq("teacher_id", userId)
-          .eq("student_id", form.student_id)
-          .order("date", { ascending: false });
-        if (!sErr && sData) {
-          setStudentReports(sData);
-        }
-      }
+      fetchMonitorData();
     }
-  }
+  };
 
-  // Pagination state
-  const [studentReportPage, setStudentReportPage] = useState(1);
-  const [allReportPage, setAllReportPage] = useState(1);
-  const recordsPerPage = 10;
-
-  // Pagination for studentReports
-  const studentTotalPages = Math.ceil(studentReports.length / recordsPerPage);
-  const pagedStudentReports = studentReports.slice(
-    (studentReportPage - 1) * recordsPerPage,
-    studentReportPage * recordsPerPage
-  );
-  // Pagination for all reports
-  const allTotalPages = Math.ceil(reports.length / recordsPerPage);
-  const pagedAllReports = reports.slice(
-    (allReportPage - 1) * recordsPerPage,
-    allReportPage * recordsPerPage
-  );
-
-  // Hafazan gap calculation
-  const today = new Date();
-  const studentLastRecords = students.map(s => {
-    const studentRecs = reports.filter(r => r.student_id === s.id);
-    if (studentRecs.length === 0) {
-      return { ...s, lastDaysAgo: null, lastDate: null };
+  const refreshData = () => {
+    if (userId) {
+      // Refresh reports
+      supabase
+        .from("reports")
+        .select("*, students(name)")
+        .eq("teacher_id", userId)
+        .order("date", { ascending: false })
+        .then(({ data, error }) => {
+          if (!error && data) {
+            setReports(data.map((r: any) => ({ ...r, student_name: r.students?.name || "" })));
+          }
+        });
+      
+      // Refresh monitor data
+      fetchMonitorData();
     }
-    const lastDateStr = studentRecs[0].date; // reports sorted descending
-    const lastDate = new Date(lastDateStr);
-    const diffDays = Math.floor((today.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
-    return { ...s, lastDaysAgo: diffDays, lastDate: lastDateStr };
-  });
-  const sortedLastRecords = [...studentLastRecords].sort((a, b) => {
-    if (a.lastDaysAgo === null) return -1;
-    if (b.lastDaysAgo === null) return 1;
-    return b.lastDaysAgo - a.lastDaysAgo;
-  });
+  };
 
   return (
     <>
       <Navbar />
       <main className="relative min-h-screen bg-gradient-to-br from-[#b1c7f9] via-[#e0e7ff] to-[#b1f9e6] animate-gradient-move p-4 overflow-hidden">
-      <div className="max-w-3xl mx-auto">
-        {/* Animated Gradient Blobs */}
-        <div className="absolute -top-40 -left-40 w-[500px] h-[500px] bg-gradient-to-tr from-blue-300 via-purple-200 to-blue-100 rounded-full opacity-40 blur-3xl animate-pulse-slow" />
-        <div className="absolute -bottom-32 right-0 w-[400px] h-[400px] bg-gradient-to-br from-blue-200 via-blue-100 to-purple-200 rounded-full opacity-30 blur-2xl animate-pulse-slow" />
-        
-        {/* Hafazan Last Record Gap Section */}
-        <div className="relative z-10 bg-white/30 backdrop-blur-xl border border-white/40 rounded-3xl shadow-2xl p-6 mb-6">
-          <h2 className="text-2xl font-bold mb-6 text-gray-900 tracking-tight">Student Last Submission Gaps</h2>
-          <table className="min-w-full text-sm">
-            <thead className="bg-blue-50">
-              <tr>
-                <th className="border px-2 py-1">Student</th>
-                <th className="border px-2 py-1">Last Record (days ago)</th>
-                <th className="border px-2 py-1">Last Submission Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedLastRecords.map(s => (
-                <tr key={s.id} className={
-                  s.lastDaysAgo === null || s.lastDaysAgo >= 7 ? 'bg-red-100' : ''
-                }>
-                  <td className="border px-2 py-1 font-medium">{s.name}</td>
-                  <td className="border px-2 py-1">
-                    {s.lastDaysAgo === null ? <span className="italic text-gray-400">Never</span> : s.lastDaysAgo}
-                  </td>
-                  <td className="border px-2 py-1">
-                    {s.lastDate ? s.lastDate : <span className="italic text-gray-400">-</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="mt-2 text-xs text-gray-500">Students highlighted in red have not submitted for 7 or more days.</div>
-        </div>
-        {/* Animated Gradient Blobs */}
-        <div className="absolute -top-40 -left-40 w-[500px] h-[500px] bg-gradient-to-tr from-blue-300 via-purple-200 to-blue-100 rounded-full opacity-40 blur-3xl animate-pulse-slow" />
-        <div className="absolute -bottom-32 right-0 w-[400px] h-[400px] bg-gradient-to-br from-blue-200 via-blue-100 to-purple-200 rounded-full opacity-30 blur-2xl animate-pulse-slow" />
-        
-        {/* Visual Graph Section */}
-        <div className="relative z-10 bg-white/30 backdrop-blur-xl border border-white/40 rounded-3xl shadow-2xl p-6 mb-6">
-          <h2 className="text-2xl font-bold mb-6 text-gray-900 tracking-tight">Class/Student Progress</h2>
-          {form.student_id && <QuranProgressBar reports={studentReports} />}
-          <ChartTabs reports={form.student_id ? studentReports : reports} />
-        </div>
-        {/* Add Report Form */}
-        <div className="relative z-10 bg-white/30 backdrop-blur-xl border border-white/40 rounded-3xl shadow-2xl p-4 sm:p-6 mb-6 max-w-3xl mx-auto">
-          <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 text-gray-900 tracking-tight">Add New Report</h2>
-          <form className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6" onSubmit={handleSubmit}>
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium mb-1">Student</label>
-              <select
-                value={form.student_id}
-                onChange={e => setForm(f => ({ ...f, student_id: e.target.value }))}
-                required
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm sm:text-base"
-              >
-                <option value="">Select a student</option>
-                {students.map(s => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Type</label>
-              <select
-                value={form.type}
-                onChange={e => setForm(f => ({ ...f, type: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm sm:text-base"
-              >
-                {REPORT_TYPES.map(t => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Grade</label>
-              <select
-                value={form.grade || ""}
-                onChange={e => setForm(f => ({ ...f, grade: e.target.value }))}
-                required
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm sm:text-base"
-              >
-                <option value="">Select a grade</option>
-                {GRADES.map(g => (
-                  <option key={g} value={g}>{g.charAt(0).toUpperCase() + g.slice(1)}</option>
-                ))}
-              </select>
-            </div>
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium mb-1">Surah</label>
-              <select
-                value={form.surah}
-                onChange={e => setForm(f => ({ ...f, surah: e.target.value }))}
-                required
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm sm:text-base"
-              >
-                <option value="">Select a surah</option>
-                {SURAHS.map(surah => (
-                  <option key={surah} value={surah}>{surah}</option>
-                ))}
-              </select>
-            </div>
-            <div className="sm:col-span-1">
-              <label className="block text-sm font-medium mb-1">Juzuk</label>
-              <input
-                type="number"
-                min="1"
-                max="30"
-                value={form.juzuk || ""}
-                onChange={e => setForm(f => ({ ...f, juzuk: e.target.value }))}
-                required
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm sm:text-base"
-              />
-            </div>
-            <div className="sm:col-span-1">
-              <label className="block text-sm font-medium mb-1">Ayat Range</label>
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="number"
-                  placeholder="From"
-                  value={form.ayat_from}
-                  onChange={e => setForm(f => ({ ...f, ayat_from: e.target.value }))}
-                  required
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm sm:text-base"
-                />
-                <input
-                  type="number"
-                  placeholder="To"
-                  value={form.ayat_to}
-                  onChange={e => setForm(f => ({ ...f, ayat_to: e.target.value }))}
-                  required
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm sm:text-base"
-                />
+        <div className="max-w-7xl mx-auto">
+          {/* Animated Background Blobs */}
+          <div className="absolute -top-40 -left-40 w-[500px] h-[500px] bg-gradient-to-tr from-blue-300 via-purple-200 to-blue-100 rounded-full opacity-40 blur-3xl animate-pulse-slow -z-10" />
+          <div className="absolute -bottom-32 right-0 w-[400px] h-[400px] bg-gradient-to-br from-blue-200 via-blue-100 to-purple-200 rounded-full opacity-30 blur-2xl animate-pulse-slow -z-10" />
+          
+          <div className="relative z-20">
+            {/* Header */}
+            <header className="mb-6">
+              <div>
+                <h1 className="text-3xl font-bold text-gray-800">Student Progress Monitor</h1>
+                <p className="text-gray-600 mt-1">Monitor and create reports for your students&apos; Quran memorization progress</p>
               </div>
+            </header>
+
+            {/* Summary Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <Card className="bg-white/30 backdrop-blur-xl border border-white/40 p-6">
+                <div className="text-3xl font-bold text-gray-900">{summaryStats.totalStudents}</div>
+                <div className="text-sm text-gray-600">Your Students</div>
+              </Card>
+              <Card className="bg-white/30 backdrop-blur-xl border border-white/40 p-6">
+                <div className="text-3xl font-bold text-orange-600">{summaryStats.inactive7Days}</div>
+                <div className="text-sm text-gray-600">Inactive &gt; 7 Days</div>
+              </Card>
+              <Card className="bg-white/30 backdrop-blur-xl border border-white/40 p-6">
+                <div className="text-3xl font-bold text-red-600">{summaryStats.inactive14Days}</div>
+                <div className="text-sm text-gray-600">Inactive &gt; 14 Days</div>
+              </Card>
             </div>
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium mb-1">Page Range (Optional)</label>
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="number"
-                  placeholder="From"
-                  value={form.page_from}
-                  onChange={e => setForm(f => ({ ...f, page_from: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm sm:text-base"
-                />
-                <input
-                  type="number"
-                  placeholder="To"
-                  value={form.page_to}
-                  onChange={e => setForm(f => ({ ...f, page_to: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm sm:text-base"
-                />
-              </div>
-            </div>
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium mb-1">Week Period</label>
-              <div className="relative">
-                <div className="w-full border border-gray-300 rounded-lg px-3 py-2 bg-blue-50 text-gray-700">
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
-                    <span className="font-medium text-sm sm:text-base">
-                      Week {currentWeek.weekNumber} of {currentWeek.monthName} {currentWeek.year}
-                    </span>
-                    <span className="text-xs sm:text-sm text-gray-600">
-                      {formatDateRange(currentWeek.monday, currentWeek.friday)}
-                    </span>
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    Report covers Monday to Friday of this week
+
+            {/* Main Content Card */}
+            <Card className="bg-white/30 backdrop-blur-xl border border-white/40 p-6">
+              {/* View Toggle */}
+              <div className="flex items-center justify-center mb-6">
+                <div className="bg-gray-100 rounded-full p-1">
+                  <div className="flex">
+                    <button
+                      onClick={() => setViewMode('tasmik')}
+                      className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${
+                        viewMode === 'tasmik' 
+                          ? 'bg-blue-600 text-white shadow-md'
+                          : 'text-gray-600 hover:text-gray-800'
+                      }`}
+                    >
+                      Tasmik
+                    </button>
+                    <button
+                      onClick={() => setViewMode('murajaah')}
+                      className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${
+                        viewMode === 'murajaah'
+                          ? 'bg-blue-600 text-white shadow-md'
+                          : 'text-gray-600 hover:text-gray-800'
+                      }`}
+                    >
+                      Murajaah
+                    </button>
+                    <button
+                      onClick={() => setViewMode('juz_tests')}
+                      className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${
+                        viewMode === 'juz_tests'
+                          ? 'bg-blue-600 text-white shadow-md'
+                          : 'text-gray-600 hover:text-gray-800'
+                      }`}
+                    >
+                      Juz Tests
+                    </button>
                   </div>
                 </div>
-                <input
-                  type="hidden"
-                  value={form.date}
-                  name="date"
-                />
               </div>
-            </div>
-            <div className="sm:col-span-2">
-              <button
-                type="submit"
-                className="w-full group bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded-xl shadow-lg transition-all focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                disabled={!form.student_id || !form.type || !form.surah || !form.ayat_from || !form.ayat_to || !form.date}
-              >
-                Add Report
-                <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
-              </button>
-              {error && <div className="text-red-600 mt-2 text-sm">{error}</div>}
-              {success && <div className="text-green-600 mt-2 text-sm">{success}</div>}
-            </div>
-          </form>
+
+              {/* Progress Charts */}
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold mb-4 text-gray-800">Progress Analytics</h3>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="bg-white/50 backdrop-blur-sm rounded-xl p-4">
+                    <h4 className="text-md font-medium mb-3 text-gray-700">Student Progress Overview</h4>
+                    {viewMode !== 'juz_tests' && filteredMonitorStudents.length > 0 && (
+                      <QuranProgressBar reports={reports.filter(r => filteredMonitorStudents.some(s => s.id === r.student_id))} />
+                    )}
+                  </div>
+                  <div className="bg-white/50 backdrop-blur-sm rounded-xl p-4">
+                    <h4 className="text-md font-medium mb-3 text-gray-700">Class Analytics</h4>
+                    {viewMode !== 'juz_tests' && (
+                      <ChartTabs reports={reports.filter(r => filteredMonitorStudents.some(s => s.id === r.student_id))} />
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Filters */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                {viewMode !== 'juz_tests' && (
+                  <div>
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as 'activity' | 'name')}
+                      className="w-full border-gray-300 rounded-lg px-3 py-2 bg-white/80 backdrop-blur-sm focus:ring-2 focus:ring-blue-400"
+                    >
+                      <option value="activity">Sort by Activity</option>
+                      <option value="name">Sort by Name</option>
+                    </select>
+                  </div>
+                )}
+                <div className={viewMode === 'juz_tests' ? 'md:col-span-3' : 'md:col-span-2'}>
+                  <input
+                    type="text"
+                    placeholder="Search students..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full border-gray-300 rounded-lg px-3 py-2 bg-white/80 backdrop-blur-sm focus:ring-2 focus:ring-blue-400"
+                  />
+                </div>
+              </div>
+
+              {/* Loading */}
+              {monitorLoading && (
+                <div className="text-center py-8 text-gray-600">
+                  <p>Loading student progress...</p>
+                </div>
+              )}
+
+              {/* Student Progress Table */}
+              {!monitorLoading && (
+                <div className="overflow-hidden rounded-xl border border-white/20 shadow-lg">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full">
+                      <thead className="bg-gradient-to-r from-blue-50/80 to-purple-50/80 backdrop-blur-sm">
+                        <tr>
+                          <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30">Name</th>
+                          {viewMode === 'juz_tests' ? (
+                            <>
+                              <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30">Current Progress</th>
+                              <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Latest Test</th>
+                              <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Gap</th>
+                              <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Actions</th>
+                            </>
+                          ) : (
+                            <>
+                              <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30">Latest Reading</th>
+                              <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Last Read</th>
+                              <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Days</th>
+                              <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Actions</th>
+                            </>
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white/5">
+                        {filteredMonitorStudents.map((student, index) => {
+                          const extendedStudent = student as StudentProgressData & {
+                            highest_memorized_juz?: number;
+                            highest_passed_juz?: number;
+                            juz_test_gap?: number;
+                            latest_test_result?: {
+                              juz_number: number;
+                              test_date: string;
+                              passed: boolean;
+                              total_percentage: number;
+                            };
+                          };
+
+                          const rowClass = viewMode === 'juz_tests' 
+                            ? (extendedStudent.juz_test_gap && extendedStudent.juz_test_gap > 0 
+                                ? extendedStudent.juz_test_gap >= 3 
+                                  ? 'bg-red-50/80' 
+                                  : extendedStudent.juz_test_gap >= 1 
+                                    ? 'bg-yellow-50/80' 
+                                    : ''
+                                : '')
+                            : getInactivityRowClass(student.days_since_last_read);
+                          
+                          const activityStatus = getActivityStatus(student.days_since_last_read);
+                          const studentData = students.find(s => s.id === student.id);
+                          
+                          return (
+                            <tr key={student.id} className={`transition-colors hover:bg-white/20 ${index % 2 === 0 ? 'bg-white/5' : 'bg-white/10'} ${rowClass}`}>
+                              <td className="px-4 py-3 text-gray-800 font-medium border-b border-white/10">
+                                <div>
+                                  <div className="font-semibold">{student.name}</div>
+                                  {student.class_name && (
+                                    <div className="text-xs text-gray-600">{student.class_name}</div>
+                                  )}
+                                </div>
+                              </td>
+                              
+                              {viewMode === 'juz_tests' ? (
+                                <>
+                                  <td className="px-4 py-3 text-gray-800 border-b border-white/10">
+                                    <div className="text-sm font-medium">
+                                      Juz {extendedStudent.highest_memorized_juz || 0}
+                                    </div>
+                                    <div className="text-xs text-gray-500">Memorized</div>
+                                  </td>
+                                  <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
+                                    <div className="text-sm">
+                                      {extendedStudent.latest_test_result ? (
+                                        <>
+                                          <div className="font-medium">
+                                            Juz {extendedStudent.latest_test_result.juz_number}
+                                          </div>
+                                          <div className={`text-xs font-medium ${
+                                            extendedStudent.latest_test_result.passed 
+                                              ? 'text-green-600' 
+                                              : 'text-red-600'
+                                          }`}>
+                                            {extendedStudent.latest_test_result.total_percentage}% 
+                                            ({extendedStudent.latest_test_result.passed ? 'PASSED' : 'FAILED'})
+                                          </div>
+                                          <div className="text-xs text-gray-500">
+                                            {formatAbsoluteDate(student.last_read_date)}
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <div className="text-gray-400 italic">No tests</div>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 text-center border-b border-white/10">
+                                    <div className="flex flex-col items-center">
+                                      <span className={`text-lg font-bold ${
+                                        (extendedStudent.juz_test_gap || 0) >= 3 
+                                          ? 'text-red-600' 
+                                          : (extendedStudent.juz_test_gap || 0) >= 1 
+                                            ? 'text-yellow-600' 
+                                            : 'text-green-600'
+                                      }`}>
+                                        {extendedStudent.juz_test_gap || 0}
+                                      </span>
+                                      <span className={`text-xs font-medium ${
+                                        (extendedStudent.juz_test_gap || 0) >= 3 
+                                          ? 'text-red-500' 
+                                          : (extendedStudent.juz_test_gap || 0) >= 1 
+                                            ? 'text-yellow-500' 
+                                            : 'text-green-500'
+                                      }`}>
+                                        {(extendedStudent.juz_test_gap || 0) === 0 
+                                          ? 'Up to date' 
+                                          : `${extendedStudent.juz_test_gap} behind`
+                                        }
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 text-center border-b border-white/10">
+                                    <div className="flex flex-col gap-1">
+                                      {(extendedStudent.juz_test_gap || 0) > 0 && (
+                                        <button
+                                          onClick={() => {
+                                            const suggestedJuz = (extendedStudent.highest_passed_juz || 0) + 1;
+                                            const notes = `Student ready for Juz ${suggestedJuz} test. Current memorization: Juz ${extendedStudent.highest_memorized_juz || 0}`;
+                                            alert(`Notification feature will be implemented: ${notes}`);
+                                          }}
+                                          className="px-3 py-1 rounded-lg text-xs font-medium transition-colors bg-purple-100 hover:bg-purple-200 text-purple-700"
+                                        >
+                                          Ready to Test
+                                        </button>
+                                      )}
+                                      <button
+                                        onClick={async () => {
+                                          try {
+                                            const { data: tests, error } = await supabase
+                                              .from("juz_tests")
+                                              .select("*")
+                                              .eq("student_id", student.id)
+                                              .order("test_date", { ascending: false });
+
+                                            if (error) {
+                                              if (error.message?.includes('relation "public.juz_tests" does not exist')) {
+                                                alert(`Juz test history for ${student.name}:\n\nNo test records found. The Juz testing system may not be set up yet.`);
+                                              } else {
+                                                throw error;
+                                              }
+                                              return;
+                                            }
+
+                                            if (tests && tests.length > 0) {
+                                              const historyText = tests.map(test => 
+                                                `Juz ${test.juz_number} - ${test.total_percentage}% (${test.passed ? 'PASSED' : 'FAILED'}) - ${test.test_date} - ${test.examiner_name || 'Unknown Examiner'}`
+                                              ).join('\n');
+                                              
+                                              alert(`📋 Juz Test History for ${student.name}\n\n${historyText}\n\n💡 Note: View only access - Contact examiner to schedule new tests`);
+                                            } else {
+                                              alert(`📋 Juz Test History for ${student.name}\n\n❌ This student has not taken any Juz tests yet.\n\n📝 Current Status:\n• Student has memorized up to Juz ${extendedStudent.highest_memorized_juz || 0}\n• No formal Juz tests completed\n• Ready for testing if memorization gap exists\n\n💡 Next Steps:\n• Use "Notify Examiner" button if student is ready\n• Contact examiner to schedule first Juz test`);
+                                            }
+                                          } catch (error) {
+                                            console.error("Error fetching test history:", error);
+                                            alert(`Error loading test history for ${student.name}. Please try again later.`);
+                                          }
+                                        }}
+                                        className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1 rounded-lg text-xs font-medium transition-colors"
+                                      >
+                                        View History
+                                      </button>
+                                    </div>
+                                  </td>
+                                </>
+                              ) : (
+                                <>
+                                  <td className="px-4 py-3 text-gray-800 border-b border-white/10">
+                                    {student.latest_reading || <span className="italic text-gray-400">No records</span>}
+                                  </td>
+                                  <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
+                                    <div className="text-sm">
+                                      <div>{formatAbsoluteDate(student.last_read_date)}</div>
+                                      <div className="text-xs text-gray-500">
+                                        {formatRelativeDate(student.last_read_date)}
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 text-center border-b border-white/10">
+                                    <div className="flex flex-col items-center">
+                                      <span className="text-lg font-bold text-gray-800">
+                                        {student.days_since_last_read === 999 ? '∞' : student.days_since_last_read}
+                                      </span>
+                                      <span className={`text-xs font-medium ${activityStatus.color}`}>
+                                        {activityStatus.text}
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 text-center border-b border-white/10">
+                                    <div className="flex flex-col gap-1">
+                                      {viewMode === 'tasmik' && studentData && (
+                                        <button
+                                          onClick={() => handleQuickReport(studentData, "Tasmi")}
+                                          className="bg-green-100 hover:bg-green-200 text-green-700 px-3 py-1 rounded-lg text-xs font-medium transition-colors"
+                                        >
+                                          Add Tasmi
+                                        </button>
+                                      )}
+                                      {viewMode === 'murajaah' && studentData && (
+                                        <button
+                                          onClick={() => handleQuickReport(studentData, "Murajaah")}
+                                          className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1 rounded-lg text-xs font-medium transition-colors"
+                                        >
+                                          Add Murajaah
+                                        </button>
+                                      )}
+                                      <button
+                                        onClick={() => {
+                                          if (studentData) {
+                                            handleFullRecords(studentData);
+                                          }
+                                        }}
+                                        className="bg-orange-100 hover:bg-orange-200 text-orange-700 px-3 py-1 rounded-lg text-xs font-medium transition-colors"
+                                      >
+                                        Full Records
+                                      </button>
+                                    </div>
+                                  </td>
+                                </>
+                              )}
+                            </tr>
+                          );
+                        })}
+                        {filteredMonitorStudents.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="text-center py-8 text-gray-600">
+                              <p>No students match the current filters.</p>
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </Card>
+          </div>
         </div>
-        {/* Reports Section */}
-        <div className="relative z-10 bg-white/30 backdrop-blur-xl border border-white/40 rounded-3xl shadow-2xl p-6 mb-6">
-          <h2 className="text-2xl font-bold mb-6 text-gray-900 tracking-tight">Reports</h2>
-          {studentReports.length > 0 ? (
-            <div className="overflow-hidden rounded-2xl border border-white/20 shadow-lg bg-white/10 backdrop-blur-sm">
-              <div className="overflow-x-auto">
-                <table className="min-w-full">
-                <thead className="bg-gradient-to-r from-blue-50/80 to-purple-50/80 backdrop-blur-sm">
-                  <tr>
-                    <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30 text-sm">Student</th>
-                    <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30 text-sm">Type</th>
-                    <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30 text-sm">Surah</th>
-                    <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30 text-sm">Juzuk</th>
-                    <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30 text-sm">Ayat</th>
-                    <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30 text-sm">Page</th>
-                    <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30 text-sm">Grade</th>
-                    <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30 text-sm">Date</th>
-                    <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30 text-sm">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white/5">
-                  {pagedStudentReports.map((r, index) => (
-                    <tr key={r.id} className={`transition-colors hover:bg-white/20 ${index % 2 === 0 ? 'bg-white/5' : 'bg-white/10'}`}>
-                      <td className="px-4 py-3 text-gray-800 font-medium border-b border-white/10">{r.student_name}</td>
-                      <td className="px-4 py-3 text-gray-700 border-b border-white/10">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                          {r.type}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-gray-800 font-medium border-b border-white/10">{r.surah}</td>
-                      <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
-                        <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-purple-100 text-purple-800 text-sm font-semibold">
-                          {r.juzuk}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
-                        <span className="text-sm font-mono">{r.ayat_from} - {r.ayat_to}</span>
-                      </td>
-                      <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
-                        <span className="text-sm font-mono">{r.page_from ?? ""} - {r.page_to ?? ""}</span>
-                      </td>
-                      <td className="px-4 py-3 text-center border-b border-white/10">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          r.grade === 'mumtaz' ? 'bg-green-100 text-green-800' :
-                          r.grade === 'jayyid jiddan' ? 'bg-yellow-100 text-yellow-800' :
-                          r.grade === 'jayyid' ? 'bg-orange-100 text-orange-800' :
-                          'bg-gray-100 text-gray-800'
-                        }`}>
-                          {r.grade ? r.grade.charAt(0).toUpperCase() + r.grade.slice(1) : ""}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
-                        <span className="text-sm font-medium">{r.date}</span>
-                      </td>
-                      <td className="px-4 py-3 text-center border-b border-white/10">
-                        <div className="flex items-center justify-center gap-2">
-                          <button
-                            className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-blue-100 text-blue-600 hover:bg-blue-200 transition-colors"
-                            onClick={() => handleEditReport(r)}
-                            type="button"
-                          ><span title="Edit" aria-label="Edit">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="inline w-4 h-4 text-blue-600 hover:text-blue-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-2.828 0L9 13zm0 0H5v4a2 2 0 002 2h4v-4a2 2 0 00-2-2z" />
-                            </svg>
-                          </span></button>
-                          <button
-                            className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-red-100 text-red-600 hover:bg-red-200 transition-colors"
-                            onClick={() => handleDeleteReport(r)}
-                            type="button"
-                          ><span title="Delete" aria-label="Delete">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="inline w-4 h-4 text-red-600 hover:text-red-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3m-4 0h16" />
-                            </svg>
-                          </span></button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              </div>
-              <div className="flex justify-center mt-4">
-                <button
-                  className="px-2 py-1 border rounded disabled:opacity-50"
-                  onClick={() => setStudentReportPage(Math.max(1, studentReportPage - 1))}
-                  disabled={studentReportPage === 1}
-                >Prev</button>
-                {Array.from({ length: studentTotalPages }, (_, i) => i + 1).map((p) => (
-                <button
-                  key={p}
-                  className={`px-2 py-1 border rounded ${p === studentReportPage ? 'bg-blue-500 text-white' : ''}`}
-                  onClick={() => setStudentReportPage(p)}
-                >
-                  {p}
-                </button>
-              ))}
-              <button
-                className="px-2 py-1 border rounded disabled:opacity-50"
-                onClick={() => setStudentReportPage(Math.min(studentTotalPages, studentReportPage + 1))}
-                disabled={studentReportPage === studentTotalPages}
-              >Next</button>
-            </div>
-          </div>
-        ) : reports.length > 0 ? (
-          <div className="overflow-hidden rounded-2xl border border-white/20 shadow-lg bg-white/10 backdrop-blur-sm">
-            <div className="overflow-x-auto">
-              <table className="min-w-full" style={{minWidth: '800px'}}>
-              <thead className="bg-gradient-to-r from-blue-50/80 to-purple-50/80 backdrop-blur-sm">
-                <tr>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30 text-sm">Student</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30 text-sm">Type</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30 text-sm">Surah</th>
-                  <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30 text-sm">Juzuk</th>
-                  <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30 text-sm">Ayat</th>
-                  <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30 text-sm">Page</th>
-                  <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30 text-sm">Grade</th>
-                  <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30 text-sm">Date</th>
-                  <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30 text-sm">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white/5">
-                {pagedAllReports.map((r, index) => (
-                  <tr key={r.id} className={`transition-colors hover:bg-white/20 ${index % 2 === 0 ? 'bg-white/5' : 'bg-white/10'}`}>
-                    <td className="px-4 py-3 text-gray-800 font-medium border-b border-white/10">{r.student_name}</td>
-                    <td className="px-4 py-3 text-gray-700 border-b border-white/10">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                        {r.type}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-800 font-medium border-b border-white/10">{r.surah}</td>
-                    <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
-                      <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-purple-100 text-purple-800 text-sm font-semibold">
-                        {r.juzuk}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
-                      <span className="text-sm font-mono">{r.ayat_from} - {r.ayat_to}</span>
-                    </td>
-                    <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
-                      <span className="text-sm font-mono">{r.page_from ?? ""} - {r.page_to ?? ""}</span>
-                    </td>
-                    <td className="px-4 py-3 text-center border-b border-white/10">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        r.grade === 'mumtaz' ? 'bg-green-100 text-green-800' :
-                        r.grade === 'jayyid jiddan' ? 'bg-yellow-100 text-yellow-800' :
-                        r.grade === 'jayyid' ? 'bg-orange-100 text-orange-800' :
-                        'bg-gray-100 text-gray-800'
-                      }`}>
-                        {r.grade ? r.grade.charAt(0).toUpperCase() + r.grade.slice(1) : ""}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
-                      <span className="text-sm font-medium">{r.date}</span>
-                    </td>
-                    <td className="px-4 py-3 text-center border-b border-white/10">
-  <div className="flex items-center justify-center gap-3">
-    {/* Edit Button */}
-    <button
-      className="group relative inline-flex items-center justify-center w-9 h-9 rounded-xl bg-white/60 shadow-md ring-1 ring-blue-300/30 hover:bg-blue-100 hover:scale-105 transition-all duration-150"
-      onClick={() => handleEditReport(r)}
-      type="button"
-      aria-label="Edit"
-    >
-      <svg className="w-5 h-5 text-blue-600 group-hover:text-blue-800 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 5.487a2.25 2.25 0 113.182 3.182l-8.25 8.25a2 2 0 01-.879.513l-4.25 1.25 1.25-4.25a2 2 0 01.513-.879l8.25-8.25z" />
-      </svg>
-      <span className="absolute left-1/2 bottom-[-2.2rem] -translate-x-1/2 px-2 py-1 rounded-md text-xs bg-blue-700 text-white opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 shadow-lg z-10">Edit</span>
-    </button>
-    {/* Delete Button */}
-    <button
-      className="group relative inline-flex items-center justify-center w-9 h-9 rounded-xl bg-white/60 shadow-md ring-1 ring-red-300/30 hover:bg-red-100 hover:scale-105 transition-all duration-150"
-      onClick={() => handleDeleteReport(r)}
-      type="button"
-      aria-label="Delete"
-    >
-      <svg className="w-5 h-5 text-red-500 group-hover:text-red-700 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M6 19a2 2 0 002 2h8a2 2 0 002-2V7H6v12zm3-9v6m4-6v6m5-8V5a2 2 0 00-2-2H8a2 2 0 00-2 2v2h14z" />
-      </svg>
-      <span className="absolute left-1/2 bottom-[-2.2rem] -translate-x-1/2 px-2 py-1 rounded-md text-xs bg-red-600 text-white opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 shadow-lg z-10">Delete</span>
-    </button>
-  </div>
-</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            </div>
-            <div className="flex justify-center mt-4">
-              <button
-                className="px-2 py-1 border rounded disabled:opacity-50"
-                onClick={() => setAllReportPage(Math.max(1, allReportPage - 1))}
-                disabled={allReportPage === 1}
-              >Prev</button>
-              {Array.from({ length: allTotalPages }, (_, i) => i + 1).map((p) => (
-                <button
-                  key={p}
-                  className={`px-2 py-1 border rounded ${p === allReportPage ? 'bg-blue-500 text-white' : ''}`}
-                  onClick={() => setAllReportPage(p)}
-                >
-                  {p}
-                </button>
-              ))}
-              <button
-                className="px-2 py-1 border rounded disabled:opacity-50"
-                onClick={() => setAllReportPage(Math.min(allTotalPages, allReportPage + 1))}
-                disabled={allReportPage === allTotalPages}
-              >Next</button>
-            </div>
-          </div>
-        ) : (
-          <div className="text-center py-8 text-gray-600">
-            <p>No reports found.</p>
-          </div>
+        
+        {/* Quick Report Modal */}
+        {showQuickModal && quickModalData && userId && (
+          <QuickReportModal
+            student={quickModalData.student}
+            reportType={quickModalData.reportType}
+            onClose={() => {
+              setShowQuickModal(false);
+              setQuickModalData(null);
+            }}
+            onSuccess={refreshData}
+            userId={userId}
+            suggestions={quickModalData.suggestions}
+          />
         )}
-        </div>
-      </div>
-      
-      {/* Tailwind custom animation */}
-      {showEditModal && editingReport && (
-        <EditReportModal
-          report={editingReport}
-          onCancel={() => setShowEditModal(false)}
-          onSave={editReport}
-          surahs={SURAHS}
-          grades={GRADES}
-          reportTypes={REPORT_TYPES}
-        />
-      )}
 
-      {showDeleteConfirm && deletingReport && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-xl">
-            <h3 className="text-lg font-bold mb-4">Confirm Deletion</h3>
-            <p>Are you sure you want to delete this report?</p>
-            <div className="mt-6 flex justify-end gap-4">
-              <button 
-                onClick={() => setShowDeleteConfirm(false)} 
-                className="px-4 py-2 rounded-md text-gray-700 bg-gray-200 hover:bg-gray-300"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={() => deleteReport(deletingReport.id)} 
-                className="px-4 py-2 rounded-md text-white bg-red-600 hover:bg-red-700"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        {/* Edit Modal */}
+        {showEditModal && editingReport && (
+          <EditReportModal
+            report={editingReport}
+            onCancel={() => setShowEditModal(false)}
+            onSave={editReport}
+            surahs={SURAHS}
+            grades={GRADES}
+            reportTypes={REPORT_TYPES}
+          />
+        )}
 
-      {/* Tailwind custom animation */}
-      <style jsx global>{`
-        @keyframes gradient-move {
-          0%, 100% { background-position: 0% 50%; }
-          50% { background-position: 100% 50%; }
-        }
-        .animate-gradient-move {
-          background-size: 200% 200%;
-          animation: gradient-move 10s ease-in-out infinite;
-        }
-        .animate-pulse-slow {
-          animation: pulse 8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-        }
-      `}</style>
-    </main>
+        {/* Full Records Modal */}
+        {showFullRecordsModal && fullRecordsStudent && userId && (
+          <FullRecordsModal
+            student={fullRecordsStudent}
+            onClose={() => {
+              setShowFullRecordsModal(false);
+              setFullRecordsStudent(null);
+            }}
+            onEdit={handleEditReport}
+            onRefresh={refreshData}
+            userId={userId}
+            viewMode={viewMode}
+          />
+        )}
+
+        {/* Animations */}
+        <style jsx global>{`
+          @keyframes gradient-move {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+          }
+          .animate-gradient-move {
+            background-size: 200% 200%;
+            animation: gradient-move 10s ease-in-out infinite;
+          }
+          .animate-pulse-slow {
+            animation: pulse 8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+          }
+        `}</style>
+      </main>
     </>
   );
 }
