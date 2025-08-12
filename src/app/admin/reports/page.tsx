@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import AdminNavbar from "@/components/admin/AdminNavbar";
 import { Card } from "@/components/ui/Card";
+import JuzTestModal from "@/components/admin/JuzTestModal";
 import {
   StudentProgressData,
   calculateDaysSinceLastRead,
@@ -19,7 +20,7 @@ import {
   SummaryStats
 } from "@/lib/reportUtils";
 
-type ViewMode = 'tasmik' | 'murajaah';
+type ViewMode = 'tasmik' | 'murajaah' | 'juz_tests';
 
 export default function AdminReportsPage() {
   const [students, setStudents] = useState<StudentProgressData[]>([]);
@@ -31,10 +32,14 @@ export default function AdminReportsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [teacherFilter, setTeacherFilter] = useState("");
   const [sortBy, setSortBy] = useState<'activity' | 'name' | 'teacher'>('activity');
+  
+  // Juz Test modal state
+  const [showJuzTestModal, setShowJuzTestModal] = useState(false);
+  const [selectedStudentForTest, setSelectedStudentForTest] = useState<string | null>(null);
+  const [selectedJuzNumber, setSelectedJuzNumber] = useState<number>(1);
 
   // Fetch all student progress data
-  useEffect(() => {
-    async function fetchStudentProgress() {
+  const fetchStudentProgress = async () => {
       setLoading(true);
       setError("");
 
@@ -63,68 +68,127 @@ export default function AdminReportsPage() {
 
         // For each student, get their latest report for the current view mode
         const studentProgressPromises = studentsData.map(async (student) => {
-          const reportType = viewMode === 'tasmik' ? 'Tasmi' : 
-                           viewMode === 'murajaah' ? ['Old Murajaah', 'New Murajaah'] : 'Tasmi';
+          if (viewMode === 'juz_tests') {
+            // For Juz Tests view, get memorization progress and test progress
+            const [memorizationResult, juzTestsResult] = await Promise.all([
+              // Get highest memorized juz from Tasmi reports
+              supabase
+                .from("reports")
+                .select("juzuk")
+                .eq("student_id", student.id)
+                .eq("type", "Tasmi")
+                .not("juzuk", "is", null)
+                .order("juzuk", { ascending: false })
+                .limit(1),
+              
+              // Get highest tested juz (passed or failed) - for gap detection
+              supabase
+                .from("juz_tests")
+                .select("juz_number, test_date, passed, total_percentage")
+                .eq("student_id", student.id)
+                .order("juz_number", { ascending: false })
+                .limit(1)
+                .then(result => {
+                  // If table doesn't exist, return empty result
+                  if (result.error?.message?.includes('relation "public.juz_tests" does not exist')) {
+                    return { data: [], error: null };
+                  }
+                  return result;
+                })
+            ]);
 
-          let query = supabase
-            .from("reports")
-            .select("*")
-            .eq("student_id", student.id);
+            const highestMemorizedJuz = memorizationResult.data?.[0]?.juzuk || 0;
+            const latestTest = juzTestsResult.data?.[0] || null;
+            const highestTestedJuz = latestTest?.juz_number || 0;
+            
+            // Gap is between memorized and tested (regardless of pass/fail)
+            const gap = highestMemorizedJuz - highestTestedJuz;
 
-          // Apply type filter
-          if (Array.isArray(reportType)) {
-            query = query.in("type", reportType);
+            return {
+              id: student.id,
+              name: student.name,
+              teacher_name: (student.users as { name?: string })?.name || null,
+              class_name: (student.classes as { name?: string })?.name || null,
+              latest_reading: `Memorized: Juz ${highestMemorizedJuz}`,
+              last_read_date: latestTest?.test_date || null,
+              days_since_last_read: gap, // Using gap instead of days for sorting
+              report_type: 'juz_test',
+              // Additional fields for juz tests
+              highest_memorized_juz: highestMemorizedJuz,
+              highest_passed_juz: highestTestedJuz,
+              juz_test_gap: gap,
+              latest_test_result: latestTest
+            } as StudentProgressData & {
+              highest_memorized_juz?: number;
+              highest_passed_juz?: number;
+              juz_test_gap?: number;
+              latest_test_result?: any;
+            };
           } else {
-            query = query.eq("type", reportType);
-          }
+            // Original logic for Tasmik and Murajaah
+            const reportType = viewMode === 'tasmik' ? 'Tasmi' : 
+                             viewMode === 'murajaah' ? ['Old Murajaah', 'New Murajaah'] : 'Tasmi';
 
-          const { data: reports } = await query
-            .order("date", { ascending: false })
-            .limit(1);
+            let query = supabase
+              .from("reports")
+              .select("*")
+              .eq("student_id", student.id);
 
-          const latestReport = reports?.[0];
-          const daysSinceLastRead = latestReport 
-            ? calculateDaysSinceLastRead(latestReport.date)
-            : 999;
-
-          // Format latest reading based on report type and data available
-          let latestReading = null;
-          if (latestReport) {
-            if (viewMode === 'tasmik') {
-              latestReading = `${latestReport.surah} (${latestReport.ayat_from}-${latestReport.ayat_to})`;
+            // Apply type filter
+            if (Array.isArray(reportType)) {
+              query = query.in("type", reportType);
             } else {
-              // Murajaah format - create from existing data
-              if (latestReport.juzuk) {
-                if (latestReport.page_from && latestReport.page_to) {
-                  const pagesDiff = latestReport.page_to - latestReport.page_from + 1;
-                  if (pagesDiff >= 10) {
-                    // Estimate hizb (every 10 pages ≈ 1 hizb)
-                    const estimatedHizb = Math.floor(latestReport.page_from / 10) + 1;
-                    latestReading = `Juz ${latestReport.juzuk} - Hizb ${estimatedHizb}`;
+              query = query.eq("type", reportType);
+            }
+
+            const { data: reports } = await query
+              .order("date", { ascending: false })
+              .limit(1);
+
+            const latestReport = reports?.[0];
+            const daysSinceLastRead = latestReport 
+              ? calculateDaysSinceLastRead(latestReport.date)
+              : 999;
+
+            // Format latest reading based on report type and data available
+            let latestReading = null;
+            if (latestReport) {
+              if (viewMode === 'tasmik') {
+                latestReading = `${latestReport.surah} (${latestReport.ayat_from}-${latestReport.ayat_to})`;
+              } else {
+                // Murajaah format - create from existing data
+                if (latestReport.juzuk) {
+                  if (latestReport.page_from && latestReport.page_to) {
+                    const pagesDiff = latestReport.page_to - latestReport.page_from + 1;
+                    if (pagesDiff >= 10) {
+                      // Estimate hizb (every 10 pages ≈ 1 hizb)
+                      const estimatedHizb = Math.floor(latestReport.page_from / 10) + 1;
+                      latestReading = `Juz ${latestReport.juzuk} - Hizb ${estimatedHizb}`;
+                    } else {
+                      // Show as quarter
+                      const quarter = Math.ceil(pagesDiff / 2.5);
+                      latestReading = `Juz ${latestReport.juzuk} - ${quarter}/4`;
+                    }
                   } else {
-                    // Show as quarter
-                    const quarter = Math.ceil(pagesDiff / 2.5);
-                    latestReading = `Juz ${latestReport.juzuk} - ${quarter}/4`;
+                    latestReading = `Juz ${latestReport.juzuk}`;
                   }
                 } else {
-                  latestReading = `Juz ${latestReport.juzuk}`;
+                  latestReading = latestReport.surah;
                 }
-              } else {
-                latestReading = latestReport.surah;
               }
             }
-          }
 
-          return {
-            id: student.id,
-            name: student.name,
-            teacher_name: (student.users as any)?.name || null,
-            class_name: (student.classes as any)?.name || null,
-            latest_reading: latestReading,
-            last_read_date: latestReport?.date || null,
-            days_since_last_read: daysSinceLastRead,
-            report_type: latestReport?.type || null
-          } as StudentProgressData;
+            return {
+              id: student.id,
+              name: student.name,
+              teacher_name: (student.users as { name?: string })?.name || null,
+              class_name: (student.classes as { name?: string })?.name || null,
+              latest_reading: latestReading,
+              last_read_date: latestReport?.date || null,
+              days_since_last_read: daysSinceLastRead,
+              report_type: latestReport?.type || null
+            } as StudentProgressData;
+          }
         });
 
         const progressData = await Promise.all(studentProgressPromises);
@@ -134,8 +198,9 @@ export default function AdminReportsPage() {
       } finally {
         setLoading(false);
       }
-    }
+    };
 
+  useEffect(() => {
     fetchStudentProgress();
   }, [viewMode]);
 
@@ -176,9 +241,45 @@ export default function AdminReportsPage() {
   const uniqueTeachers = useMemo(() => 
     getUniqueTeachers(students), [students]);
 
-  const handleViewRecord = (studentId: string) => {
-    // For now, just show alert. In the future, this could open a modal or navigate to student detail
-    alert(`View record functionality for student ${studentId} - to be implemented`);
+  const handleViewRecord = async (studentId: string) => {
+    if (viewMode === 'juz_tests') {
+      // Show Juz Test history
+      try {
+        const { data: tests, error } = await supabase
+          .from("juz_tests")
+          .select("*")
+          .eq("student_id", studentId)
+          .order("test_date", { ascending: false });
+
+        if (error) {
+          // Check if table doesn't exist
+          if (error.message?.includes('relation "public.juz_tests" does not exist')) {
+            alert("Juz Tests feature not set up yet. Please run the database setup script first.");
+            return;
+          }
+          throw error;
+        }
+
+        const student = students.find(s => s.id === studentId);
+        const studentName = student?.name || "Unknown Student";
+
+        if (tests && tests.length > 0) {
+          const historyText = tests.map(test => 
+            `Juz ${test.juz_number} - ${test.total_percentage}% (${test.passed ? 'PASSED' : 'FAILED'}) - ${test.test_date} - ${test.examiner_name || 'Unknown Examiner'}`
+          ).join('\n');
+          
+          alert(`Juz Test History for ${studentName}:\n\n${historyText}`);
+        } else {
+          alert(`No Juz tests found for ${studentName}`);
+        }
+      } catch (error) {
+        console.error("Error fetching test history:", error);
+        alert("Failed to fetch test history. Please ensure the database is properly set up.");
+      }
+    } else {
+      // Original functionality for Tasmik/Murajaah
+      alert(`View record functionality for student ${studentId} - to be implemented`);
+    }
   };
 
   if (loading) {
@@ -248,6 +349,16 @@ export default function AdminReportsPage() {
                 >
                   Murajaah
                 </button>
+                <button
+                  onClick={() => setViewMode('juz_tests')}
+                  className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${
+                    viewMode === 'juz_tests'
+                      ? 'bg-blue-600 text-white shadow-md'
+                      : 'text-gray-600 hover:text-gray-800'
+                  }`}
+                >
+                  Juz Tests
+                </button>
               </div>
             </div>
           </div>
@@ -303,15 +414,42 @@ export default function AdminReportsPage() {
                   <tr>
                     <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30">Name</th>
                     <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30">Teacher</th>
-                    <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30">Latest Reading</th>
-                    <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Last Read</th>
-                    <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Days</th>
-                    <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Actions</th>
+                    {viewMode === 'juz_tests' ? (
+                      <>
+                        <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30">Current Progress</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Latest Test</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Gap</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Actions</th>
+                      </>
+                    ) : (
+                      <>
+                        <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30">Latest Reading</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Last Read</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Days</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Actions</th>
+                      </>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="bg-white/5">
                   {filteredStudents.map((student, index) => {
-                    const rowClass = getInactivityRowClass(student.days_since_last_read);
+                    const extendedStudent = student as StudentProgressData & {
+                      highest_memorized_juz?: number;
+                      highest_passed_juz?: number;
+                      juz_test_gap?: number;
+                      latest_test_result?: any;
+                    };
+
+                    const rowClass = viewMode === 'juz_tests' 
+                      ? (extendedStudent.juz_test_gap && extendedStudent.juz_test_gap > 0 
+                          ? extendedStudent.juz_test_gap >= 3 
+                            ? 'bg-red-50/80' 
+                            : extendedStudent.juz_test_gap >= 1 
+                              ? 'bg-yellow-50/80' 
+                              : ''
+                          : '')
+                      : getInactivityRowClass(student.days_since_last_read);
+                    
                     const activityStatus = getActivityStatus(student.days_since_last_read);
                     
                     return (
@@ -327,35 +465,133 @@ export default function AdminReportsPage() {
                         <td className="px-4 py-3 text-gray-700 border-b border-white/10">
                           {student.teacher_name || <span className="italic text-gray-400">Unassigned</span>}
                         </td>
-                        <td className="px-4 py-3 text-gray-800 border-b border-white/10">
-                          {student.latest_reading || <span className="italic text-gray-400">No records</span>}
-                        </td>
-                        <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
-                          <div className="text-sm">
-                            <div>{formatAbsoluteDate(student.last_read_date)}</div>
-                            <div className="text-xs text-gray-500">
-                              {formatRelativeDate(student.last_read_date)}
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-center border-b border-white/10">
-                          <div className="flex flex-col items-center">
-                            <span className="text-lg font-bold text-gray-800">
-                              {student.days_since_last_read === 999 ? '∞' : student.days_since_last_read}
-                            </span>
-                            <span className={`text-xs font-medium ${activityStatus.color}`}>
-                              {activityStatus.text}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-center border-b border-white/10">
-                          <button
-                            onClick={() => handleViewRecord(student.id)}
-                            className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1 rounded-lg text-sm font-medium transition-colors"
-                          >
-                            View Record
-                          </button>
-                        </td>
+                        
+                        {viewMode === 'juz_tests' ? (
+                          <>
+                            <td className="px-4 py-3 text-gray-800 border-b border-white/10">
+                              <div className="text-sm font-medium">
+                                Juz {extendedStudent.highest_memorized_juz || 0}
+                              </div>
+                              <div className="text-xs text-gray-500">Memorized</div>
+                            </td>
+                            <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
+                              <div className="text-sm">
+                                {extendedStudent.latest_test_result ? (
+                                  <>
+                                    <div className="font-medium">
+                                      Juz {extendedStudent.latest_test_result.juz_number}
+                                    </div>
+                                    <div className={`text-xs font-medium ${
+                                      extendedStudent.latest_test_result.passed 
+                                        ? 'text-green-600' 
+                                        : 'text-red-600'
+                                    }`}>
+                                      {extendedStudent.latest_test_result.total_percentage}% 
+                                      ({extendedStudent.latest_test_result.passed ? 'PASSED' : 'FAILED'})
+                                    </div>
+                                    <div className="text-xs text-gray-500">
+                                      {formatAbsoluteDate(student.last_read_date)}
+                                    </div>
+                                  </>
+                                ) : (
+                                  <div className="text-gray-400 italic">No tests</div>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-center border-b border-white/10">
+                              <div className="flex flex-col items-center">
+                                <span className={`text-lg font-bold ${
+                                  (extendedStudent.juz_test_gap || 0) >= 3 
+                                    ? 'text-red-600' 
+                                    : (extendedStudent.juz_test_gap || 0) >= 1 
+                                      ? 'text-yellow-600' 
+                                      : 'text-green-600'
+                                }`}>
+                                  {extendedStudent.juz_test_gap || 0}
+                                </span>
+                                <span className={`text-xs font-medium ${
+                                  (extendedStudent.juz_test_gap || 0) >= 3 
+                                    ? 'text-red-500' 
+                                    : (extendedStudent.juz_test_gap || 0) >= 1 
+                                      ? 'text-yellow-500' 
+                                      : 'text-green-500'
+                                }`}>
+                                  {(extendedStudent.juz_test_gap || 0) === 0 
+                                    ? 'Up to date' 
+                                    : `${extendedStudent.juz_test_gap} behind`
+                                  }
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-center border-b border-white/10">
+                              <div className="flex flex-col gap-1">
+                                {/* Show button if there's a gap OR if last test failed */}
+                                {((extendedStudent.juz_test_gap || 0) > 0 || 
+                                  (extendedStudent.latest_test_result && !extendedStudent.latest_test_result.passed)) && (
+                                  <button
+                                    onClick={() => {
+                                      setSelectedStudentForTest(student.id);
+                                      // If last test failed, repeat same juz; otherwise test next juz
+                                      const nextJuz = (extendedStudent.latest_test_result && !extendedStudent.latest_test_result.passed)
+                                        ? extendedStudent.latest_test_result.juz_number
+                                        : (extendedStudent.highest_passed_juz || 0) + 1;
+                                      setSelectedJuzNumber(nextJuz);
+                                      setShowJuzTestModal(true);
+                                    }}
+                                    className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                                      (extendedStudent.latest_test_result && !extendedStudent.latest_test_result.passed)
+                                        ? 'bg-orange-100 hover:bg-orange-200 text-orange-700'
+                                        : 'bg-green-100 hover:bg-green-200 text-green-700'
+                                    }`}
+                                  >
+                                    {(extendedStudent.latest_test_result && !extendedStudent.latest_test_result.passed)
+                                      ? `Repeat Juz ${extendedStudent.latest_test_result.juz_number}`
+                                      : `Test Juz ${(extendedStudent.highest_passed_juz || 0) + 1}`
+                                    }
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => handleViewRecord(student.id)}
+                                  className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1 rounded-lg text-xs font-medium transition-colors"
+                                >
+                                  View History
+                                </button>
+                              </div>
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="px-4 py-3 text-gray-800 border-b border-white/10">
+                              {student.latest_reading || <span className="italic text-gray-400">No records</span>}
+                            </td>
+                            <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
+                              <div className="text-sm">
+                                <div>{formatAbsoluteDate(student.last_read_date)}</div>
+                                <div className="text-xs text-gray-500">
+                                  {formatRelativeDate(student.last_read_date)}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-center border-b border-white/10">
+                              <div className="flex flex-col items-center">
+                                <span className="text-lg font-bold text-gray-800">
+                                  {student.days_since_last_read === 999 ? '∞' : student.days_since_last_read}
+                                </span>
+                                <span className={`text-xs font-medium ${activityStatus.color}`}>
+                                  {activityStatus.text}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-center border-b border-white/10">
+                              <button
+                                onClick={() => handleViewRecord(student.id)}
+                                className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1 rounded-lg text-sm font-medium transition-colors"
+                              >
+                                View Record
+                              </button>
+                            </td>
+                          </>
+                        )}
                       </tr>
                     );
                   })}
@@ -371,6 +607,24 @@ export default function AdminReportsPage() {
             </div>
           </div>
         </Card>
+        
+        {/* Juz Test Modal */}
+        {showJuzTestModal && selectedStudentForTest && (
+          <JuzTestModal
+            isOpen={showJuzTestModal}
+            onClose={() => {
+              setShowJuzTestModal(false);
+              setSelectedStudentForTest(null);
+            }}
+            studentId={selectedStudentForTest}
+            juzNumber={selectedJuzNumber}
+            onSubmit={() => {
+              // Refresh the data after successful submission
+              // Force re-fetch by updating a dependency
+              fetchStudentProgress();
+            }}
+          />
+        )}
         
         {/* Custom Styles */}
         <style jsx global>{`

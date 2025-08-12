@@ -2,7 +2,6 @@
 import { useEffect, useState } from "react";
 
 import { supabase } from "@/lib/supabaseClient";
-import SignOutButton from "@/components/SignOutButton";
 import { QuranProgressBar, ChartTabs } from "@/components/ReportCharts";
 import Navbar from "@/components/Navbar";
 
@@ -34,12 +33,81 @@ const GRADES = ["mumtaz", "jayyid jiddan", "jayyid"];
 
 import EditReportModal from "./EditReportModal";
 
+// Helper functions for weekly reporting
+function getCurrentWeekInfo() {
+  const today = new Date();
+  const dayOfWeek = today.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // Get Monday of current week
+  
+  const monday = new Date(today);
+  monday.setDate(today.getDate() + mondayOffset);
+  
+  const friday = new Date(monday);
+  friday.setDate(monday.getDate() + 4); // Friday is 4 days after Monday
+  
+  const weekInMonth = getWeekOfMonth(monday);
+  
+  return {
+    monday,
+    friday,
+    weekNumber: weekInMonth,
+    year: monday.getFullYear(),
+    month: monday.getMonth() + 1,
+    monthName: monday.toLocaleDateString('en-US', { month: 'long' })
+  };
+}
+
+function getWeekOfMonth(date: Date) {
+  // Get the first day of the month
+  const firstDayOfMonth = new Date(date.getFullYear(), date.getMonth(), 1);
+  
+  // Find the first Monday of the month
+  const firstMondayOfMonth = new Date(firstDayOfMonth);
+  const daysToFirstMonday = (1 - firstDayOfMonth.getDay() + 7) % 7; // Days until first Monday
+  if (daysToFirstMonday === 7) {
+    // If the first day is already Monday, don't add 7 days
+    firstMondayOfMonth.setDate(1);
+  } else {
+    firstMondayOfMonth.setDate(1 + daysToFirstMonday);
+  }
+  
+  // If the current date is before the first Monday of the month,
+  // it's considered part of week 1 if it's within the first few days
+  if (date < firstMondayOfMonth) {
+    // If it's within the first 6 days of the month, consider it week 1
+    if (date.getDate() <= 6) {
+      return 1;
+    }
+    // Otherwise, it belongs to the previous month's last week
+    const lastDayOfPreviousMonth = new Date(date.getFullYear(), date.getMonth(), 0);
+    return getWeekOfMonth(lastDayOfPreviousMonth);
+  }
+  
+  // Calculate the week number within the month
+  const daysDiff = Math.floor((date.getTime() - firstMondayOfMonth.getTime()) / (1000 * 60 * 60 * 24));
+  return Math.floor(daysDiff / 7) + 1;
+}
+
+function formatDateRange(monday: Date, friday: Date) {
+  const formatDate = (date: Date) => {
+    return date.toLocaleDateString('en-GB', { 
+      day: '2-digit', 
+      month: '2-digit', 
+      year: 'numeric' 
+    });
+  };
+  return `${formatDate(monday)} - ${formatDate(friday)}`;
+}
+
 export default function TeacherPage() {
   // State for editing and deleting reports
   const [editingReport, setEditingReport] = useState<Report | null>(null);
   const [deletingReport, setDeletingReport] = useState<Report | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  
+  // Current week info
+  const currentWeek = getCurrentWeekInfo();
 
   function handleEditReport(report: Report) {
     setEditingReport(report);
@@ -133,9 +201,8 @@ export default function TeacherPage() {
     page_from: "",
     page_to: "",
     grade: "",
-    date: new Date().toISOString().slice(0, 10)
+    date: currentWeek.friday.toISOString().slice(0, 10) // End of current week
   });
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -210,17 +277,14 @@ export default function TeacherPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
     setError("");
     setSuccess("");
     if (!userId) {
       setError("User not found");
-      setLoading(false);
       return;
     }
     if (!form.student_id) {
       setError("Please select a student");
-      setLoading(false);
       return;
     }
     const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
@@ -243,6 +307,7 @@ export default function TeacherPage() {
       setError(insertError.message);
     } else {
       setSuccess("Report submitted!");
+      const newWeek = getCurrentWeekInfo();
       setForm({
         student_id: "",
         type: REPORT_TYPES[0],
@@ -253,7 +318,7 @@ export default function TeacherPage() {
         page_from: "",
         page_to: "",
         grade: "",
-        date: new Date().toISOString().slice(0, 10)
+        date: newWeek.friday.toISOString().slice(0, 10)
       });
       // Refresh reports
       const { data, error } = await supabase
@@ -277,7 +342,6 @@ export default function TeacherPage() {
         }
       }
     }
-    setLoading(false);
   }
 
   // Pagination state
@@ -319,7 +383,7 @@ export default function TeacherPage() {
   return (
     <>
       <Navbar />
-      <main className="relative min-h-screen bg-gradient-to-br from-[#b1c7f9] via-[#e0e7ff] to-[#b1f9e6] animate-gradient-move p-4 overflow-hidden pt-28">
+      <main className="relative min-h-screen bg-gradient-to-br from-[#b1c7f9] via-[#e0e7ff] to-[#b1f9e6] animate-gradient-move p-4 overflow-hidden">
       <div className="max-w-3xl mx-auto">
         {/* Animated Gradient Blobs */}
         <div className="absolute -top-40 -left-40 w-[500px] h-[500px] bg-gradient-to-tr from-blue-300 via-purple-200 to-blue-100 rounded-full opacity-40 blur-3xl animate-pulse-slow" />
@@ -365,16 +429,16 @@ export default function TeacherPage() {
           <ChartTabs reports={form.student_id ? studentReports : reports} />
         </div>
         {/* Add Report Form */}
-        <div className="relative z-10 bg-white/30 backdrop-blur-xl border border-white/40 rounded-3xl shadow-2xl p-6 mb-6 max-w-3xl mx-auto">
-          <h2 className="text-2xl font-bold mb-6 text-gray-900 tracking-tight">Add New Report</h2>
-          <form className="grid grid-cols-1 md:grid-cols-2 gap-6" onSubmit={handleSubmit}>
-            <div className="col-span-2">
+        <div className="relative z-10 bg-white/30 backdrop-blur-xl border border-white/40 rounded-3xl shadow-2xl p-4 sm:p-6 mb-6 max-w-3xl mx-auto">
+          <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 text-gray-900 tracking-tight">Add New Report</h2>
+          <form className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6" onSubmit={handleSubmit}>
+            <div className="sm:col-span-2">
               <label className="block text-sm font-medium mb-1">Student</label>
               <select
                 value={form.student_id}
                 onChange={e => setForm(f => ({ ...f, student_id: e.target.value }))}
                 required
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm sm:text-base"
               >
                 <option value="">Select a student</option>
                 {students.map(s => (
@@ -387,7 +451,7 @@ export default function TeacherPage() {
               <select
                 value={form.type}
                 onChange={e => setForm(f => ({ ...f, type: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm sm:text-base"
               >
                 {REPORT_TYPES.map(t => (
                   <option key={t} value={t}>{t}</option>
@@ -400,7 +464,7 @@ export default function TeacherPage() {
                 value={form.grade || ""}
                 onChange={e => setForm(f => ({ ...f, grade: e.target.value }))}
                 required
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm sm:text-base"
               >
                 <option value="">Select a grade</option>
                 {GRADES.map(g => (
@@ -408,13 +472,13 @@ export default function TeacherPage() {
                 ))}
               </select>
             </div>
-            <div className="col-span-2">
+            <div className="sm:col-span-2">
               <label className="block text-sm font-medium mb-1">Surah</label>
               <select
                 value={form.surah}
                 onChange={e => setForm(f => ({ ...f, surah: e.target.value }))}
                 required
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm sm:text-base"
               >
                 <option value="">Select a surah</option>
                 {SURAHS.map(surah => (
@@ -422,7 +486,7 @@ export default function TeacherPage() {
                 ))}
               </select>
             </div>
-            <div>
+            <div className="sm:col-span-1">
               <label className="block text-sm font-medium mb-1">Juzuk</label>
               <input
                 type="number"
@@ -431,71 +495,83 @@ export default function TeacherPage() {
                 value={form.juzuk || ""}
                 onChange={e => setForm(f => ({ ...f, juzuk: e.target.value }))}
                 required
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm sm:text-base"
               />
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block text-sm font-medium mb-1">Ayat From</label>
+            <div className="sm:col-span-1">
+              <label className="block text-sm font-medium mb-1">Ayat Range</label>
+              <div className="grid grid-cols-2 gap-2">
                 <input
                   type="number"
+                  placeholder="From"
                   value={form.ayat_from}
                   onChange={e => setForm(f => ({ ...f, ayat_from: e.target.value }))}
                   required
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm sm:text-base"
                 />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Ayat To</label>
                 <input
                   type="number"
+                  placeholder="To"
                   value={form.ayat_to}
                   onChange={e => setForm(f => ({ ...f, ayat_to: e.target.value }))}
                   required
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm sm:text-base"
                 />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block text-sm font-medium mb-1">Page From</label>
+            <div className="sm:col-span-2">
+              <label className="block text-sm font-medium mb-1">Page Range (Optional)</label>
+              <div className="grid grid-cols-2 gap-2">
                 <input
                   type="number"
+                  placeholder="From"
                   value={form.page_from}
                   onChange={e => setForm(f => ({ ...f, page_from: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm sm:text-base"
                 />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Page To</label>
                 <input
                   type="number"
+                  placeholder="To"
                   value={form.page_to}
                   onChange={e => setForm(f => ({ ...f, page_to: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm sm:text-base"
                 />
               </div>
             </div>
-            <div className="col-span-2">
-              <label className="block text-sm font-medium mb-1">Date</label>
-              <input
-                type="date"
-                value={form.date || new Date().toISOString().slice(0, 10)}
-                onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400"
-              />
+            <div className="sm:col-span-2">
+              <label className="block text-sm font-medium mb-1">Week Period</label>
+              <div className="relative">
+                <div className="w-full border border-gray-300 rounded-lg px-3 py-2 bg-blue-50 text-gray-700">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                    <span className="font-medium text-sm sm:text-base">
+                      Week {currentWeek.weekNumber} of {currentWeek.monthName} {currentWeek.year}
+                    </span>
+                    <span className="text-xs sm:text-sm text-gray-600">
+                      {formatDateRange(currentWeek.monday, currentWeek.friday)}
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    Report covers Monday to Friday of this week
+                  </div>
+                </div>
+                <input
+                  type="hidden"
+                  value={form.date}
+                  name="date"
+                />
+              </div>
             </div>
-            <div className="col-span-2">
+            <div className="sm:col-span-2">
               <button
                 type="submit"
-                className="group bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded-xl shadow-lg transition-all focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                className="w-full group bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded-xl shadow-lg transition-all focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 disabled={!form.student_id || !form.type || !form.surah || !form.ayat_from || !form.ayat_to || !form.date}
               >
                 Add Report
                 <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
               </button>
-              {error && <div className="text-red-600 mt-2">{error}</div>}
-              {success && <div className="text-green-600 mt-2">{success}</div>}
+              {error && <div className="text-red-600 mt-2 text-sm">{error}</div>}
+              {success && <div className="text-green-600 mt-2 text-sm">{success}</div>}
             </div>
           </form>
         </div>
@@ -520,7 +596,7 @@ export default function TeacherPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white/5">
-                  {studentReports.map((r, index) => (
+                  {pagedStudentReports.map((r, index) => (
                     <tr key={r.id} className={`transition-colors hover:bg-white/20 ${index % 2 === 0 ? 'bg-white/5' : 'bg-white/10'}`}>
                       <td className="px-4 py-3 text-gray-800 font-medium border-b border-white/10">{r.student_name}</td>
                       <td className="px-4 py-3 text-gray-700 border-b border-white/10">

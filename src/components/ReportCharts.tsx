@@ -62,53 +62,191 @@ export function QuranProgressBar({ reports }: { reports: Report[] }) {
   );
 }
 
+// Helper functions for weekly calculations
+function getWeekOfMonth(date: Date) {
+  const firstDayOfMonth = new Date(date.getFullYear(), date.getMonth(), 1);
+  const firstMondayOfMonth = new Date(firstDayOfMonth);
+  const daysToFirstMonday = (1 - firstDayOfMonth.getDay() + 7) % 7;
+  if (daysToFirstMonday === 7) {
+    firstMondayOfMonth.setDate(1);
+  } else {
+    firstMondayOfMonth.setDate(1 + daysToFirstMonday);
+  }
+  
+  if (date < firstMondayOfMonth) {
+    if (date.getDate() <= 6) {
+      return 1;
+    }
+    const lastDayOfPreviousMonth = new Date(date.getFullYear(), date.getMonth(), 0);
+    return getWeekOfMonth(lastDayOfPreviousMonth);
+  }
+  
+  const daysDiff = Math.floor((date.getTime() - firstMondayOfMonth.getTime()) / (1000 * 60 * 60 * 24));
+  return Math.floor(daysDiff / 7) + 1;
+}
+
+function getWeekLabel(date: Date) {
+  const weekNum = getWeekOfMonth(date);
+  const monthName = date.toLocaleDateString('en-US', { month: 'long' });
+  const year = date.getFullYear();
+  return `Week ${weekNum} of ${monthName} ${year}`;
+}
+
 export function ActivityBarChart({ reports }: { reports: Report[] }) {
-  // Group by date
-  const activity: Record<string, number> = {};
+  // Group by week and sum pages
+  const weeklyPages: Record<string, number> = {};
+  
   reports.forEach(r => {
-    activity[r.date] = (activity[r.date] || 0) + 1;
+    const reportDate = new Date(r.date);
+    const weekLabel = getWeekLabel(reportDate);
+    const pages = r.page_to && r.page_from ? (r.page_to - r.page_from + 1) : 0;
+    weeklyPages[weekLabel] = (weeklyPages[weekLabel] || 0) + pages;
   });
-  const dates = Object.keys(activity).sort();
+  
+  // Sort by date for proper chronological order
+  const sortedWeeks = Object.keys(weeklyPages).sort((a, b) => {
+    // Extract date info for sorting
+    const weekA = a.match(/Week (\d+) of (\w+) (\d+)/);
+    const weekB = b.match(/Week (\d+) of (\w+) (\d+)/);
+    if (!weekA || !weekB) return 0;
+    
+    const yearA = parseInt(weekA[3]);
+    const yearB = parseInt(weekB[3]);
+    if (yearA !== yearB) return yearA - yearB;
+    
+    const monthA = new Date(weekA[2] + ' 1, 2025').getMonth();
+    const monthB = new Date(weekB[2] + ' 1, 2025').getMonth();
+    if (monthA !== monthB) return monthA - monthB;
+    
+    return parseInt(weekA[1]) - parseInt(weekB[1]);
+  });
+  
   const data = {
-    labels: dates,
+    labels: sortedWeeks,
     datasets: [
       {
-        label: "Reports",
-        data: dates.map(d => activity[d]),
+        label: "Pages",
+        data: sortedWeeks.map(week => weeklyPages[week]),
         backgroundColor: "#2563eb",
       },
     ],
   };
+  
   return (
     <div className="mb-4">
       <div className="text-sm font-semibold mb-1">Activity</div>
-      <Bar data={data} options={{ responsive: true, plugins: { legend: { display: false } } }} height={120} />
+      <Bar data={data} options={{ 
+        responsive: true, 
+        plugins: { legend: { display: false } },
+        scales: {
+          x: {
+            ticks: {
+              maxRotation: 45,
+              minRotation: 45
+            }
+          },
+          y: {
+            title: {
+              display: true,
+              text: 'Pages per Week'
+            }
+          }
+        }
+      }} height={120} />
     </div>
   );
 }
 
 export function GradeChart({ reports }: { reports: Report[] }) {
-  // Group by grade
-  const gradeCounts: Record<string, number> = { mumtaz: 0, "jayyid jiddan": 0, jayyid: 0 };
+  // Group reports by week and calculate average grade per week
+  const weeklyGrades: Record<string, number[]> = {};
+  
   reports.forEach(r => {
-    if (r.grade && gradeCounts[r.grade.toLowerCase()] !== undefined) {
-      gradeCounts[r.grade.toLowerCase()]++;
+    if (!r.grade) return;
+    const reportDate = new Date(r.date);
+    const weekLabel = getWeekLabel(reportDate);
+    const gradeValue = gradeToNumber(r.grade);
+    
+    if (gradeValue !== null) {
+      if (!weeklyGrades[weekLabel]) {
+        weeklyGrades[weekLabel] = [];
+      }
+      weeklyGrades[weekLabel].push(gradeValue);
     }
   });
+  
+  // Calculate average grade per week and sort chronologically
+  const weeklyAverages: Record<string, number> = {};
+  Object.keys(weeklyGrades).forEach(week => {
+    const grades = weeklyGrades[week];
+    weeklyAverages[week] = grades.reduce((sum, grade) => sum + grade, 0) / grades.length;
+  });
+  
+  // Sort weeks chronologically (same logic as activity chart)
+  const sortedWeeks = Object.keys(weeklyAverages).sort((a, b) => {
+    const weekA = a.match(/Week (\d+) of (\w+) (\d+)/);
+    const weekB = b.match(/Week (\d+) of (\w+) (\d+)/);
+    if (!weekA || !weekB) return 0;
+    
+    const yearA = parseInt(weekA[3]);
+    const yearB = parseInt(weekB[3]);
+    if (yearA !== yearB) return yearA - yearB;
+    
+    const monthA = new Date(weekA[2] + ' 1, 2025').getMonth();
+    const monthB = new Date(weekB[2] + ' 1, 2025').getMonth();
+    if (monthA !== monthB) return monthA - monthB;
+    
+    return parseInt(weekA[1]) - parseInt(weekB[1]);
+  });
+  
   const data = {
-    labels: ["Mumtaz", "Jayyid Jiddan", "Jayyid"],
+    labels: sortedWeeks,
     datasets: [
       {
-        label: "Count",
-        data: [gradeCounts.mumtaz, gradeCounts["jayyid jiddan"], gradeCounts.jayyid],
-        backgroundColor: ["#22c55e", "#2563eb", "#fbbf24"],
+        label: "Average Grade",
+        data: sortedWeeks.map(week => weeklyAverages[week]),
+        borderColor: "#22c55e",
+        backgroundColor: "rgba(34, 197, 94, 0.1)",
+        tension: 0.4,
+        fill: true
       },
     ],
   };
+  
   return (
     <div className="mb-4">
       <div className="text-sm font-semibold mb-1">Grades</div>
-      <Bar data={data} options={{ responsive: true, plugins: { legend: { display: false } } }} height={120} />
+      <Line data={data} options={{ 
+        responsive: true, 
+        plugins: { legend: { display: false } },
+        scales: {
+          x: {
+            ticks: {
+              maxRotation: 45,
+              minRotation: 45
+            }
+          },
+          y: {
+            title: {
+              display: true,
+              text: 'Average Grade'
+            },
+            min: 1,
+            max: 3,
+            ticks: {
+              stepSize: 1,
+              callback: function(value) {
+                const tickLabels: Record<number, string> = {
+                  1: 'Jayyid',
+                  2: 'Jayyid Jiddan', 
+                  3: 'Mumtaz'
+                };
+                return tickLabels[value as number] || value;
+              }
+            }
+          }
+        }
+      }} height={120} />
     </div>
   );
 }

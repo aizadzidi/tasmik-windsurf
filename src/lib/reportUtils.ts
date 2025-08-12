@@ -14,7 +14,7 @@ export interface StudentProgressData {
   latest_reading: string | null;
   last_read_date: string | null;
   days_since_last_read: number;
-  report_type: 'Tasmi' | 'Old Murajaah' | 'New Murajaah' | null;
+  report_type: 'Tasmi' | 'Old Murajaah' | 'New Murajaah' | 'juz_test' | null;
 }
 
 // Calculate days since last read
