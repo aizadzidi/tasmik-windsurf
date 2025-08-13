@@ -192,24 +192,36 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
       };
 
       console.log("Submitting test data:", testData);
+      console.log("Test data JSON:", JSON.stringify(testData, null, 2));
 
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("juz_tests")
-        .insert([testData]);
+        .insert([testData])
+        .select();
 
       if (error) {
         console.error("Supabase error details:", error);
         throw error;
       }
 
+      console.log("Juz test submitted successfully:", data);
       alert("Juz test submitted successfully!");
       onSubmit();
       onClose();
     } catch (error) {
       console.error("Error submitting juz test:", error);
+      console.error("Error details:", JSON.stringify(error, null, 2));
       
       // Show more detailed error message
-      const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+      let errorMessage = "Unknown error occurred";
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      } else if (typeof error === 'object' && error !== null) {
+        errorMessage = JSON.stringify(error);
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      }
+      
       alert(`Failed to submit juz test: ${errorMessage}`);
     } finally {
       setLoading(false);

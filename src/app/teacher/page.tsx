@@ -110,31 +110,21 @@ export default function TeacherPage() {
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
       
       if (latestTasmi) {
-        // Suggest next ayat range in same surah or next surah
-        const currentSurahIndex = SURAHS.indexOf(latestTasmi.surah);
+        // Suggest next ayat range starting from where they left off
         const nextAyatFrom = latestTasmi.ayat_to + 1;
         const nextPageFrom = latestTasmi.page_to ? latestTasmi.page_to + 1 : null;
         
-        // Simple progression logic - suggest next 50 ayats or next surah
-        if (nextAyatFrom <= 200) { // arbitrary limit for surah length
-          return {
-            surah: latestTasmi.surah,
-            juzuk: latestTasmi.juzuk || 1,
-            ayatFrom: nextAyatFrom,
-            ayatTo: nextAyatFrom + 49,
-            pageFrom: nextPageFrom,
-            pageTo: nextPageFrom ? nextPageFrom + 1 : null
-          };
-        } else if (currentSurahIndex < SURAHS.length - 1) {
-          return {
-            surah: SURAHS[currentSurahIndex + 1],
-            juzuk: (latestTasmi.juzuk || 1) + 1,
-            ayatFrom: 1,
-            ayatTo: 50,
-            pageFrom: nextPageFrom,
-            pageTo: nextPageFrom ? nextPageFrom + 1 : null
-          };
-        }
+        // Continue in same surah with reasonable progression (10-20 ayats)
+        const progressionSize = Math.min(20, Math.max(10, latestTasmi.ayat_to - latestTasmi.ayat_from + 1));
+        
+        return {
+          surah: latestTasmi.surah,
+          juzuk: latestTasmi.juzuk || 1,
+          ayatFrom: nextAyatFrom,
+          ayatTo: nextAyatFrom + progressionSize - 1,
+          pageFrom: nextPageFrom,
+          pageTo: nextPageFrom ? nextPageFrom + 1 : null
+        };
       }
       
       // Default for new students
@@ -147,24 +137,41 @@ export default function TeacherPage() {
         pageTo: null
       };
     } else {
-      // Murajaah - suggest reviewing previous content
+      // Murajaah - suggest continuing from latest murajaah or tasmi
       const latestMurajaah = studentReports
         .filter(r => r.type === "Murajaah" || r.type === "Old Murajaah" || r.type === "New Murajaah")
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
       
+      if (latestMurajaah) {
+        // Continue from latest murajaah position
+        const nextAyatFrom = latestMurajaah.ayat_to + 1;
+        const nextPageFrom = latestMurajaah.page_to ? latestMurajaah.page_to + 1 : null;
+        const progressionSize = Math.min(20, Math.max(10, latestMurajaah.ayat_to - latestMurajaah.ayat_from + 1));
+        
+        return {
+          surah: latestMurajaah.surah,
+          juzuk: latestMurajaah.juzuk || 1,
+          ayatFrom: nextAyatFrom,
+          ayatTo: nextAyatFrom + progressionSize - 1,
+          pageFrom: nextPageFrom,
+          pageTo: nextPageFrom ? nextPageFrom + 1 : null
+        };
+      }
+      
       // If no murajaah, use latest Tasmi for review
-      const referenceReport = latestMurajaah || studentReports
+      const latestTasmi = studentReports
         .filter(r => r.type === "Tasmi")
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
       
-      if (referenceReport) {
+      if (latestTasmi) {
+        // Start murajaah from beginning of what they've memorized
         return {
-          surah: referenceReport.surah,
-          juzuk: referenceReport.juzuk || 1,
-          ayatFrom: referenceReport.ayat_from,
-          ayatTo: referenceReport.ayat_to,
-          pageFrom: referenceReport.page_from,
-          pageTo: referenceReport.page_to
+          surah: latestTasmi.surah,
+          juzuk: latestTasmi.juzuk || 1,
+          ayatFrom: 1,
+          ayatTo: Math.min(20, latestTasmi.ayat_to),
+          pageFrom: 1,
+          pageTo: latestTasmi.page_to ? Math.min(2, latestTasmi.page_to) : null
         };
       }
     }
@@ -323,17 +330,17 @@ export default function TeacherPage() {
     let filtered = filterStudentsBySearch(monitorStudents, searchTerm);
     
     if (viewMode === 'juz_tests') {
-      // Sort by highest memorized juz first, then by gap
+      // Sort by gap first (larger gaps first for priority), then by highest memorized juz
       filtered = [...filtered].sort((a, b) => {
         const extA = a as StudentProgressData & { highest_memorized_juz?: number; juz_test_gap?: number };
         const extB = b as StudentProgressData & { highest_memorized_juz?: number; juz_test_gap?: number };
         
-        // First by highest memorized juz (descending)
-        const juzDiff = (extB.highest_memorized_juz || 0) - (extA.highest_memorized_juz || 0);
-        if (juzDiff !== 0) return juzDiff;
+        // First by gap (descending - larger gaps first for teacher priority)
+        const gapDiff = (extB.juz_test_gap || 0) - (extA.juz_test_gap || 0);
+        if (gapDiff !== 0) return gapDiff;
         
-        // Then by gap (descending - larger gaps first)
-        return (extB.juz_test_gap || 0) - (extA.juz_test_gap || 0);
+        // Then by highest memorized juz (descending - more advanced students first)
+        return (extB.highest_memorized_juz || 0) - (extA.highest_memorized_juz || 0);
       });
     } else {
       // For tasmik/murajaah: sort by days since last read (descending - longest gaps first)
@@ -350,8 +357,26 @@ export default function TeacherPage() {
     return filtered;
   }, [monitorStudents, searchTerm, sortBy, viewMode]);
 
-  const summaryStats: SummaryStats = useMemo(() => 
-    getSummaryStats(filteredMonitorStudents), [filteredMonitorStudents]);
+  const summaryStats: SummaryStats = useMemo(() => {
+    if (viewMode === 'juz_tests') {
+      // For Juz Tests, show gap-based stats instead of activity-based
+      const studentsWithGaps = filteredMonitorStudents.filter(s => {
+        const extS = s as StudentProgressData & { juz_test_gap?: number };
+        return (extS.juz_test_gap || 0) > 0;
+      });
+      const studentsWithLargeGaps = filteredMonitorStudents.filter(s => {
+        const extS = s as StudentProgressData & { juz_test_gap?: number };
+        return (extS.juz_test_gap || 0) >= 3;
+      });
+      
+      return {
+        totalStudents: filteredMonitorStudents.length,
+        inactive7Days: studentsWithGaps.length, // Students with any gap
+        inactive14Days: studentsWithLargeGaps.length // Students with large gaps (3+)
+      };
+    }
+    return getSummaryStats(filteredMonitorStudents);
+  }, [filteredMonitorStudents, viewMode]);
 
   // Handle quick report
   const handleQuickReport = (student: Student, reportType: "Tasmi" | "Murajaah") => {
@@ -423,224 +448,220 @@ export default function TeacherPage() {
   };
 
   return (
-    <>
+    <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
       <Navbar />
-      <main className="relative min-h-screen bg-gradient-to-br from-[#b1c7f9] via-[#e0e7ff] to-[#b1f9e6] animate-gradient-move p-4 overflow-hidden">
+      <div className="relative p-4 sm:p-6">
         <div className="max-w-7xl mx-auto">
-          {/* Animated Background Blobs */}
-          <div className="absolute -top-40 -left-40 w-[500px] h-[500px] bg-gradient-to-tr from-blue-300 via-purple-200 to-blue-100 rounded-full opacity-40 blur-3xl animate-pulse-slow -z-10" />
-          <div className="absolute -bottom-32 right-0 w-[400px] h-[400px] bg-gradient-to-br from-blue-200 via-blue-100 to-purple-200 rounded-full opacity-30 blur-2xl animate-pulse-slow -z-10" />
-          
-          <div className="relative z-20">
-            {/* Header */}
-            <header className="mb-6">
-              <div>
-                <h1 className="text-3xl font-bold text-gray-800">Student Progress Monitor</h1>
-                <p className="text-gray-600 mt-1">Monitor and create reports for your students&apos; Quran memorization progress</p>
-              </div>
-            </header>
+          {/* Header */}
+          <header className="mb-6">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-800">Student Progress Monitor</h1>
+              <p className="text-gray-600">Monitor and create reports for your students&apos; Quran memorization progress</p>
+            </div>
+          </header>
 
-            {/* Summary Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-              <Card className="bg-white/30 backdrop-blur-xl border border-white/40 p-6">
-                <div className="text-3xl font-bold text-gray-900">{summaryStats.totalStudents}</div>
-                <div className="text-sm text-gray-600">Your Students</div>
-              </Card>
-              <Card className="bg-white/30 backdrop-blur-xl border border-white/40 p-6">
-                <div className="text-3xl font-bold text-orange-600">{summaryStats.inactive7Days}</div>
-                <div className="text-sm text-gray-600">Inactive &gt; 7 Days</div>
-              </Card>
-              <Card className="bg-white/30 backdrop-blur-xl border border-white/40 p-6">
-                <div className="text-3xl font-bold text-red-600">{summaryStats.inactive14Days}</div>
-                <div className="text-sm text-gray-600">Inactive &gt; 14 Days</div>
-              </Card>
+          {/* Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <Card className="p-4">
+              <div className="text-2xl font-bold">{summaryStats.totalStudents}</div>
+              <div className="text-sm text-gray-600">Your Students</div>
+            </Card>
+            <Card className="p-4">
+              <div className="text-2xl font-bold text-orange-600">{summaryStats.inactive7Days}</div>
+              <div className="text-sm text-gray-600">
+                {viewMode === 'juz_tests' ? 'Need Testing' : 'Inactive > 7 Days'}
+              </div>
+            </Card>
+            <Card className="p-4">
+              <div className="text-2xl font-bold text-red-600">{summaryStats.inactive14Days}</div>
+              <div className="text-sm text-gray-600">
+                {viewMode === 'juz_tests' ? 'High Priority' : 'Inactive > 14 Days'}
+              </div>
+            </Card>
+          </div>
+
+          {/* Charts Section */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <Card className="p-6">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">Student Progress Overview</h3>
+              {viewMode !== 'juz_tests' && filteredMonitorStudents.length > 0 && (
+                <QuranProgressBar reports={reports.filter(r => {
+                  const isRelevantStudent = filteredMonitorStudents.some(s => s.id === r.student_id);
+                  if (!isRelevantStudent) return false;
+                  
+                  // Filter by report type based on viewMode
+                  if (viewMode === 'tasmik') {
+                    return r.type === 'Tasmi';
+                  } else if (viewMode === 'murajaah') {
+                    return ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
+                  }
+                  return true;
+                })} />
+              )}
+            </Card>
+            <Card className="p-6">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">Class Analytics</h3>
+              {viewMode !== 'juz_tests' && (
+                <ChartTabs reports={reports.filter(r => {
+                  const isRelevantStudent = filteredMonitorStudents.some(s => s.id === r.student_id);
+                  if (!isRelevantStudent) return false;
+                  
+                  // Filter by report type based on viewMode
+                  if (viewMode === 'tasmik') {
+                    return r.type === 'Tasmi';
+                  } else if (viewMode === 'murajaah') {
+                    return ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
+                  }
+                  return true;
+                })} />
+              )}
+            </Card>
+          </div>
+
+          {/* Main Content Card */}
+          <Card className="p-4">
+            {/* View Toggle */}
+            <div className="flex items-center justify-center mb-6">
+              <div className="bg-gray-100 rounded-full p-1">
+                  <div className="flex">
+                  <button
+                    onClick={() => setViewMode('tasmik')}
+                    className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${
+                      viewMode === 'tasmik' 
+                        ? 'bg-blue-600 text-white shadow-md'
+                        : 'text-gray-600 hover:text-gray-800'
+                    }`}
+                  >
+                    Tasmik
+                  </button>
+                  <button
+                    onClick={() => setViewMode('murajaah')}
+                    className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${
+                      viewMode === 'murajaah'
+                        ? 'bg-blue-600 text-white shadow-md'
+                        : 'text-gray-600 hover:text-gray-800'
+                    }`}
+                  >
+                    Murajaah
+                  </button>
+                  <button
+                    onClick={() => setViewMode('juz_tests')}
+                    className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${
+                      viewMode === 'juz_tests'
+                        ? 'bg-blue-600 text-white shadow-md'
+                        : 'text-gray-600 hover:text-gray-800'
+                    }`}
+                  >
+                    Juz Tests
+                  </button>
+                </div>
+              </div>
             </div>
 
-            {/* Main Content Card */}
-            <Card className="bg-white/30 backdrop-blur-xl border border-white/40 p-6">
-              {/* View Toggle */}
-              <div className="flex items-center justify-center mb-6">
-                <div className="bg-gray-100 rounded-full p-1">
-                  <div className="flex">
-                    <button
-                      onClick={() => setViewMode('tasmik')}
-                      className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${
-                        viewMode === 'tasmik' 
-                          ? 'bg-blue-600 text-white shadow-md'
-                          : 'text-gray-600 hover:text-gray-800'
-                      }`}
-                    >
-                      Tasmik
-                    </button>
-                    <button
-                      onClick={() => setViewMode('murajaah')}
-                      className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${
-                        viewMode === 'murajaah'
-                          ? 'bg-blue-600 text-white shadow-md'
-                          : 'text-gray-600 hover:text-gray-800'
-                      }`}
-                    >
-                      Murajaah
-                    </button>
-                    <button
-                      onClick={() => setViewMode('juz_tests')}
-                      className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${
-                        viewMode === 'juz_tests'
-                          ? 'bg-blue-600 text-white shadow-md'
-                          : 'text-gray-600 hover:text-gray-800'
-                      }`}
-                    >
-                      Juz Tests
-                    </button>
-                  </div>
-                </div>
-              </div>
 
-              {/* Progress Charts */}
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold mb-4 text-gray-800">Progress Analytics</h3>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <div className="bg-white/50 backdrop-blur-sm rounded-xl p-4">
-                    <h4 className="text-md font-medium mb-3 text-gray-700">Student Progress Overview</h4>
-                    {viewMode !== 'juz_tests' && filteredMonitorStudents.length > 0 && (
-                      <QuranProgressBar reports={reports.filter(r => {
-                        const isRelevantStudent = filteredMonitorStudents.some(s => s.id === r.student_id);
-                        if (!isRelevantStudent) return false;
-                        
-                        // Filter by report type based on viewMode
-                        if (viewMode === 'tasmik') {
-                          return r.type === 'Tasmi';
-                        } else if (viewMode === 'murajaah') {
-                          return ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
-                        }
-                        return true;
-                      })} />
-                    )}
-                  </div>
-                  <div className="bg-white/50 backdrop-blur-sm rounded-xl p-4">
-                    <h4 className="text-md font-medium mb-3 text-gray-700">Class Analytics</h4>
-                    {viewMode !== 'juz_tests' && (
-                      <ChartTabs reports={reports.filter(r => {
-                        const isRelevantStudent = filteredMonitorStudents.some(s => s.id === r.student_id);
-                        if (!isRelevantStudent) return false;
-                        
-                        // Filter by report type based on viewMode
-                        if (viewMode === 'tasmik') {
-                          return r.type === 'Tasmi';
-                        } else if (viewMode === 'murajaah') {
-                          return ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
-                        }
-                        return true;
-                      })} />
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Filters */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                {viewMode !== 'juz_tests' && (
-                  <div>
-                    <select
-                      value={sortBy}
-                      onChange={(e) => setSortBy(e.target.value as 'activity' | 'name')}
-                      className="w-full border-gray-300 rounded-lg px-3 py-2 bg-white/80 backdrop-blur-sm focus:ring-2 focus:ring-blue-400"
-                    >
-                      <option value="activity">Sort by Activity</option>
-                      <option value="name">Sort by Name</option>
-                    </select>
-                  </div>
-                )}
-                <div className={viewMode === 'juz_tests' ? 'md:col-span-3' : 'md:col-span-2'}>
-                  <input
-                    type="text"
-                    placeholder="Search students..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full border-gray-300 rounded-lg px-3 py-2 bg-white/80 backdrop-blur-sm focus:ring-2 focus:ring-blue-400"
-                  />
-                </div>
-              </div>
-
-              {/* Loading */}
-              {monitorLoading && (
-                <div className="text-center py-8 text-gray-600">
-                  <p>Loading student progress...</p>
+            {/* Filters */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              {viewMode !== 'juz_tests' && (
+                <div>
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as 'activity' | 'name')}
+                    className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                  >
+                    <option value="activity">Sort by Activity</option>
+                    <option value="name">Sort by Name</option>
+                  </select>
                 </div>
               )}
+              <div className={viewMode === 'juz_tests' ? 'md:col-span-3' : 'md:col-span-2'}>
+                <input
+                  type="text"
+                  placeholder="Search students..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                />
+              </div>
+            </div>
 
-              {/* Student Progress Table */}
-              {!monitorLoading && (
-                <div className="overflow-hidden rounded-xl border border-white/20 shadow-lg">
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full">
-                      <thead className="bg-gradient-to-r from-blue-50/80 to-purple-50/80 backdrop-blur-sm">
-                        <tr>
-                          <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30">Name</th>
+            {/* Loading */}
+            {monitorLoading && (
+              <div className="text-center py-8 text-gray-600">
+                <p>Loading student progress...</p>
+              </div>
+            )}
+
+            {/* Student Progress Table */}
+            {!monitorLoading && (
+              <div className="overflow-x-auto border rounded-lg">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                      {viewMode === 'juz_tests' ? (
+                        <>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Current Progress</th>
+                          <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Latest Test</th>
+                          <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Gap</th>
+                          <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        </>
+                      ) : (
+                        <>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Latest Reading</th>
+                          <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Last Read</th>
+                          <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Days</th>
+                          <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        </>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {filteredMonitorStudents.map((student, index) => {
+                      const extendedStudent = student as StudentProgressData & {
+                        highest_memorized_juz?: number;
+                        highest_passed_juz?: number;
+                        juz_test_gap?: number;
+                        latest_test_result?: {
+                          juz_number: number;
+                          test_date: string;
+                          passed: boolean;
+                          total_percentage: number;
+                        };
+                      };
+
+                      const rowClass = viewMode === 'juz_tests' 
+                        ? (extendedStudent.juz_test_gap && extendedStudent.juz_test_gap > 0 
+                            ? extendedStudent.juz_test_gap >= 3 
+                              ? 'bg-red-50/80' 
+                              : extendedStudent.juz_test_gap >= 1 
+                                ? 'bg-yellow-50/80' 
+                                : ''
+                            : '')
+                        : getInactivityRowClass(student.days_since_last_read);
+                      
+                      const activityStatus = getActivityStatus(student.days_since_last_read);
+                      const studentData = students.find(s => s.id === student.id);
+                      
+                      return (
+                        <tr key={student.id} className={`${rowClass}`}>
+                          <td className="px-4 py-3 font-medium text-gray-900">
+                            <div>
+                              <div className="font-semibold">{student.name}</div>
+                              {student.class_name && (
+                                <div className="text-xs text-gray-600">{student.class_name}</div>
+                              )}
+                            </div>
+                          </td>
+                              
                           {viewMode === 'juz_tests' ? (
                             <>
-                              <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30">Current Progress</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Latest Test</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Gap</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Actions</th>
-                            </>
-                          ) : (
-                            <>
-                              <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b border-white/30">Latest Reading</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Last Read</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Days</th>
-                              <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b border-white/30">Actions</th>
-                            </>
-                          )}
-                        </tr>
-                      </thead>
-                      <tbody className="bg-white/5">
-                        {filteredMonitorStudents.map((student, index) => {
-                          const extendedStudent = student as StudentProgressData & {
-                            highest_memorized_juz?: number;
-                            highest_passed_juz?: number;
-                            juz_test_gap?: number;
-                            latest_test_result?: {
-                              juz_number: number;
-                              test_date: string;
-                              passed: boolean;
-                              total_percentage: number;
-                            };
-                          };
-
-                          const rowClass = viewMode === 'juz_tests' 
-                            ? (extendedStudent.juz_test_gap && extendedStudent.juz_test_gap > 0 
-                                ? extendedStudent.juz_test_gap >= 3 
-                                  ? 'bg-red-50/80' 
-                                  : extendedStudent.juz_test_gap >= 1 
-                                    ? 'bg-yellow-50/80' 
-                                    : ''
-                                : '')
-                            : getInactivityRowClass(student.days_since_last_read);
-                          
-                          const activityStatus = getActivityStatus(student.days_since_last_read);
-                          const studentData = students.find(s => s.id === student.id);
-                          
-                          return (
-                            <tr key={student.id} className={`transition-colors hover:bg-white/20 ${index % 2 === 0 ? 'bg-white/5' : 'bg-white/10'} ${rowClass}`}>
-                              <td className="px-4 py-3 text-gray-800 font-medium border-b border-white/10">
-                                <div>
-                                  <div className="font-semibold">{student.name}</div>
-                                  {student.class_name && (
-                                    <div className="text-xs text-gray-600">{student.class_name}</div>
-                                  )}
+                              <td className="px-4 py-3 text-gray-600">
+                                <div className="text-sm font-medium">
+                                  Juz {extendedStudent.highest_memorized_juz || 0}
                                 </div>
+                                <div className="text-xs text-gray-500">Memorized</div>
                               </td>
-                              
-                              {viewMode === 'juz_tests' ? (
-                                <>
-                                  <td className="px-4 py-3 text-gray-800 border-b border-white/10">
-                                    <div className="text-sm font-medium">
-                                      Juz {extendedStudent.highest_memorized_juz || 0}
-                                    </div>
-                                    <div className="text-xs text-gray-500">Memorized</div>
-                                  </td>
-                                  <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
+                              <td className="px-4 py-3 text-center text-gray-600">
                                     <div className="text-sm">
                                       {extendedStudent.latest_test_result ? (
                                         <>
@@ -663,33 +684,33 @@ export default function TeacherPage() {
                                         <div className="text-gray-400 italic">No tests</div>
                                       )}
                                     </div>
-                                  </td>
-                                  <td className="px-4 py-3 text-center border-b border-white/10">
-                                    <div className="flex flex-col items-center">
-                                      <span className={`text-lg font-bold ${
-                                        (extendedStudent.juz_test_gap || 0) >= 3 
-                                          ? 'text-red-600' 
-                                          : (extendedStudent.juz_test_gap || 0) >= 1 
-                                            ? 'text-yellow-600' 
-                                            : 'text-green-600'
-                                      }`}>
-                                        {extendedStudent.juz_test_gap || 0}
-                                      </span>
-                                      <span className={`text-xs font-medium ${
-                                        (extendedStudent.juz_test_gap || 0) >= 3 
-                                          ? 'text-red-500' 
-                                          : (extendedStudent.juz_test_gap || 0) >= 1 
-                                            ? 'text-yellow-500' 
-                                            : 'text-green-500'
-                                      }`}>
-                                        {(extendedStudent.juz_test_gap || 0) === 0 
-                                          ? 'Up to date' 
-                                          : `${extendedStudent.juz_test_gap} behind`
-                                        }
-                                      </span>
-                                    </div>
-                                  </td>
-                                  <td className="px-4 py-3 text-center border-b border-white/10">
+                              </td>
+                              <td className="px-4 py-3 text-center ">
+                                <div className="flex flex-col items-center">
+                                  <span className={`text-lg font-bold ${
+                                    (extendedStudent.juz_test_gap || 0) >= 3 
+                                      ? 'text-red-600' 
+                                      : (extendedStudent.juz_test_gap || 0) >= 1 
+                                        ? 'text-yellow-600' 
+                                        : 'text-green-600'
+                                  }`}>
+                                    {extendedStudent.juz_test_gap || 0}
+                                  </span>
+                                  <span className={`text-xs font-medium ${
+                                    (extendedStudent.juz_test_gap || 0) >= 3 
+                                      ? 'text-red-500' 
+                                      : (extendedStudent.juz_test_gap || 0) >= 1 
+                                        ? 'text-yellow-500' 
+                                        : 'text-green-500'
+                                  }`}>
+                                    {(extendedStudent.juz_test_gap || 0) === 0 
+                                      ? 'Up to date' 
+                                      : `${extendedStudent.juz_test_gap} behind`
+                                    }
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-center ">
                                     <div className="flex flex-col gap-1">
                                       {(extendedStudent.juz_test_gap || 0) > 0 && (
                                         <button
@@ -700,7 +721,7 @@ export default function TeacherPage() {
                                           }}
                                           className="px-3 py-1 rounded-lg text-xs font-medium transition-colors bg-purple-100 hover:bg-purple-200 text-purple-700"
                                         >
-                                          Ready to Test
+                                          Notify Examiner
                                         </button>
                                       )}
                                       <button
@@ -742,30 +763,30 @@ export default function TeacherPage() {
                                     </div>
                                   </td>
                                 </>
-                              ) : (
-                                <>
-                                  <td className="px-4 py-3 text-gray-800 border-b border-white/10">
-                                    {student.latest_reading || <span className="italic text-gray-400">No records</span>}
-                                  </td>
-                                  <td className="px-4 py-3 text-center text-gray-700 border-b border-white/10">
-                                    <div className="text-sm">
-                                      <div>{formatAbsoluteDate(student.last_read_date)}</div>
-                                      <div className="text-xs text-gray-500">
-                                        {formatRelativeDate(student.last_read_date)}
-                                      </div>
-                                    </div>
-                                  </td>
-                                  <td className="px-4 py-3 text-center border-b border-white/10">
-                                    <div className="flex flex-col items-center">
-                                      <span className="text-lg font-bold text-gray-800">
-                                        {student.days_since_last_read === 999 ? '∞' : student.days_since_last_read}
-                                      </span>
-                                      <span className={`text-xs font-medium ${activityStatus.color}`}>
-                                        {activityStatus.text}
-                                      </span>
-                                    </div>
-                                  </td>
-                                  <td className="px-4 py-3 text-center border-b border-white/10">
+                          ) : (
+                            <>
+                              <td className="px-4 py-3 text-gray-800 ">
+                                {student.latest_reading || <span className="italic text-gray-400">No records</span>}
+                              </td>
+                              <td className="px-4 py-3 text-center text-gray-700 ">
+                                <div className="text-sm">
+                                  <div>{formatAbsoluteDate(student.last_read_date)}</div>
+                                  <div className="text-xs text-gray-500">
+                                    {formatRelativeDate(student.last_read_date)}
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-center ">
+                                <div className="flex flex-col items-center">
+                                  <span className="text-lg font-bold text-gray-800">
+                                    {student.days_since_last_read === 999 ? '∞' : student.days_since_last_read}
+                                  </span>
+                                  <span className={`text-xs font-medium ${activityStatus.color}`}>
+                                    {activityStatus.text}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-center ">
                                     <div className="flex flex-col gap-1">
                                       {viewMode === 'tasmik' && studentData && (
                                         <button
@@ -796,25 +817,24 @@ export default function TeacherPage() {
                                     </div>
                                   </td>
                                 </>
-                              )}
-                            </tr>
-                          );
-                        })}
-                        {filteredMonitorStudents.length === 0 && (
-                          <tr>
-                            <td colSpan={5} className="text-center py-8 text-gray-600">
-                              <p>No students match the current filters.</p>
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </Card>
-          </div>
+                          )}
+                        </tr>
+                      );
+                    })}
+                    {filteredMonitorStudents.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="text-center py-8 text-gray-600">
+                          <p>No students match the current filters.</p>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
         </div>
+      </div>
         
         {/* Quick Report Modal */}
         {showQuickModal && quickModalData && userId && (
@@ -857,22 +877,6 @@ export default function TeacherPage() {
             viewMode={viewMode}
           />
         )}
-
-        {/* Animations */}
-        <style jsx global>{`
-          @keyframes gradient-move {
-            0%, 100% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-          }
-          .animate-gradient-move {
-            background-size: 200% 200%;
-            animation: gradient-move 10s ease-in-out infinite;
-          }
-          .animate-pulse-slow {
-            animation: pulse 8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-          }
-        `}</style>
-      </main>
-    </>
+    </div>
   );
 }
