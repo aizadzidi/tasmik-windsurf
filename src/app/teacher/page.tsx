@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { QuranProgressBar, ChartTabs } from "@/components/ReportCharts";
 import Navbar from "@/components/Navbar";
@@ -36,6 +36,7 @@ export default function TeacherPage() {
   const [monitorStudents, setMonitorStudents] = useState<StudentProgressData[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>('tasmik');
   const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [sortBy, setSortBy] = useState<'activity' | 'name'>('activity');
   const [monitorLoading, setMonitorLoading] = useState(false);
 
@@ -179,8 +180,16 @@ export default function TeacherPage() {
     return undefined;
   };
 
+  // Debounce search term
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, 300);
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm]);
+
   // Fetch monitor data
-  const fetchMonitorData = async () => {
+  const fetchMonitorData = useCallback(async () => {
     if (!userId) return;
     setMonitorLoading(true);
 
@@ -201,6 +210,31 @@ export default function TeacherPage() {
         setMonitorStudents([]);
         return;
       }
+
+      // Optimize: Batch fetch reports for all students instead of individual queries
+      const allStudentIds = studentsData.map(s => s.id);
+      
+      // Fetch all reports for these students in one query
+      let reportsQuery = supabase
+        .from("reports")
+        .select("*")
+        .in("student_id", allStudentIds)
+        .eq("teacher_id", userId);
+      
+      if (viewMode === 'tasmik') {
+        reportsQuery = reportsQuery.eq("type", "Tasmi");
+      } else if (viewMode === 'murajaah') {
+        reportsQuery = reportsQuery.in("type", ["Murajaah", "Old Murajaah", "New Murajaah"]);
+      }
+      
+      const { data: allReports } = await reportsQuery.order("date", { ascending: false });
+      
+      // Group reports by student
+      const reportsByStudent = (allReports || []).reduce((acc, report) => {
+        if (!acc[report.student_id]) acc[report.student_id] = [];
+        acc[report.student_id].push(report);
+        return acc;
+      }, {} as Record<string, any[]>);
 
       const studentProgressPromises = studentsData.map(async (student) => {
         if (viewMode === 'juz_tests') {
@@ -262,28 +296,9 @@ export default function TeacherPage() {
             };
           };
         } else {
-          // Regular tasmik/murajaah logic
-          const reportType = viewMode === 'tasmik' ? 'Tasmi' : 
-                           viewMode === 'murajaah' ? ['Murajaah', 'Old Murajaah', 'New Murajaah'] : 'Tasmi';
-
-          let query = supabase
-            .from("reports")
-            .select("*")
-            .eq("student_id", student.id)
-            .eq("teacher_id", userId);
-
-          // Apply type filter
-          if (Array.isArray(reportType)) {
-            query = query.in("type", reportType);
-          } else {
-            query = query.eq("type", reportType);
-          }
-
-          const { data: reports } = await query
-            .order("date", { ascending: false })
-            .limit(1);
-
-          const latestReport = reports?.[0];
+          // Regular tasmik/murajaah logic - use pre-fetched reports
+          const studentReports = reportsByStudent[student.id] || [];
+          const latestReport = studentReports[0]; // Already sorted by date desc
           const daysSinceLastRead = latestReport 
             ? calculateDaysSinceLastRead(latestReport.date)
             : 999;
@@ -317,7 +332,7 @@ export default function TeacherPage() {
     } finally {
       setMonitorLoading(false);
     }
-  };
+  }, [userId, viewMode]);
 
   useEffect(() => {
     if (userId) {
@@ -325,9 +340,9 @@ export default function TeacherPage() {
     }
   }, [viewMode, userId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Filtered and sorted students
+  // Filtered and sorted students (optimized with debounced search)
   const filteredMonitorStudents = useMemo(() => {
-    let filtered = filterStudentsBySearch(monitorStudents, searchTerm);
+    let filtered = filterStudentsBySearch(monitorStudents, debouncedSearchTerm);
     
     if (viewMode === 'juz_tests') {
       // Sort by gap first (larger gaps first for priority), then by highest memorized juz
@@ -355,7 +370,7 @@ export default function TeacherPage() {
     }
     
     return filtered;
-  }, [monitorStudents, searchTerm, sortBy, viewMode]);
+  }, [monitorStudents, debouncedSearchTerm, sortBy, viewMode]);
 
   const summaryStats: SummaryStats = useMemo(() => {
     if (viewMode === 'juz_tests') {
@@ -378,24 +393,24 @@ export default function TeacherPage() {
     return getSummaryStats(filteredMonitorStudents);
   }, [filteredMonitorStudents, viewMode]);
 
-  // Handle quick report
-  const handleQuickReport = (student: Student, reportType: "Tasmi" | "Murajaah") => {
+  // Handle quick report (memoized to prevent re-renders)
+  const handleQuickReport = useCallback((student: Student, reportType: "Tasmi" | "Murajaah") => {
     const suggestions = getSmartSuggestions(student.id, reportType);
     setQuickModalData({ student, reportType, suggestions });
     setShowQuickModal(true);
-  };
+  }, [reports, getSmartSuggestions]);
 
-  // Handle edit report
-  const handleEditReport = (report: Report) => {
+  // Handle edit report (memoized)
+  const handleEditReport = useCallback((report: Report) => {
     setEditingReport(report);
     setShowEditModal(true);
-  };
+  }, []);
 
-  // Handle full records view
-  const handleFullRecords = (student: Student) => {
+  // Handle full records view (memoized)
+  const handleFullRecords = useCallback((student: Student) => {
     setFullRecordsStudent(student);
     setShowFullRecordsModal(true);
-  };
+  }, []);
 
   // Edit report function
   const editReport = async (updated: Report) => {
@@ -428,7 +443,7 @@ export default function TeacherPage() {
     }
   };
 
-  const refreshData = () => {
+  const refreshData = useCallback(() => {
     if (userId) {
       // Refresh reports
       supabase
@@ -445,7 +460,7 @@ export default function TeacherPage() {
       // Refresh monitor data
       fetchMonitorData();
     }
-  };
+  }, [userId, fetchMonitorData]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
@@ -460,48 +475,59 @@ export default function TeacherPage() {
             </div>
           </header>
 
-          {/* Summary Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <Card className="p-4">
-              <div className="text-2xl font-bold">{summaryStats.totalStudents}</div>
-              <div className="text-sm text-gray-600">Your Students</div>
-            </Card>
-            <Card className="p-4">
-              <div className="text-2xl font-bold text-orange-600">{summaryStats.inactive7Days}</div>
-              <div className="text-sm text-gray-600">
-                {viewMode === 'juz_tests' ? 'Need Testing' : 'Inactive > 7 Days'}
+          {/* Summary Cards - Simplified */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <Card className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-3xl font-bold text-gray-900">{summaryStats.totalStudents}</div>
+                  <div className="text-gray-600 font-medium">Total Students</div>
+                </div>
+                <div className="h-12 w-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                  <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
+                  </svg>
+                </div>
               </div>
             </Card>
-            <Card className="p-4">
-              <div className="text-2xl font-bold text-red-600">{summaryStats.inactive14Days}</div>
-              <div className="text-sm text-gray-600">
-                {viewMode === 'juz_tests' ? 'High Priority' : 'Inactive > 14 Days'}
+            
+            <Card className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-3xl font-bold text-amber-600">{summaryStats.inactive7Days}</div>
+                  <div className="text-gray-600 font-medium">Need Attention</div>
+                </div>
+                <div className="h-12 w-12 bg-amber-100 rounded-lg flex items-center justify-center">
+                  <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.664-.833-2.464 0L4.34 16.5c-.77.833.192 2.5 1.732 2.5z"/>
+                  </svg>
+                </div>
               </div>
             </Card>
           </div>
 
-          {/* Charts Section */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-            <Card className="p-6">
-              <h3 className="text-lg font-semibold text-gray-800 mb-4">Student Progress Overview</h3>
-              {viewMode !== 'juz_tests' && filteredMonitorStudents.length > 0 && (
-                <QuranProgressBar reports={reports.filter(r => {
-                  const isRelevantStudent = filteredMonitorStudents.some(s => s.id === r.student_id);
-                  if (!isRelevantStudent) return false;
-                  
-                  // Filter by report type based on viewMode
-                  if (viewMode === 'tasmik') {
-                    return r.type === 'Tasmi';
-                  } else if (viewMode === 'murajaah') {
-                    return ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
-                  }
-                  return true;
-                })} />
-              )}
-            </Card>
-            <Card className="p-6">
-              <h3 className="text-lg font-semibold text-gray-800 mb-4">Class Analytics</h3>
-              {viewMode !== 'juz_tests' && (
+          {/* Charts Section - Only show for Tasmik and Murajaah views */}
+          {viewMode !== 'juz_tests' && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+              <Card className="p-6">
+                <h3 className="text-lg font-semibold text-gray-800 mb-4">Student Progress Overview</h3>
+                {filteredMonitorStudents.length > 0 && (
+                  <QuranProgressBar reports={reports.filter(r => {
+                    const isRelevantStudent = filteredMonitorStudents.some(s => s.id === r.student_id);
+                    if (!isRelevantStudent) return false;
+                    
+                    // Filter by report type based on viewMode
+                    if (viewMode === 'tasmik') {
+                      return r.type === 'Tasmi';
+                    } else if (viewMode === 'murajaah') {
+                      return ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
+                    }
+                    return true;
+                  })} />
+                )}
+              </Card>
+              <Card className="p-6">
+                <h3 className="text-lg font-semibold text-gray-800 mb-4">Class Analytics</h3>
                 <ChartTabs reports={reports.filter(r => {
                   const isRelevantStudent = filteredMonitorStudents.some(s => s.id === r.student_id);
                   if (!isRelevantStudent) return false;
@@ -514,9 +540,9 @@ export default function TeacherPage() {
                   }
                   return true;
                 })} />
-              )}
-            </Card>
-          </div>
+              </Card>
+            </div>
+          )}
 
           {/* Main Content Card */}
           <Card className="p-4">
@@ -586,8 +612,19 @@ export default function TeacherPage() {
 
             {/* Loading */}
             {monitorLoading && (
-              <div className="text-center py-8 text-gray-600">
-                <p>Loading student progress...</p>
+              <div className="animate-pulse space-y-4">
+                <div className="h-4 bg-gray-200 rounded w-1/3 mx-auto"></div>
+                <div className="space-y-2">
+                  {[...Array(6)].map((_, i) => (
+                    <div key={i} className="flex space-x-4 p-4 border border-gray-200 rounded-lg">
+                      <div className="h-10 bg-gray-200 rounded w-32"></div>
+                      <div className="h-10 bg-gray-200 rounded flex-1"></div>
+                      <div className="h-10 bg-gray-200 rounded w-24"></div>
+                      <div className="h-10 bg-gray-200 rounded w-16"></div>
+                      <div className="h-10 bg-gray-200 rounded w-24"></div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -616,7 +653,7 @@ export default function TeacherPage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {filteredMonitorStudents.map((student, index) => {
+                    {filteredMonitorStudents.map((student) => {
                       const extendedStudent = student as StudentProgressData & {
                         highest_memorized_juz?: number;
                         highest_passed_juz?: number;

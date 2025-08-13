@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { getWeekBoundaries } from "@/lib/gradeUtils";
 import type { ViewMode } from "@/types/teacher";
@@ -40,6 +40,7 @@ export default function FullRecordsModal({
 }: FullRecordsModalProps) {
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
+  const [initialLoad, setInitialLoad] = useState(true);
   const [deletingReport, setDeletingReport] = useState<Report | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
@@ -47,23 +48,31 @@ export default function FullRecordsModal({
     fetchStudentReports();
   }, [student.id, userId, viewMode]);
 
+  // Memoize filtered reports to avoid unnecessary re-renders
+  const filteredReports = useMemo(() => {
+    if (viewMode === 'tasmik') {
+      return reports.filter(r => r.type === 'Tasmi');
+    } else if (viewMode === 'murajaah') {
+      return reports.filter(r => ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type));
+    }
+    return reports;
+  }, [reports, viewMode]);
+
   const fetchStudentReports = async () => {
-    setLoading(true);
+    // Only show loading spinner on initial load, not on view mode changes
+    if (initialLoad) {
+      setLoading(true);
+    }
+    
     try {
-      let query = supabase
+      // Fetch all reports for this student/teacher combo (no filtering by type)
+      // We'll filter in memory for faster view mode switching
+      const { data, error } = await supabase
         .from("reports")
         .select("*")
         .eq("student_id", student.id)
-        .eq("teacher_id", userId);
-
-      // Filter by report type based on view mode
-      if (viewMode === 'tasmik') {
-        query = query.eq("type", "Tasmi");
-      } else if (viewMode === 'murajaah') {
-        query = query.in("type", ["Murajaah", "Old Murajaah", "New Murajaah"]);
-      }
-
-      const { data, error } = await query.order("date", { ascending: false });
+        .eq("teacher_id", userId)
+        .order("date", { ascending: false });
       
       if (!error && data) {
         setReports(data);
@@ -72,6 +81,7 @@ export default function FullRecordsModal({
       console.error("Failed to fetch student reports:", err);
     } finally {
       setLoading(false);
+      setInitialLoad(false);
     }
   };
 
@@ -122,12 +132,26 @@ export default function FullRecordsModal({
           </div>
 
           {loading ? (
-            <div className="text-center py-8 text-gray-600">
-              <p>Loading records...</p>
+            <div className="animate-pulse space-y-4">
+              <div className="h-4 bg-gray-200 rounded w-1/4"></div>
+              <div className="space-y-2">
+                {[...Array(5)].map((_, i) => (
+                  <div key={i} className="flex space-x-4">
+                    <div className="h-8 bg-gray-200 rounded w-16"></div>
+                    <div className="h-8 bg-gray-200 rounded w-32"></div>
+                    <div className="h-8 bg-gray-200 rounded w-12"></div>
+                    <div className="h-8 bg-gray-200 rounded w-20"></div>
+                    <div className="h-8 bg-gray-200 rounded w-16"></div>
+                    <div className="h-8 bg-gray-200 rounded w-16"></div>
+                    <div className="h-8 bg-gray-200 rounded w-20"></div>
+                    <div className="h-8 bg-gray-200 rounded w-16"></div>
+                  </div>
+                ))}
+              </div>
             </div>
-          ) : reports.length === 0 ? (
+          ) : filteredReports.length === 0 ? (
             <div className="text-center py-8 text-gray-600">
-              <p>No records found for this student.</p>
+              <p>No {viewMode === 'tasmik' ? 'Tasmi' : viewMode === 'murajaah' ? 'Murajaah' : ''} records found for this student.</p>
             </div>
           ) : (
             <div className="overflow-hidden rounded-xl border border-gray-200 shadow-lg">
@@ -146,7 +170,7 @@ export default function FullRecordsModal({
                     </tr>
                   </thead>
                   <tbody className="bg-white">
-                    {reports.map((report, index) => (
+                    {filteredReports.map((report, index) => (
                       <tr key={report.id} className={`transition-colors hover:bg-gray-50 ${index % 2 === 0 ? 'bg-white' : 'bg-gray-25'}`}>
                         <td className="px-4 py-3 text-gray-700 border-b border-gray-100">
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
