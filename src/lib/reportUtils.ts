@@ -3,7 +3,7 @@
 export interface MurajaahProgress {
   juz: number;
   hizb: number;
-  quarter: number;
+  page: number;
 }
 
 export interface StudentProgressData {
@@ -78,7 +78,7 @@ export function formatAbsoluteDate(dateString: string | null): string {
 export function parseMurajaahProgress(progressString: string | null): MurajaahProgress | null {
   if (!progressString) return null;
   
-  // Handle formats like "Juz 3 - 1/4", "Juz 5 - Hizb 10", etc.
+  // Handle formats like "Juz 3 - 1/20", "Juz 5 - Hizb 10", etc.
   const juzMatch = progressString.match(/Juz\s*(\d+)/i);
   if (!juzMatch) return null;
   
@@ -90,21 +90,21 @@ export function parseMurajaahProgress(progressString: string | null): MurajaahPr
     return {
       juz,
       hizb: parseInt(hizbMatch[1]),
-      quarter: 0
+      page: 0
     };
   }
   
-  // Check for quarter format (e.g., "1/4", "2/4")
-  const quarterMatch = progressString.match(/(\d+)\/4/);
-  if (quarterMatch) {
+  // Check for page format (e.g., "1/20", "2/20")
+  const pageMatch = progressString.match(/(\d+)\/20/);
+  if (pageMatch) {
     return {
       juz,
       hizb: 0,
-      quarter: parseInt(quarterMatch[1])
+      page: parseInt(pageMatch[1])
     };
   }
   
-  return { juz, hizb: 0, quarter: 0 };
+  return { juz, hizb: 0, page: 0 };
 }
 
 // Format murajaah progress for display
@@ -115,16 +115,16 @@ export function formatMurajaahProgress(progress: MurajaahProgress | null): strin
     return `Juz ${progress.juz} - Hizb ${progress.hizb}`;
   }
   
-  if (progress.quarter > 0) {
-    return `Juz ${progress.juz} - ${progress.quarter}/4`;
+  if (progress.page > 0) {
+    return `Juz ${progress.juz} - ${progress.page}/20`;
   }
   
   return `Juz ${progress.juz}`;
 }
 
 // Create murajaah progress object
-export function createMurajaahProgress(juz: number, hizb: number = 0, quarter: number = 0): MurajaahProgress {
-  return { juz, hizb, quarter };
+export function createMurajaahProgress(juz: number, hizb: number = 0, page: number = 0): MurajaahProgress {
+  return { juz, hizb, page };
 }
 
 // Get row color class based on days since last read

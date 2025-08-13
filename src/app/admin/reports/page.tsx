@@ -225,8 +225,8 @@ export default function AdminReportsPage() {
                       const estimatedHizb = Math.floor(latestReport.page_from / 10) + 1;
                       latestReading = `Juz ${latestReport.juzuk} - Hizb ${estimatedHizb}`;
                     } else {
-                      const quarter = Math.ceil(pagesDiff / 2.5);
-                      latestReading = `Juz ${latestReport.juzuk} - ${quarter}/4`;
+                      const page = Math.min(latestReport.page_from, latestReport.page_to);
+                      latestReading = `Juz ${latestReport.juzuk} - ${page}/20`;
                     }
                   } else {
                     latestReading = `Juz ${latestReport.juzuk}`;
@@ -531,7 +531,7 @@ export default function AdminReportsPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredStudents.map((student, index) => {
+                  {filteredStudents.map((student) => {
                     const extendedStudent = student as StudentProgressData & {
                       highest_memorized_juz?: number;
                       highest_passed_juz?: number;
