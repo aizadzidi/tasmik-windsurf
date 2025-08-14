@@ -75,6 +75,7 @@ export default function QuickReportModal({
   const [weekRange] = useState(currentWeek.weekRange);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [isPageRange, setIsPageRange] = useState(false);
 
   // Auto-fill Juz based on page input
   useEffect(() => {
@@ -91,7 +92,17 @@ export default function QuickReportModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.surah || !form.ayat_from || !form.ayat_to || !form.grade) {
+    
+    // For single page, ensure page_to equals page_from
+    if (!isPageRange && form.page_from && !form.page_to) {
+      setForm(f => ({ ...f, page_to: f.page_from }));
+    }
+    
+    const requiredPageValidation = isPageRange 
+      ? (!form.page_from || !form.page_to)
+      : !form.page_from;
+      
+    if (!form.surah || !form.ayat_from || !form.ayat_to || requiredPageValidation || !form.grade) {
       setError("Please fill in all required fields");
       return;
     }
@@ -107,6 +118,9 @@ export default function QuickReportModal({
       const newAyatTo = parseInt(form.ayat_to);
       const newPageFrom = form.page_from ? parseInt(form.page_from) : null;
       const newPageTo = form.page_to ? parseInt(form.page_to) : null;
+      
+      // For single page, ensure page_to equals page_from
+      const finalPageTo = isPageRange ? newPageTo : newPageFrom;
 
       // Create new report with actual submission date
       // Each submission is now stored as a separate record
@@ -119,7 +133,7 @@ export default function QuickReportModal({
         ayat_from: newAyatFrom,
         ayat_to: newAyatTo,
         page_from: newPageFrom,
-        page_to: newPageTo,
+        page_to: finalPageTo,
         grade: form.grade,
         date: submissionDate // Store actual submission date
       }]);
@@ -178,36 +192,6 @@ export default function QuickReportModal({
             </select>
           </div>
 
-          {/* Juzuk */}
-          <div>
-            <label className="block text-sm font-medium mb-1 text-gray-700">Juzuk (Auto-filled)</label>
-            <input
-              type="number"
-              min="1"
-              max="30"
-              value={form.juzuk}
-              readOnly
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 bg-gray-50 text-gray-700 text-sm cursor-not-allowed"
-              placeholder="Enter page numbers to auto-fill"
-            />
-          </div>
-
-          {/* Grade */}
-          <div>
-            <label className="block text-sm font-medium mb-1 text-gray-700">Grade *</label>
-            <select
-              value={form.grade}
-              onChange={e => setForm(f => ({ ...f, grade: e.target.value }))}
-              required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
-            >
-              <option value="">Select a grade</option>
-              {GRADES.map(g => (
-                <option key={g} value={g}>{g.charAt(0).toUpperCase() + g.slice(1)}</option>
-              ))}
-            </select>
-          </div>
-
           {/* Ayat Range */}
           <div className="sm:col-span-2">
             <label className="block text-sm font-medium mb-1 text-gray-700">Ayat Range *</label>
@@ -231,29 +215,109 @@ export default function QuickReportModal({
             </div>
           </div>
 
-          {/* Page Range */}
+          {/* Page */}
           <div className="sm:col-span-2">
-            <label className="block text-sm font-medium mb-1 text-gray-700">Page Range (Optional)</label>
-            <div className="grid grid-cols-2 gap-2">
+            <label className="block text-sm font-medium mb-1 text-gray-700">Page *</label>
+            
+            {!isPageRange ? (
+              /* Single Page Input */
               <input
                 type="number"
-                placeholder="From"
+                placeholder="Page number"
                 value={form.page_from}
-                onChange={e => setForm(f => ({ ...f, page_from: e.target.value }))}
+                onChange={e => {
+                  const value = e.target.value;
+                  setForm(f => ({ 
+                    ...f, 
+                    page_from: value,
+                    page_to: value // Keep both in sync for single page
+                  }));
+                }}
+                required
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
               />
+            ) : (
+              /* Page Range Inputs */
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="number"
+                  placeholder="From"
+                  value={form.page_from}
+                  onChange={e => setForm(f => ({ ...f, page_from: e.target.value }))}
+                  required
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
+                />
+                <input
+                  type="number"
+                  placeholder="To"
+                  value={form.page_to}
+                  onChange={e => setForm(f => ({ ...f, page_to: e.target.value }))}
+                  required
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
+                />
+              </div>
+            )}
+            
+            {/* Page Range Toggle */}
+            <div className="flex items-center mt-2">
               <input
-                type="number"
-                placeholder="To"
-                value={form.page_to}
-                onChange={e => setForm(f => ({ ...f, page_to: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
+                type="checkbox"
+                id="pageRange"
+                checked={isPageRange}
+                onChange={e => {
+                  setIsPageRange(e.target.checked);
+                  // Clear page_to when switching to single page
+                  if (!e.target.checked) {
+                    setForm(f => ({ ...f, page_to: f.page_from }));
+                  }
+                }}
+                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
               />
+              <label htmlFor="pageRange" className="ml-2 text-sm text-gray-600">
+                Multiple pages (page range)
+              </label>
             </div>
           </div>
 
+          {/* Juzuk - Auto-calculated section */}
+          <div>
+            <label className="block text-sm font-medium mb-1 text-gray-700">
+              Juzuk <span className="text-xs text-gray-500 font-normal">(Auto-filled)</span>
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                value={form.juzuk || ""}
+                readOnly
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 bg-blue-50/50 text-gray-700 text-sm cursor-not-allowed focus:ring-0 focus:border-gray-300"
+                placeholder="Auto-filled from pages"
+              />
+              <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          {/* Grade */}
+          <div>
+            <label className="block text-sm font-medium mb-1 text-gray-700">Grade *</label>
+            <select
+              value={form.grade}
+              onChange={e => setForm(f => ({ ...f, grade: e.target.value }))}
+              required
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
+            >
+              <option value="">Select a grade</option>
+              {GRADES.map(g => (
+                <option key={g} value={g}>{g.charAt(0).toUpperCase() + g.slice(1)}</option>
+              ))}
+            </select>
+          </div>
+
           {/* Date */}
-          <div className="sm:col-span-2">
+          <div>
             <label className="block text-sm font-medium mb-1 text-gray-700">Date</label>
             <input
               type="date"

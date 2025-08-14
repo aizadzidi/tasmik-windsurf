@@ -38,6 +38,28 @@ export default function AdminViewRecordsModal({
   const fetchStudentReports = useCallback(async () => {
     setLoading(true);
     try {
+      // First check if user is authenticated
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (authError || !user) {
+        console.error("Authentication error:", authError);
+        setReports([]);
+        return;
+      }
+
+      // Check user role from users table
+      const { data: userData, error: userError } = await supabase
+        .from("users")
+        .select("role")
+        .eq("id", user.id)
+        .single();
+
+      if (userError || !userData || userData.role !== 'admin') {
+        console.error("User role verification failed:", userError);
+        setReports([]);
+        return;
+      }
+
       let query = supabase
         .from("reports")
         .select(`
@@ -57,9 +79,13 @@ export default function AdminViewRecordsModal({
       
       if (!error && data) {
         setReports(data);
+      } else {
+        console.error("Failed to fetch reports:", error);
+        setReports([]);
       }
     } catch (err) {
       console.error("Failed to fetch student reports:", err);
+      setReports([]);
     } finally {
       setLoading(false);
     }

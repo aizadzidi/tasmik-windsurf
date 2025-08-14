@@ -9,18 +9,11 @@ interface JuzTest {
   juz_number: number;
   test_date: string;
   examiner_name?: string;
-  halaqah_name?: string;
   passed: boolean;
   total_percentage: number;
   tajweed_score?: number;
   recitation_score?: number;
-  should_repeat?: boolean;
   remarks?: string;
-  page_from?: number;
-  page_to?: number;
-  test_juz?: boolean;
-  test_hizb?: boolean;
-  section2_scores?: Record<string, Record<string, number>>;
 }
 
 interface JuzTestHistoryModalViewOnlyProps {
@@ -39,14 +32,14 @@ export default function JuzTestHistoryModalViewOnly({
   const [tests, setTests] = useState<JuzTest[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [expandedTest, setExpandedTest] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
 
   // Fetch tests when modal opens
   useEffect(() => {
     if (isOpen && studentId) {
       fetchTests();
     }
-  }, [isOpen, studentId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isOpen, studentId]);
 
   const fetchTests = async () => {
     setLoading(true);
@@ -76,219 +69,162 @@ export default function JuzTestHistoryModalViewOnly({
     }
   };
 
-  const renderDetailedScores = (test: JuzTest) => {
-    if (!test.section2_scores) return null;
+  // Simple filter by search term
+  const filteredTests = tests.filter(test => 
+    test.juz_number.toString().includes(searchTerm) ||
+    (test.examiner_name || '').toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
-    const scores = test.section2_scores;
-    const categories = ['memorization', 'tajweed', 'recitation', 'fluency', 'understanding'];
-
-    return (
-      <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-        <h4 className="font-medium text-gray-800 mb-3">Detailed Assessment Scores</h4>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {categories.map((category) => {
-            const categoryScores = scores[category];
-            if (!categoryScores) return null;
-
-            return (
-              <div key={category} className="border border-gray-200 rounded p-3">
-                <h5 className="font-medium text-sm text-gray-700 mb-2 capitalize">
-                  {category}
-                </h5>
-                <div className="grid grid-cols-5 gap-2 text-xs">
-                  {Object.entries(categoryScores).map(([item, score]) => (
-                    <div key={item} className="text-center">
-                      <div className="text-gray-600">Q{item}</div>
-                      <div className={`font-medium ${
-                        Number(score) >= 4 ? 'text-green-600' :
-                        Number(score) >= 3 ? 'text-yellow-600' :
-                        'text-red-600'
-                      }`}>
-{String(score)}/5
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
-
-  const getImprovementAreas = (test: JuzTest): string[] => {
-    if (!test.section2_scores) return [];
-
-    const areas: string[] = [];
-    const scores = test.section2_scores;
-
-    // Check each category for low scores
-    Object.entries(scores).forEach(([category, categoryScores]: [string, Record<string, number>]) => {
-      if (categoryScores && typeof categoryScores === 'object') {
-        const lowScores = Object.entries(categoryScores).filter(([, score]) => Number(score) < 3);
-        if (lowScores.length > 0) {
-          areas.push(`${category.charAt(0).toUpperCase() + category.slice(1)}: Questions ${lowScores.map(([q]) => q).join(', ')}`);
-        }
-      }
-    });
-
-    return areas;
-  };
+  const passedCount = tests.filter(t => t.passed).length;
+  const totalTests = tests.length;
 
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
-        <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-6">
-          <div className="flex items-center justify-between">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] overflow-hidden">
+        
+        {/* Header */}
+        <div className="bg-white border-b border-gray-100 p-6">
+          <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="text-2xl font-bold">Juz Test History</h2>
-              <p className="text-blue-100 mt-1">For {studentName}</p>
-              <p className="text-blue-200 text-sm mt-1">View detailed test results and areas for improvement</p>
+              <h2 className="text-xl font-semibold text-gray-900">{studentName}</h2>
+              <p className="text-gray-500 text-sm">Juz Test History</p>
             </div>
             <button
               onClick={onClose}
-              className="text-white hover:text-gray-200 text-2xl font-bold"
+              className="text-gray-400 hover:text-gray-600 p-1"
             >
-              ×
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
             </button>
           </div>
+
+          {totalTests > 0 && (
+            <div className="flex items-center gap-4 text-sm text-gray-600">
+              <span>{totalTests} tests completed</span>
+              <span>•</span>
+              <span>{passedCount} passed</span>
+            </div>
+          )}
+
+          {/* Simple Search */}
+          {totalTests > 0 && (
+            <div className="mt-4">
+              <input
+                type="text"
+                placeholder="Search by Juz number or examiner..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+          )}
         </div>
 
-        <div className="p-6 overflow-y-auto max-h-[calc(90vh-120px)]">
+        {/* Content */}
+        <div className="overflow-y-auto max-h-[calc(85vh-140px)] p-6">
           {loading ? (
-            <div className="text-center py-8">
-              <p className="text-gray-600">Loading test history...</p>
+            <div className="text-center py-12">
+              <div className="inline-block w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+              <p className="text-gray-600 mt-3">Loading tests...</p>
             </div>
           ) : error ? (
-            <div className="text-center py-8">
+            <div className="text-center py-12">
+              <div className="text-red-500 mb-3">
+                <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
               <p className="text-red-600 mb-4">{error}</p>
               <button
                 onClick={fetchTests}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
               >
                 Try Again
               </button>
             </div>
-          ) : tests.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-gray-600 mb-2">No test records found.</p>
-              <p className="text-sm text-gray-500">
-                This student hasn&apos;t taken any Juz tests yet.
-              </p>
+          ) : filteredTests.length === 0 ? (
+            <div className="text-center py-12">
+              {tests.length === 0 ? (
+                <>
+                  <div className="text-gray-300 mb-4">
+                    <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  </div>
+                  <p className="text-gray-600 mb-2">No test records found</p>
+                  <p className="text-gray-500 text-sm">This student hasn't taken any Juz tests yet</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-gray-600 mb-2">No tests match your search</p>
+                  <button
+                    onClick={() => setSearchTerm('')}
+                    className="text-blue-500 hover:text-blue-600 text-sm"
+                  >
+                    Clear search
+                  </button>
+                </>
+              )}
             </div>
           ) : (
-            <div className="space-y-4">
-              {tests.map((test) => {
-                const improvementAreas = getImprovementAreas(test);
-                const isExpanded = expandedTest === test.id;
-
-                return (
-                  <div
-                    key={test.id}
-                    className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-4 mb-2">
-                          <h3 className="text-lg font-semibold text-gray-800">
-                            Juz {test.juz_number}
-                          </h3>
-                          <span
-                            className={`px-3 py-1 rounded-full text-sm font-medium ${
-                              test.passed
-                                ? 'bg-green-100 text-green-700'
-                                : 'bg-red-100 text-red-700'
-                            }`}
-                          >
-                            {test.total_percentage}% ({test.passed ? 'PASSED' : 'FAILED'})
-                          </span>
-                          {test.should_repeat && (
-                            <span className="px-2 py-1 bg-orange-100 text-orange-700 rounded text-xs">
-                              Needs Repetition
-                            </span>
-                          )}
-                        </div>
-                        
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600 mb-3">
-                          <div>
-                            <span className="font-medium">Date:</span> {new Date(test.test_date).toLocaleDateString()}
-                          </div>
-                          <div>
-                            <span className="font-medium">Examiner:</span> {test.examiner_name || 'Unknown'}
-                          </div>
-                          <div>
-                            <span className="font-medium">Tajweed:</span> {test.tajweed_score || 0}/5
-                          </div>
-                          <div>
-                            <span className="font-medium">Recitation:</span> {test.recitation_score || 0}/5
-                          </div>
-                        </div>
-
-                        {test.halaqah_name && (
-                          <div className="text-sm text-gray-600 mb-2">
-                            <span className="font-medium">Halaqah:</span> {test.halaqah_name}
-                          </div>
-                        )}
-
-                        {/* Areas for Improvement */}
-                        {improvementAreas.length > 0 && (
-                          <div className="mb-3">
-                            <h4 className="text-sm font-medium text-orange-700 mb-2">Areas for Improvement:</h4>
-                            <ul className="list-disc list-inside text-sm text-gray-600 space-y-1">
-                              {improvementAreas.map((area, index) => (
-                                <li key={index}>{area}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-
-                        {test.remarks && (
-                          <div className="text-sm text-gray-600 mb-2">
-                            <span className="font-medium">Examiner Remarks:</span> 
-                            <p className="mt-1 p-2 bg-yellow-50 rounded text-gray-700">
-                              {test.remarks}
-                            </p>
-                          </div>
-                        )}
-
-                        {(test.page_from && test.page_to) && (
-                          <div className="text-sm text-gray-600 mb-2">
-                            <span className="font-medium">Pages:</span> {test.page_from} - {test.page_to}
-                          </div>
-                        )}
-
-                        <div className="flex gap-2 mt-2">
-                          {test.test_juz && (
-                            <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs">
-                              Juz Test
-                            </span>
-                          )}
-                          {test.test_hizb && (
-                            <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs">
-                              Hizb Test
-                            </span>
-                          )}
-                        </div>
+            <div className="space-y-3">
+              {filteredTests.map((test) => (
+                <div
+                  key={test.id}
+                  className="border border-gray-200 rounded-xl p-4 hover:shadow-sm transition-shadow"
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-medium ${
+                        test.passed ? 'bg-green-500' : 'bg-red-500'
+                      }`}>
+                        {test.juz_number}
                       </div>
-
-                      <div className="flex flex-col gap-2 ml-4">
-                        <button
-                          onClick={() => setExpandedTest(isExpanded ? null : test.id)}
-                          className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition-colors"
-                        >
-                          {isExpanded ? 'Hide Details' : 'Show Details'}
-                        </button>
+                      <div>
+                        <h3 className="font-medium text-gray-900">Juz {test.juz_number}</h3>
+                        <p className="text-sm text-gray-500">
+                          {new Date(test.test_date).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric'
+                          })}
+                        </p>
                       </div>
                     </div>
-
-                    {/* Expanded Details */}
-                    {isExpanded && renderDetailedScores(test)}
+                    <div className="text-right">
+                      <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                        test.passed 
+                          ? 'bg-green-100 text-green-800' 
+                          : 'bg-red-100 text-red-800'
+                      }`}>
+                        {test.total_percentage}%
+                      </div>
+                    </div>
                   </div>
-                );
-              })}
+
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-500">Examiner:</span>
+                      <p className="font-medium">{test.examiner_name || 'Not specified'}</p>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Scores:</span>
+                      <p className="font-medium">
+                        T: {test.tajweed_score || 0}/5 • R: {test.recitation_score || 0}/5
+                      </p>
+                    </div>
+                  </div>
+
+                  {test.remarks && (
+                    <div className="mt-3 pt-3 border-t border-gray-100">
+                      <p className="text-sm text-gray-600 italic">"{test.remarks}"</p>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
         </div>

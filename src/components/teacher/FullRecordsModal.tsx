@@ -71,7 +71,6 @@ export default function FullRecordsModal({
         .from("reports")
         .select("*")
         .eq("student_id", student.id)
-        .eq("teacher_id", userId)
         .order("date", { ascending: false });
       
       if (!error && data) {

@@ -147,8 +147,12 @@ export default function AdminPage() {
 
   const filteredStudents = useMemo(() => students.filter(s => 
     s.name.toLowerCase().includes(searchTerm.toLowerCase()) &&
-    (filterClass === "" || s.class_id === filterClass) &&
-    (filterTeacher === "" || s.assigned_teacher_id === filterTeacher)
+    (filterClass === "" || 
+     (filterClass === "unassigned" && !s.class_id) || 
+     s.class_id === filterClass) &&
+    (filterTeacher === "" || 
+     (filterTeacher === "unassigned" && !s.assigned_teacher_id) || 
+     s.assigned_teacher_id === filterTeacher)
   ).sort((a, b) => a.name.localeCompare(b.name)), [students, searchTerm, filterClass, filterTeacher]);
 
   return (
@@ -309,6 +313,7 @@ export default function AdminPage() {
             onChange={e => setFilterClass(e.target.value)}
           >
             <option value="">All Classes</option>
+            <option value="unassigned">Unassigned</option>
             {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
           <select 
@@ -317,6 +322,7 @@ export default function AdminPage() {
             onChange={e => setFilterTeacher(e.target.value)}
           >
             <option value="">All Teachers</option>
+            <option value="unassigned">Unassigned</option>
             {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
         </div>

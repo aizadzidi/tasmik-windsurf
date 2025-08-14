@@ -75,6 +75,28 @@ export default function AdminReportsPage() {
       setError("");
 
       try {
+        // First check if user is authenticated
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        
+        if (authError || !user) {
+          setError("Authentication required. Please login again.");
+          console.error("Authentication error:", authError);
+          return;
+        }
+
+        // Check user role from users table
+        const { data: userData, error: userError } = await supabase
+          .from("users")
+          .select("role")
+          .eq("id", user.id)
+          .single();
+
+        if (userError || !userData || userData.role !== 'admin') {
+          setError("Admin access required.");
+          console.error("User role verification failed:", userError);
+          return;
+        }
+
         // Fetch students with their latest reports for each type
         const { data: studentsData, error: studentsError } = await supabase
           .from("students")
@@ -257,8 +279,13 @@ export default function AdminReportsPage() {
 
   // Get current user ID
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      setCurrentUserId(data.user?.id ?? null);
+    supabase.auth.getUser().then(({ data, error }) => {
+      if (error) {
+        console.error("Failed to get user:", error);
+        setCurrentUserId(null);
+      } else {
+        setCurrentUserId(data.user?.id ?? null);
+      }
     });
   }, []);
 

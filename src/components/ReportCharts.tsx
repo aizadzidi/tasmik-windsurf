@@ -16,6 +16,7 @@ import { Progress } from "@/components/ui/progress";
 import React from "react";
 import type { Report } from "@/types/teacher";
 import { calculateAverageGrade, getWeekBoundaries, getWeekIdentifier } from "@/lib/gradeUtils";
+import { MurajaahCircleChart } from "@/components/MurajaahCircleChart";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, Filler);
 
@@ -60,7 +61,7 @@ function groupReportsIntoWeeklySummaries(reports: Report[]): WeeklySummary[] {
   });
   
   // Convert groups to weekly summaries
-  return Object.entries(weeklyGroups).map(([groupKey, groupReports]) => {
+  return Object.entries(weeklyGroups).map(([, groupReports]) => {
     const firstReport = groupReports[0];
     const { weekRange } = getWeekBoundaries(firstReport.date);
     
@@ -103,8 +104,23 @@ function groupReportsIntoWeeklySummaries(reports: Report[]): WeeklySummary[] {
   });
 }
 
-export function QuranProgressBar({ reports }: { reports: Report[] }) {
-  // Get weekly summaries for Tasmi reports
+interface QuranProgressBarProps {
+  reports: Report[];
+  viewMode?: 'tasmik' | 'murajaah';
+}
+
+export function QuranProgressBar({ reports, viewMode = 'tasmik' }: QuranProgressBarProps) {
+  // For murajaah mode, show circle chart instead
+  if (viewMode === 'murajaah') {
+    return (
+      <div className="mb-4">
+        <div className="text-sm font-semibold mb-2 text-center">Murajaah Progress</div>
+        <MurajaahCircleChart reports={reports} />
+      </div>
+    );
+  }
+
+  // Original Tasmi progress bar logic
   const tasmiReports = reports.filter(r => r.type === "Tasmi");
   const weeklySummaries = groupReportsIntoWeeklySummaries(tasmiReports);
   

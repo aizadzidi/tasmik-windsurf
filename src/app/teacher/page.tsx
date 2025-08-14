@@ -7,6 +7,8 @@ import { Card } from "@/components/ui/Card";
 import QuickReportModal from "@/components/teacher/QuickReportModal";
 import EditReportModal from "./EditReportModal";
 import FullRecordsModal from "@/components/teacher/FullRecordsModal";
+import JuzTestProgressLineChart from "@/components/teacher/JuzTestProgressLineChart";
+import JuzTestHistoryModalViewOnly from "@/components/teacher/JuzTestHistoryModalViewOnly";
 import {
   StudentProgressData,
   calculateDaysSinceLastRead,
@@ -57,6 +59,10 @@ export default function TeacherPage() {
   const [showFullRecordsModal, setShowFullRecordsModal] = useState(false);
   const [fullRecordsStudent, setFullRecordsStudent] = useState<Student | null>(null);
 
+  // Juz test history modal
+  const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
+  const [juzTestHistoryStudent, setJuzTestHistoryStudent] = useState<Student | null>(null);
+
   // Auth check
   useEffect(() => {
     supabase.auth.getUser().then(({ data, error }) => {
@@ -92,7 +98,6 @@ export default function TeacherPage() {
       const { data, error } = await supabase
         .from("reports")
         .select("*, students(name)")
-        .eq("teacher_id", userId)
         .order("date", { ascending: false });
       if (!error && data) {
         setReports(data.map((r: any) => ({ ...r, student_name: r.students?.name || "" })));
@@ -216,11 +221,11 @@ export default function TeacherPage() {
       const allStudentIds = studentsData.map(s => s.id);
       
       // Fetch all reports for these students in one query
+      // RLS policies will ensure teacher only sees reports for assigned students
       let reportsQuery = supabase
         .from("reports")
         .select("*")
-        .in("student_id", allStudentIds)
-        .eq("teacher_id", userId);
+        .in("student_id", allStudentIds);
       
       if (viewMode === 'tasmik') {
         reportsQuery = reportsQuery.eq("type", "Tasmi");
@@ -442,7 +447,6 @@ export default function TeacherPage() {
       const { data, error } = await supabase
         .from("reports")
         .select("*, students(name)")
-        .eq("teacher_id", userId)
         .order("date", { ascending: false });
       if (!error && data) {
         setReports(data.map((r: any) => ({ ...r, student_name: r.students?.name || "" })));
@@ -457,7 +461,6 @@ export default function TeacherPage() {
       supabase
         .from("reports")
         .select("*, students(name)")
-        .eq("teacher_id", userId)
         .order("date", { ascending: false })
         .then(({ data, error }) => {
           if (!error && data) {
@@ -514,24 +517,27 @@ export default function TeacherPage() {
             </Card>
           </div>
 
-          {/* Charts Section - Only show for Tasmik and Murajaah views */}
-          {viewMode !== 'juz_tests' && (
+          {/* Charts Section */}
+          {viewMode !== 'juz_tests' ? (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
               <Card className="p-6">
                 <h3 className="text-lg font-semibold text-gray-800 mb-4">Student Progress Overview</h3>
                 {filteredMonitorStudents.length > 0 && (
-                  <QuranProgressBar reports={reports.filter(r => {
-                    const isRelevantStudent = filteredMonitorStudents.some(s => s.id === r.student_id);
-                    if (!isRelevantStudent) return false;
-                    
-                    // Filter by report type based on viewMode
-                    if (viewMode === 'tasmik') {
-                      return r.type === 'Tasmi';
-                    } else if (viewMode === 'murajaah') {
-                      return ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
-                    }
-                    return true;
-                  })} />
+                  <QuranProgressBar 
+                    reports={reports.filter(r => {
+                      const isRelevantStudent = filteredMonitorStudents.some(s => s.id === r.student_id);
+                      if (!isRelevantStudent) return false;
+                      
+                      // Filter by report type based on viewMode
+                      if (viewMode === 'tasmik') {
+                        return r.type === 'Tasmi';
+                      } else if (viewMode === 'murajaah') {
+                        return ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
+                      }
+                      return true;
+                    })} 
+                    viewMode={viewMode}
+                  />
                 )}
               </Card>
               <Card className="p-6">
@@ -549,6 +555,10 @@ export default function TeacherPage() {
                   return true;
                 })} />
               </Card>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-6 mb-6">
+              <JuzTestProgressLineChart className="col-span-1" />
             </div>
           )}
 
@@ -770,36 +780,9 @@ export default function TeacherPage() {
                                         </button>
                                       )}
                                       <button
-                                        onClick={async () => {
-                                          try {
-                                            const { data: tests, error } = await supabase
-                                              .from("juz_tests")
-                                              .select("*")
-                                              .eq("student_id", student.id)
-                                              .order("test_date", { ascending: false });
-
-                                            if (error) {
-                                              if (error.message?.includes('relation "public.juz_tests" does not exist')) {
-                                                alert(`Juz test history for ${student.name}:\n\nNo test records found. The Juz testing system may not be set up yet.`);
-                                              } else {
-                                                throw error;
-                                              }
-                                              return;
-                                            }
-
-                                            if (tests && tests.length > 0) {
-                                              const historyText = tests.map(test => 
-                                                `Juz ${test.juz_number} - ${test.total_percentage}% (${test.passed ? 'PASSED' : 'FAILED'}) - ${test.test_date} - ${test.examiner_name || 'Unknown Examiner'}`
-                                              ).join('\n');
-                                              
-                                              alert(`📋 Juz Test History for ${student.name}\n\n${historyText}\n\n💡 Note: View only access - Contact examiner to schedule new tests`);
-                                            } else {
-                                              alert(`📋 Juz Test History for ${student.name}\n\n❌ This student has not taken any Juz tests yet.\n\n📝 Current Status:\n• Student has memorized up to Juz ${extendedStudent.highest_memorized_juz || 0}\n• No formal Juz tests completed\n• Ready for testing if memorization gap exists\n\n💡 Next Steps:\n• Use "Notify Examiner" button if student is ready\n• Contact examiner to schedule first Juz test`);
-                                            }
-                                          } catch (error) {
-                                            console.error("Error fetching test history:", error);
-                                            alert(`Error loading test history for ${student.name}. Please try again later.`);
-                                          }
+                                        onClick={() => {
+                                          setJuzTestHistoryStudent(student);
+                                          setShowJuzTestHistoryModal(true);
                                         }}
                                         className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1 rounded-lg text-xs font-medium transition-colors"
                                       >
@@ -920,6 +903,19 @@ export default function TeacherPage() {
             onRefresh={refreshData}
             userId={userId}
             viewMode={viewMode}
+          />
+        )}
+
+        {/* Juz Test History Modal */}
+        {showJuzTestHistoryModal && juzTestHistoryStudent && (
+          <JuzTestHistoryModalViewOnly
+            studentId={juzTestHistoryStudent.id}
+            studentName={juzTestHistoryStudent.name}
+            isOpen={showJuzTestHistoryModal}
+            onClose={() => {
+              setShowJuzTestHistoryModal(false);
+              setJuzTestHistoryStudent(null);
+            }}
           />
         )}
     </div>
