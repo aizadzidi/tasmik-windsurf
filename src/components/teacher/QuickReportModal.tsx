@@ -1,6 +1,7 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { getJuzFromPageRange } from "@/lib/quranMapping";
 
 interface QuickReportModalProps {
   student: {
@@ -69,11 +70,24 @@ export default function QuickReportModal({
     page_from: suggestions?.pageFrom?.toString() || "",
     page_to: suggestions?.pageTo?.toString() || "",
     grade: "",
-    date: currentWeek.fridayDate
+    date: new Date().toISOString().slice(0, 10) // Default to today's date
   });
   const [weekRange] = useState(currentWeek.weekRange);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  // Auto-fill Juz based on page input
+  useEffect(() => {
+    const pageFrom = parseInt(form.page_from);
+    const pageTo = form.page_to ? parseInt(form.page_to) : undefined;
+    
+    if (pageFrom && pageFrom >= 1 && pageFrom <= 604) {
+      const juz = getJuzFromPageRange(pageFrom, pageTo);
+      if (juz && juz.toString() !== form.juzuk) {
+        setForm(f => ({ ...f, juzuk: juz.toString() }));
+      }
+    }
+  }, [form.page_from, form.page_to, form.juzuk]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -86,105 +100,37 @@ export default function QuickReportModal({
     setError("");
 
     try {
-      // Get the week boundaries (Monday to Friday)
-      const submissionDate = new Date(form.date);
-      const weekStart = new Date(submissionDate);
-      const weekEnd = new Date(submissionDate);
+      // Store the actual submission date (not the week end date)
+      const submissionDate = form.date;
       
-      // Find Monday of this week
-      const dayOfWeek = submissionDate.getDay();
-      const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-      weekStart.setDate(submissionDate.getDate() + mondayOffset);
-      
-      // Find Friday of this week
-      weekEnd.setDate(weekStart.getDate() + 4);
-
-      // Check for existing reports this week for the same student, type, and surah
-      const { data: existingReports, error: fetchError } = await supabase
-        .from("reports")
-        .select("*")
-        .eq("teacher_id", userId)
-        .eq("student_id", student.id)
-        .eq("type", reportType)
-        .eq("surah", form.surah)
-        .gte("date", weekStart.toISOString().slice(0, 10))
-        .lte("date", weekEnd.toISOString().slice(0, 10));
-
-      if (fetchError) {
-        throw fetchError;
-      }
-
       const newAyatFrom = parseInt(form.ayat_from);
       const newAyatTo = parseInt(form.ayat_to);
       const newPageFrom = form.page_from ? parseInt(form.page_from) : null;
       const newPageTo = form.page_to ? parseInt(form.page_to) : null;
 
-      if (existingReports && existingReports.length > 0) {
-        // Auto-combine with existing report
-        const existingReport = existingReports[0];
-        
-        // Combine ayat ranges
-        const combinedAyatFrom = Math.min(existingReport.ayat_from, newAyatFrom);
-        const combinedAyatTo = Math.max(existingReport.ayat_to, newAyatTo);
-        
-        // Combine page ranges if both exist
-        let combinedPageFrom = null;
-        let combinedPageTo = null;
-        if (existingReport.page_from && newPageFrom) {
-          combinedPageFrom = Math.min(existingReport.page_from, newPageFrom);
-        } else {
-          combinedPageFrom = existingReport.page_from || newPageFrom;
-        }
-        if (existingReport.page_to && newPageTo) {
-          combinedPageTo = Math.max(existingReport.page_to, newPageTo);
-        } else {
-          combinedPageTo = existingReport.page_to || newPageTo;
-        }
+      // Create new report with actual submission date
+      // Each submission is now stored as a separate record
+      const { error: insertError } = await supabase.from("reports").insert([{
+        teacher_id: userId,
+        student_id: student.id,
+        type: reportType,
+        surah: form.surah,
+        juzuk: form.juzuk ? parseInt(form.juzuk) : null,
+        ayat_from: newAyatFrom,
+        ayat_to: newAyatTo,
+        page_from: newPageFrom,
+        page_to: newPageTo,
+        grade: form.grade,
+        date: submissionDate // Store actual submission date
+      }]);
 
-        // Update existing report with combined data
-        const { error: updateError } = await supabase
-          .from("reports")
-          .update({
-            ayat_from: combinedAyatFrom,
-            ayat_to: combinedAyatTo,
-            page_from: combinedPageFrom,
-            page_to: combinedPageTo,
-            grade: form.grade, // Use latest grade
-            date: weekEnd.toISOString().slice(0, 10), // Use Friday as official date
-            juzuk: form.juzuk ? parseInt(form.juzuk) : existingReport.juzuk
-          })
-          .eq("id", existingReport.id);
-
-        if (updateError) {
-          setError(updateError.message);
-        } else {
-          onSuccess();
-          onClose();
-        }
+      if (insertError) {
+        setError(insertError.message);
       } else {
-        // Create new report
-        const { error: insertError } = await supabase.from("reports").insert([{
-          teacher_id: userId,
-          student_id: student.id,
-          type: reportType,
-          surah: form.surah,
-          juzuk: form.juzuk ? parseInt(form.juzuk) : null,
-          ayat_from: newAyatFrom,
-          ayat_to: newAyatTo,
-          page_from: newPageFrom,
-          page_to: newPageTo,
-          grade: form.grade,
-          date: weekEnd.toISOString().slice(0, 10) // Use Friday as official date
-        }]);
-
-        if (insertError) {
-          setError(insertError.message);
-        } else {
-          onSuccess();
-          onClose();
-        }
+        onSuccess();
+        onClose();
       }
-    } catch (err) {
+    } catch {
       setError("Failed to create report");
     } finally {
       setIsSubmitting(false);
@@ -234,14 +180,15 @@ export default function QuickReportModal({
 
           {/* Juzuk */}
           <div>
-            <label className="block text-sm font-medium mb-1 text-gray-700">Juzuk</label>
+            <label className="block text-sm font-medium mb-1 text-gray-700">Juzuk (Auto-filled)</label>
             <input
               type="number"
               min="1"
               max="30"
               value={form.juzuk}
-              onChange={e => setForm(f => ({ ...f, juzuk: e.target.value }))}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
+              readOnly
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 bg-gray-50 text-gray-700 text-sm cursor-not-allowed"
+              placeholder="Enter page numbers to auto-fill"
             />
           </div>
 

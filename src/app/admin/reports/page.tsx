@@ -25,6 +25,7 @@ import {
   getSummaryStats,
   SummaryStats
 } from "@/lib/reportUtils";
+import { formatMurajaahDisplay } from "@/lib/quranMapping";
 
 type ViewMode = 'tasmik' | 'murajaah' | 'juz_tests';
 
@@ -218,19 +219,11 @@ export default function AdminReportsPage() {
               if (viewMode === 'tasmik') {
                 latestReading = `${latestReport.surah} (${latestReport.ayat_from}-${latestReport.ayat_to})`;
               } else {
-                if (latestReport.juzuk) {
-                  if (latestReport.page_from && latestReport.page_to) {
-                    const pagesDiff = Math.abs(latestReport.page_to - latestReport.page_from) + 1;
-                    if (pagesDiff >= 10) {
-                      const estimatedHizb = Math.floor(latestReport.page_from / 10) + 1;
-                      latestReading = `Juz ${latestReport.juzuk} - Hizb ${estimatedHizb}`;
-                    } else {
-                      const page = Math.min(latestReport.page_from, latestReport.page_to);
-                      latestReading = `Juz ${latestReport.juzuk} - ${page}/20`;
-                    }
-                  } else {
-                    latestReading = `Juz ${latestReport.juzuk}`;
-                  }
+                // Use formatMurajaahDisplay for Murajaah reports
+                if (latestReport.page_from && latestReport.page_to) {
+                  latestReading = formatMurajaahDisplay(latestReport.page_from, latestReport.page_to);
+                } else if (latestReport.juzuk) {
+                  latestReading = `Juz ${latestReport.juzuk}`;
                 } else {
                   latestReading = latestReport.surah;
                 }

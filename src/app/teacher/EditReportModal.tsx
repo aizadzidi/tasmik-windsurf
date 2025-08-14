@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import type { Report } from "@/types/teacher";
+import { getJuzFromPageRange } from "@/lib/quranMapping";
 
 interface EditReportModalProps {
   report: Report;
@@ -12,6 +13,19 @@ interface EditReportModalProps {
 
 export default function EditReportModal({ report, onSave, onCancel, reportTypes, grades, surahs, loading = false, error = "" }: EditReportModalProps & { loading?: boolean; error?: string }) {
   const [form, setForm] = useState<Report>({ ...report });
+
+  // Auto-fill Juz based on page input
+  useEffect(() => {
+    const pageFrom = form.page_from;
+    const pageTo = form.page_to;
+    
+    if (pageFrom && pageFrom >= 1 && pageFrom <= 604) {
+      const juz = getJuzFromPageRange(pageFrom, pageTo || undefined);
+      if (juz && juz !== form.juzuk) {
+        setForm(f => ({ ...f, juzuk: juz }));
+      }
+    }
+  }, [form.page_from, form.page_to, form.juzuk]);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) {
     const { name, value } = e.target;
@@ -54,8 +68,16 @@ export default function EditReportModal({ report, onSave, onCancel, reportTypes,
           </select>
         </div>
         <div className="mb-2">
-          <label className="block text-sm font-medium mb-1">Juzuk</label>
-          <input name="juzuk" type="number" min="1" value={form.juzuk ?? ""} onChange={handleChange} className="w-full border rounded px-2 py-1" />
+          <label className="block text-sm font-medium mb-1">Juzuk (Auto-filled)</label>
+          <input 
+            name="juzuk" 
+            type="number" 
+            min="1" 
+            value={form.juzuk ?? ""} 
+            readOnly 
+            className="w-full border rounded px-2 py-1 bg-gray-50 text-gray-700 cursor-not-allowed" 
+            placeholder="Enter page numbers to auto-fill"
+          />
         </div>
         <div className="mb-2 flex gap-2">
           <div className="flex-1">
