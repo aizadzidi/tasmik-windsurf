@@ -18,6 +18,7 @@ import {
   getSummaryStats,
   SummaryStats
 } from "@/lib/reportUtils";
+import { formatMurajaahDisplay } from "@/lib/quranMapping";
 import type { Student, Report, ViewMode } from "@/types/teacher";
 
 const SURAHS = [
@@ -308,7 +309,14 @@ export default function TeacherPage() {
             if (viewMode === 'tasmik') {
               latestReading = `${latestReport.surah} (${latestReport.ayat_from}-${latestReport.ayat_to})`;
             } else {
-              latestReading = latestReport.juzuk ? `Juz ${latestReport.juzuk}` : latestReport.surah;
+              // Use formatMurajaahDisplay for Murajaah reports
+              if (latestReport.page_from && latestReport.page_to) {
+                latestReading = formatMurajaahDisplay(latestReport.page_from, latestReport.page_to);
+              } else if (latestReport.juzuk) {
+                latestReading = `Juz ${latestReport.juzuk}`;
+              } else {
+                latestReading = latestReport.surah;
+              }
             }
           }
 
