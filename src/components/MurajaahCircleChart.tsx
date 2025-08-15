@@ -174,41 +174,13 @@ export function MurajaahCircleChart({ reports }: MurajaahCircleChartProps) {
       </div>
       
       {/* Statistics */}
-      <div className="mt-4 text-center space-y-2">
+      <div className="mt-4 text-center space-y-1">
         <div className="text-sm text-gray-700">
           <span className="font-medium">Current Juz: {currentJuz}</span>
         </div>
-        <div className="text-xs text-gray-500">
-          Required range: Pages 1-{requiredEndPage} ({requiredPages.size} pages)
+        <div className="text-xs text-green-600 font-medium">
+          {completedCycles} times completed
         </div>
-        <div className="text-sm text-gray-600">
-          {pagesCompletedInCurrentCycle}/{requiredPages.size} pages in progress
-        </div>
-        {completedCycles > 0 && (
-          <div className="text-xs text-green-600 font-medium">
-            ✓ {completedCycles} complete cycle{completedCycles > 1 ? 's' : ''}
-          </div>
-        )}
-        {currentJuz === 1 && maxTasmiPage > 0 && (
-          <div className="text-xs text-blue-500 italic">
-            Tracking up to latest Tasmik (Page {maxTasmiPage})
-          </div>
-        )}
-        {currentJuz === 2 && (
-          <div className="text-xs text-blue-500 italic">
-            Working on Juz 2 - Reviewing Juz 1
-          </div>
-        )}
-        {currentJuz >= 3 && (
-          <div className="text-xs text-blue-500 italic">
-            Reviewing up to Juz {currentJuz - 1}
-          </div>
-        )}
-        {maxTasmiPage === 0 && (
-          <div className="text-xs text-gray-400 italic">
-            No Tasmik records found
-          </div>
-        )}
       </div>
     </div>
   );
