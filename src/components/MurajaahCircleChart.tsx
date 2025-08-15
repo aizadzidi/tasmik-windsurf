@@ -15,10 +15,31 @@ export function MurajaahCircleChart({ reports }: MurajaahCircleChartProps) {
     ? Math.max(...juzValues)
     : 1;
 
-  // Calculate required page range (1 to end of previous juz)
-  const previousJuz = Math.max(1, currentJuz - 1);
-  const previousJuzRange = getPageRangeFromJuz(previousJuz);
-  const requiredEndPage = previousJuzRange ? previousJuzRange.endPage : 20; // Fallback to end of Juz 1
+  // Find the highest page from Tasmi reports for students who haven't completed Juz 1
+  const tasmiPagesReports = reports.filter(r => r.type === "Tasmi" && r.page_to);
+  const maxTasmiPage = tasmiPagesReports.length > 0 
+    ? Math.max(...tasmiPagesReports.map(r => r.page_to).filter((page): page is number => page !== null))
+    : 0;
+
+  // Calculate required page range based on student's progress
+  let requiredEndPage: number;
+  if (currentJuz >= 3) {
+    // Student has completed Juz 2+, track up to their previous completed juz
+    const previousJuz = currentJuz - 1;
+    const previousJuzRange = getPageRangeFromJuz(previousJuz);
+    requiredEndPage = previousJuzRange ? previousJuzRange.endPage : 40; // Fallback to end of Juz 2
+  } else if (currentJuz === 2) {
+    // Student is working on Juz 2 (has completed Juz 1), cycle ends at last page of Juz 1
+    const juz1Range = getPageRangeFromJuz(1);
+    requiredEndPage = juz1Range ? juz1Range.endPage : 20; // End of Juz 1
+  } else if (maxTasmiPage > 0) {
+    // Student is still working on Juz 1, use their latest Tasmik page
+    requiredEndPage = maxTasmiPage;
+  } else {
+    // No Tasmik records, default to end of Juz 1
+    const juz1Range = getPageRangeFromJuz(1);
+    requiredEndPage = juz1Range ? juz1Range.endPage : 20;
+  }
   
   // Filter murajaah reports
   const murajaahReports = reports.filter(r => 
@@ -168,9 +189,24 @@ export function MurajaahCircleChart({ reports }: MurajaahCircleChartProps) {
             ✓ {completedCycles} complete cycle{completedCycles > 1 ? 's' : ''}
           </div>
         )}
-        {currentJuz <= 1 && (
+        {currentJuz === 1 && maxTasmiPage > 0 && (
           <div className="text-xs text-blue-500 italic">
-            Complete Juz 2 to start murajaah tracking
+            Tracking up to latest Tasmik (Page {maxTasmiPage})
+          </div>
+        )}
+        {currentJuz === 2 && (
+          <div className="text-xs text-blue-500 italic">
+            Working on Juz 2 - Reviewing Juz 1
+          </div>
+        )}
+        {currentJuz >= 3 && (
+          <div className="text-xs text-blue-500 italic">
+            Reviewing up to Juz {currentJuz - 1}
+          </div>
+        )}
+        {maxTasmiPage === 0 && (
+          <div className="text-xs text-gray-400 italic">
+            No Tasmik records found
           </div>
         )}
       </div>

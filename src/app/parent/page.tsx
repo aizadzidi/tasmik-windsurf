@@ -5,7 +5,6 @@ import { QuranProgressBar, ChartTabs } from "@/components/ReportCharts";
 import Navbar from "@/components/Navbar";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -659,7 +658,10 @@ export default function ParentPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-6 mb-6">
-              <JuzTestProgressLineChart className="col-span-1" />
+              <JuzTestProgressLineChart 
+                className="col-span-1" 
+                studentId={filteredChildren.length === 1 ? filteredChildren[0].id : undefined}
+              />
             </div>
           )}
 
@@ -785,19 +787,14 @@ export default function ParentPage() {
                       return (
                         <tr key={child.id} className={`${rowClass}`}>
                           <td className="px-4 py-3 font-medium text-gray-900">
-                            <div className="flex items-center gap-3">
-                              <Avatar className="h-9 w-9">
-                                <AvatarFallback>{child.name.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase()}</AvatarFallback>
-                              </Avatar>
-                              <div>
-                                <div className="font-semibold">{child.name}</div>
-                                {child.class_name && (
-                                  <div className="text-xs text-gray-600">{child.class_name}</div>
-                                )}
-                                {child.teacher_name && (
-                                  <div className="text-xs text-gray-500">Teacher: {child.teacher_name}</div>
-                                )}
-                              </div>
+                            <div>
+                              <div className="font-semibold">{child.name}</div>
+                              {child.class_name && (
+                                <div className="text-xs text-gray-600">{child.class_name}</div>
+                              )}
+                              {child.teacher_name && (
+                                <div className="text-xs text-gray-500">Teacher: {child.teacher_name}</div>
+                              )}
                             </div>
                           </td>
                           
