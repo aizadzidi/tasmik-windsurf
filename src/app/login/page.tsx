@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
@@ -192,14 +193,23 @@ export default function LoginPage() {
             </Button>
           </form>
           
-          <div className="mt-6 text-center">
+          <div className="mt-6 text-center space-y-3">
             <button
               type="button"
               onClick={() => setIsSignUp(!isSignUp)}
-              className="text-blue-600 hover:text-blue-700 font-medium transition-colors"
+              className="text-blue-600 hover:text-blue-700 font-medium transition-colors block w-full"
             >
               {isSignUp ? "Already have an account? Sign In" : "Don't have an account? Sign Up"}
             </button>
+            
+            {!isSignUp && (
+              <Link 
+                href="/forgot-password"
+                className="text-blue-600 hover:text-blue-700 font-medium transition-colors block text-sm"
+              >
+                Forgot your password?
+              </Link>
+            )}
           </div>
         </div>
       </div>

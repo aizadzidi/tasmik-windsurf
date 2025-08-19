@@ -13,20 +13,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import ParentFullRecordsModal from "@/components/parent/ParentFullRecordsModal";
 import JuzTestProgressLineChart from "@/components/teacher/JuzTestProgressLineChart";
-import { Progress } from "@/components/ui/progress";
-import { Line } from "react-chartjs-2";
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-} from "chart.js";
-
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 import {
   StudentProgressData,
   calculateDaysSinceLastRead,
@@ -46,117 +32,6 @@ import autoTable from 'jspdf-autotable';
 
 type ViewMode = 'tasmik' | 'murajaah' | 'juz_tests';
 
-// Component to show individual progress bars for each child
-function ChildrenProgressBars({ children, reports }: { children: StudentProgressData[], reports: Report[] }) {
-  const getChildProgress = (childId: string) => {
-    const childReports = reports.filter(r => r.student_id === childId && r.type === 'Tasmi');
-    const maxPage = Math.max(
-      ...childReports.map(r => (r.page_to !== null && !isNaN(r.page_to) ? r.page_to : 0)),
-      0
-    );
-    return Math.min((maxPage / 604) * 100, 100);
-  };
-
-  return (
-    <div className="space-y-4">
-      {children.map((child) => {
-        const progress = getChildProgress(child.id);
-        const maxPage = Math.max(
-          ...reports.filter(r => r.student_id === child.id && r.type === 'Tasmi')
-            .map(r => (r.page_to !== null && !isNaN(r.page_to) ? r.page_to : 0)),
-          0
-        );
-        return (
-          <div key={child.id} className="mb-4">
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-sm font-medium text-gray-700">{child.name}</span>
-              <span className="text-xs text-gray-600">{maxPage} / 604 pages ({progress.toFixed(1)}%)</span>
-            </div>
-            <Progress value={progress} className="h-3" />
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// Component to show individual chart lines for each child
-function ChildrenChartTabs({ children, reports }: { children: StudentProgressData[], reports: Report[] }) {
-  const getChildWeeklyActivity = () => {
-    const weeklyData: Record<string, Record<string, number>> = {};
-    const weeks = new Set<string>();
-    
-    // Generate colors for each child
-    const colors = [
-      '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6',
-      '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16'
-    ];
-    
-    children.forEach((child) => {
-      const childReports = reports.filter(r => r.student_id === child.id);
-      weeklyData[child.id] = {};
-      
-      childReports.forEach(report => {
-        const date = new Date(report.date);
-        const weekKey = `Week ${Math.ceil(date.getDate() / 7)} ${date.toLocaleDateString('default', { month: 'short' })}`;
-        weeks.add(weekKey);
-        
-        const pages = report.page_to && report.page_from 
-          ? (report.page_to - report.page_from + 1) 
-          : 1;
-        
-        if (!weeklyData[child.id][weekKey]) {
-          weeklyData[child.id][weekKey] = 0;
-        }
-        weeklyData[child.id][weekKey] += pages;
-      });
-    });
-    
-    const sortedWeeks = Array.from(weeks).sort();
-    
-    const datasets = children.map((child, index) => ({
-      label: child.name,
-      data: sortedWeeks.map(week => weeklyData[child.id][week] || 0),
-      borderColor: colors[index % colors.length],
-      backgroundColor: colors[index % colors.length] + '20',
-      tension: 0.3,
-    }));
-    
-    return {
-      labels: sortedWeeks,
-      datasets,
-    };
-  };
-  
-  const chartData = getChildWeeklyActivity();
-  
-  const options = {
-    responsive: true,
-    plugins: {
-      legend: {
-        position: 'top' as const,
-      },
-      title: {
-        display: false,
-      },
-    },
-    scales: {
-      y: {
-        beginAtZero: true,
-        title: {
-          display: true,
-          text: 'Pages Completed'
-        }
-      }
-    },
-  };
-  
-  return (
-    <div className="h-64">
-      <Line data={chartData} options={options} />
-    </div>
-  );
-}
 
 export default function ParentPage() {
   const [parentId, setParentId] = useState<string | null>(null);
@@ -648,12 +523,37 @@ export default function ParentPage() {
               <Card className="p-6">
                 <h3 className="text-lg font-semibold text-gray-800 mb-4">Children Progress Overview</h3>
                 {filteredChildren.length > 0 && (
-                  <ChildrenProgressBars children={filteredChildren} reports={reports} />
+                  <QuranProgressBar 
+                    reports={reports.filter(r => {
+                      const isRelevantChild = filteredChildren.some(c => c.id === r.student_id);
+                      if (!isRelevantChild) return false;
+                      
+                      // Filter by report type based on viewMode
+                      if (viewMode === 'tasmik') {
+                        return r.type === 'Tasmi';
+                      } else if (viewMode === 'murajaah') {
+                        return ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
+                      }
+                      return true;
+                    })} 
+                    viewMode={viewMode}
+                  />
                 )}
               </Card>
               <Card className="p-6">
                 <h3 className="text-lg font-semibold text-gray-800 mb-4">Activity Analytics</h3>
-                <ChildrenChartTabs children={filteredChildren} reports={reports} />
+                <ChartTabs reports={reports.filter(r => {
+                  const isRelevantChild = filteredChildren.some(c => c.id === r.student_id);
+                  if (!isRelevantChild) return false;
+                  
+                  // Filter by report type based on viewMode
+                  if (viewMode === 'tasmik') {
+                    return r.type === 'Tasmi';
+                  } else if (viewMode === 'murajaah') {
+                    return ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
+                  }
+                  return true;
+                })} />
               </Card>
             </div>
           ) : (
