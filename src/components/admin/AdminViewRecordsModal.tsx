@@ -1,6 +1,5 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { supabase } from "@/lib/supabaseClient";
 import { getWeekBoundaries } from "@/lib/gradeUtils";
 
 interface Report {
@@ -38,51 +37,20 @@ export default function AdminViewRecordsModal({
   const fetchStudentReports = useCallback(async () => {
     setLoading(true);
     try {
-      // First check if user is authenticated
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      // Use API route for secure admin access
+      const response = await fetch(
+        `/api/admin/student-reports?studentId=${student.id}&viewMode=${viewMode}`
+      );
       
-      if (authError || !user) {
-        console.error("Authentication error:", authError);
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error("API error:", errorData.error);
         setReports([]);
         return;
       }
 
-      // Check user role from users table
-      const { data: userData, error: userError } = await supabase
-        .from("users")
-        .select("role")
-        .eq("id", user.id)
-        .single();
-
-      if (userError || !userData || userData.role !== 'admin') {
-        console.error("User role verification failed:", userError);
-        setReports([]);
-        return;
-      }
-
-      let query = supabase
-        .from("reports")
-        .select(`
-          *,
-          users!teacher_id (name)
-        `)
-        .eq("student_id", student.id);
-
-      // Filter by report type based on view mode
-      if (viewMode === 'tasmik') {
-        query = query.eq("type", "Tasmi");
-      } else if (viewMode === 'murajaah') {
-        query = query.in("type", ["Murajaah", "Old Murajaah", "New Murajaah"]);
-      }
-
-      const { data, error } = await query.order("date", { ascending: false });
-      
-      if (!error && data) {
-        setReports(data);
-      } else {
-        console.error("Failed to fetch reports:", error);
-        setReports([]);
-      }
+      const data = await response.json();
+      setReports(data || []);
     } catch (err) {
       console.error("Failed to fetch student reports:", err);
       setReports([]);

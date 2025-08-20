@@ -214,7 +214,7 @@ export interface SummaryStats {
 export function getSummaryStats(students: StudentProgressData[]): SummaryStats {
   return {
     totalStudents: students.length,
-    inactive7Days: students.filter(s => s.days_since_last_read >= 7).length,
+    inactive7Days: students.filter(s => s.days_since_last_read >= 7 && s.days_since_last_read < 14).length,
     inactive14Days: students.filter(s => s.days_since_last_read >= 14).length
   };
 }

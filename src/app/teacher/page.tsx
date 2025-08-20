@@ -9,6 +9,7 @@ import EditReportModal from "./EditReportModal";
 import FullRecordsModal from "@/components/teacher/FullRecordsModal";
 import JuzTestProgressLineChart from "@/components/teacher/JuzTestProgressLineChart";
 import JuzTestHistoryModalViewOnly from "@/components/teacher/JuzTestHistoryModalViewOnly";
+import { notificationService } from "@/lib/notificationService";
 import {
   StudentProgressData,
   calculateDaysSinceLastRead,
@@ -34,6 +35,7 @@ export default function TeacherPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
+  const [teacherName, setTeacherName] = useState<string>("");
   
   // Monitor state
   const [monitorStudents, setMonitorStudents] = useState<StudentProgressData[]>([]);
@@ -63,19 +65,40 @@ export default function TeacherPage() {
   const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
   const [juzTestHistoryStudent, setJuzTestHistoryStudent] = useState<Student | null>(null);
 
-  // Auth check
+  // Auth check and fetch teacher name
   useEffect(() => {
-    supabase.auth.getUser().then(({ data, error }) => {
-      if (error) {
-        console.error('Authentication error:', error);
+    const fetchUserData = async () => {
+      try {
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (userError) {
+          console.error('Authentication error:', userError);
+          window.location.href = '/login';
+          return;
+        }
+        
+        if (userData.user) {
+          setUserId(userData.user.id);
+          
+          // Fetch teacher name from users table
+          const { data: teacherData, error: teacherError } = await supabase
+            .from('users')
+            .select('name')
+            .eq('id', userData.user.id)
+            .single();
+            
+          if (teacherError) {
+            console.error('Error fetching teacher name:', teacherError);
+          } else {
+            setTeacherName(teacherData?.name || '');
+          }
+        }
+      } catch (error) {
+        console.error('Failed to get user:', error);
         window.location.href = '/login';
-        return;
       }
-      setUserId(data.user?.id ?? null);
-    }).catch((error) => {
-      console.error('Failed to get user:', error);
-      window.location.href = '/login';
-    });
+    };
+    
+    fetchUserData();
   }, []);
 
   // Fetch students
@@ -775,10 +798,34 @@ export default function TeacherPage() {
                                     <div className="flex flex-col gap-1">
                                       {(extendedStudent.juz_test_gap || 0) > 0 && (
                                         <button
-                                          onClick={() => {
+                                          onClick={async () => {
+                                            if (!userId || !teacherName) {
+                                              alert('Error: Unable to identify teacher. Please try refreshing the page.');
+                                              return;
+                                            }
+                                            
                                             const suggestedJuz = (extendedStudent.highest_passed_juz || 0) + 1;
-                                            const notes = `Student ready for Juz ${suggestedJuz} test. Current memorization: Juz ${extendedStudent.highest_memorized_juz || 0}`;
-                                            alert(`Notification feature will be implemented: ${notes}`);
+                                            const currentMemorizedJuz = extendedStudent.highest_memorized_juz || 0;
+                                            
+                                            try {
+                                              const result = await notificationService.createExaminerRequest(
+                                                student.id,
+                                                student.name,
+                                                userId,
+                                                teacherName,
+                                                suggestedJuz,
+                                                currentMemorizedJuz
+                                              );
+                                              
+                                              if (result.success) {
+                                                alert(`✅ Notification sent to admin successfully!\n\nStudent: ${student.name}\nRequested Juz: ${suggestedJuz}\nCurrent memorization: Juz ${currentMemorizedJuz}`);
+                                              } else {
+                                                alert(`❌ Failed to send notification: ${result.error}`);
+                                              }
+                                            } catch (error) {
+                                              console.error('Error sending notification:', error);
+                                              alert('❌ An error occurred while sending the notification. Please try again.');
+                                            }
                                           }}
                                           className="px-3 py-1 rounded-lg text-xs font-medium transition-colors bg-purple-100 hover:bg-purple-200 text-purple-700"
                                         >

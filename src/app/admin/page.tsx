@@ -1,14 +1,9 @@
 "use client";
 import React, { useState, useEffect, useMemo } from "react";
-import { createClient } from "@supabase/supabase-js";
 import AdminNavbar from "@/components/admin/AdminNavbar";
 import { Card } from "@/components/ui/Card";
 import ClassDistributionChart from "@/components/admin/ClassDistributionChart";
 import TeacherAssignmentChart from "@/components/admin/TeacherAssignmentChart";
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const supabase = createClient(supabaseUrl, supabaseKey);
 
 interface Student {
   id: string;
@@ -36,6 +31,7 @@ interface Class {
   id: string;
   name: string;
 }
+
 
 export default function AdminPage() {
   const [students, setStudents] = useState<Student[]>([]);
@@ -66,17 +62,39 @@ export default function AdminPage() {
 
   useEffect(() => {
     async function fetchData() {
-      const { data: studentsData } = await supabase.from("students").select("*").order("name");
-      if (studentsData) setStudents(studentsData);
+      try {
+        // Fetch students via secure API
+        const studentsResponse = await fetch('/api/admin/students');
+        if (studentsResponse.ok) {
+          const studentsData = await studentsResponse.json();
+          setStudents(studentsData);
+        }
 
-      const { data: parentsData } = await supabase.from("users").select("id, name, email").eq("role", "parent");
-      if (parentsData) setParents(parentsData);
+        // Fetch parents via secure API
+        const parentsResponse = await fetch('/api/admin/users?role=parent');
+        if (parentsResponse.ok) {
+          const parentsData = await parentsResponse.json();
+          setParents(parentsData);
+        }
 
-      const { data: teachersData } = await supabase.from("users").select("id, name, email").eq("role", "teacher");
-      if (teachersData) setTeachers(teachersData);
+        // Fetch teachers via secure API
+        const teachersResponse = await fetch('/api/admin/users?role=teacher');
+        if (teachersResponse.ok) {
+          const teachersData = await teachersResponse.json();
+          setTeachers(teachersData);
+        }
 
-      const { data: classesData } = await supabase.from("classes").select("id, name").order("name");
-      if (classesData) setClasses(classesData);
+        // Fetch classes via secure API
+        const classesResponse = await fetch('/api/admin/classes');
+        if (classesResponse.ok) {
+          const classesData = await classesResponse.json();
+          setClasses(classesData);
+        }
+
+      } catch (error) {
+        console.error('Failed to fetch admin data:', error);
+        setError('Failed to load admin data. Please refresh the page.');
+      }
     }
     fetchData();
   }, []);
@@ -85,24 +103,35 @@ export default function AdminPage() {
     if (!newStudentName.trim()) return;
     setLoading(true);
     setError("");
-    const { data: newStudent, error: insertError } = await supabase.from("students").insert([{ 
-      name: newStudentName.trim(),
-      parent_id: newStudentParentId || null,
-      assigned_teacher_id: newStudentTeacherId || null,
-      class_id: newStudentClassId || null
-    }]).select().single();
     
-    if (insertError) {
-      setError("Failed to add student: " + insertError.message);
-    } else if (newStudent) {
-      setStudents([...students, newStudent].sort((a, b) => a.name.localeCompare(b.name)));
-      setNewStudentName("");
-      setNewStudentParentId("");
-      setNewStudentTeacherId("");
-      setNewStudentClassId("");
-      setShowAddForm(false);
-      setSuccess("Student added successfully!");
-      setTimeout(() => setSuccess(""), 3000);
+    try {
+      const response = await fetch('/api/admin/students', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newStudentName.trim(),
+          parent_id: newStudentParentId || null,
+          assigned_teacher_id: newStudentTeacherId || null,
+          class_id: newStudentClassId || null
+        })
+      });
+
+      if (response.ok) {
+        const newStudent = await response.json();
+        setStudents([...students, newStudent].sort((a, b) => a.name.localeCompare(b.name)));
+        setNewStudentName("");
+        setNewStudentParentId("");
+        setNewStudentTeacherId("");
+        setNewStudentClassId("");
+        setShowAddForm(false);
+        setSuccess("Student added successfully!");
+        setTimeout(() => setSuccess(""), 3000);
+      } else {
+        const errorData = await response.json();
+        setError("Failed to add student: " + (errorData.error || 'Unknown error'));
+      }
+    } catch (error) {
+      setError("Failed to add student: Network error");
     }
     setLoading(false);
   };
@@ -121,29 +150,52 @@ export default function AdminPage() {
     if (!editStudentForm.name.trim()) return;
     setEditLoading(true);
     setEditError("");
-    const { data: updatedStudent, error: updateError } = await supabase.from("students").update({ 
-      name: editStudentForm.name.trim(),
-      parent_id: editStudentForm.parent_id || null,
-      assigned_teacher_id: editStudentForm.assigned_teacher_id || null,
-      class_id: editStudentForm.class_id || null
-    }).eq("id", studentId).select().single();
     
-    if (updateError) {
-      setEditError("Failed to update student: " + updateError.message);
-    } else if (updatedStudent) {
-      setStudents(students.map(s => s.id === studentId ? updatedStudent : s));
-      setEditStudentId(null);
+    try {
+      const response = await fetch('/api/admin/students', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: studentId,
+          name: editStudentForm.name.trim(),
+          parent_id: editStudentForm.parent_id || null,
+          assigned_teacher_id: editStudentForm.assigned_teacher_id || null,
+          class_id: editStudentForm.class_id || null
+        })
+      });
+
+      if (response.ok) {
+        const updatedStudent = await response.json();
+        setStudents(students.map(s => s.id === studentId ? updatedStudent : s));
+        setEditStudentId(null);
+      } else {
+        const errorData = await response.json();
+        setEditError("Failed to update student: " + (errorData.error || 'Unknown error'));
+      }
+    } catch (error) {
+      setEditError("Failed to update student: Network error");
     }
     setEditLoading(false);
   };
 
   const handleDeleteStudent = async (id: string) => {
     if (!window.confirm('Are you sure you want to delete this student?')) return;
-    const { error } = await supabase.from("students").delete().eq("id", id);
-    if (error) {
-      setError("Failed to delete student: " + error.message);
-    } else {
-      setStudents(students.filter(s => s.id !== id));
+    
+    try {
+      const response = await fetch(`/api/admin/students?id=${id}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        setStudents(students.filter(s => s.id !== id));
+        setSuccess("Student deleted successfully!");
+        setTimeout(() => setSuccess(""), 3000);
+      } else {
+        const errorData = await response.json();
+        setError("Failed to delete student: " + (errorData.error || 'Unknown error'));
+      }
+    } catch (error) {
+      setError("Failed to delete student: Network error");
     }
   };
 
@@ -155,25 +207,26 @@ export default function AdminPage() {
     setError("");
     
     try {
-      // Call the database function to update completion status
-      const { error } = await supabase.rpc('admin_mark_student_completed', {
-        student_uuid: studentId,
-        completed: completed
+      const response = await fetch('/api/admin/students/completion', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          student_id: studentId,
+          completed: completed
+        })
       });
-      
-      if (error) {
-        setError("Failed to update completion status: " + error.message);
+
+      if (response.ok) {
+        const result = await response.json();
+        setStudents(result.students);
+        setSuccess(`Student ${completed ? 'marked as completed' : 'marked as incomplete'} successfully!`);
+        setTimeout(() => setSuccess(""), 3000);
       } else {
-        // Refresh the students data to get updated completion status
-        const { data: updatedStudents } = await supabase.from("students").select("*").order("name");
-        if (updatedStudents) {
-          setStudents(updatedStudents);
-          setSuccess(`Student ${completed ? 'marked as completed' : 'marked as incomplete'} successfully!`);
-          setTimeout(() => setSuccess(""), 3000);
-        }
+        const errorData = await response.json();
+        setError("Failed to update completion status: " + (errorData.error || 'Unknown error'));
       }
     } catch (err) {
-      setError("Failed to update completion status: " + (err as Error).message);
+      setError("Failed to update completion status: Network error");
     } finally {
       setLoading(false);
     }

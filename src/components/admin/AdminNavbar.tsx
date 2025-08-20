@@ -1,13 +1,17 @@
 "use client";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import SignOutButton from "@/components/SignOutButton";
+import NotificationPanel from "./NotificationPanel";
+import { notificationService } from "@/lib/notificationService";
 
 const AdminNavbar = () => {
   const pathname = usePathname();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const navItems = [
     { 
@@ -55,6 +59,27 @@ const AdminNavbar = () => {
     return pathname.startsWith(href);
   };
 
+  useEffect(() => {
+    const fetchUnreadCount = async () => {
+      const result = await notificationService.getUnreadCount();
+      if (!result.error) {
+        setUnreadCount(result.count);
+      }
+    };
+
+    fetchUnreadCount();
+    
+    // Refresh unread count every 30 seconds
+    const interval = setInterval(fetchUnreadCount, 30000);
+    
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleNotificationClick = () => {
+    setShowNotifications(true);
+    setUnreadCount(0); // Optimistically reset count when opening panel
+  };
+
   return (
     <nav className="relative z-50 bg-white/20 backdrop-blur-xl border-b border-white/30 shadow-lg">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -99,8 +124,23 @@ const AdminNavbar = () => {
             ))}
           </div>
 
-          {/* Desktop Sign Out */}
-          <div className="hidden md:flex items-center">
+          {/* Desktop Notifications & Sign Out */}
+          <div className="hidden md:flex items-center space-x-3">
+            {/* Notification Bell */}
+            <button
+              onClick={handleNotificationClick}
+              className="relative p-3 rounded-xl bg-white/20 backdrop-blur-sm border border-white/30 text-gray-700 hover:bg-white/40 hover:border-white/50 transition-all duration-200 hover:shadow-lg hover:scale-105 group"
+            >
+              <div className="w-6 h-6 flex items-center justify-center text-lg transition-transform group-hover:scale-110">
+                🔔
+              </div>
+              {unreadCount > 0 && (
+                <span className="absolute -top-2 -right-2 bg-gradient-to-br from-red-500 to-pink-600 text-white text-xs rounded-full h-6 w-6 flex items-center justify-center font-bold shadow-lg animate-pulse border-2 border-white">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </button>
+            
             <div className="bg-white/20 backdrop-blur-sm rounded-lg p-1 border border-white/30">
               <SignOutButton />
             </div>
@@ -142,7 +182,26 @@ const AdminNavbar = () => {
                   <span>{item.label}</span>
                 </Link>
               ))}
-              <div className="mt-3 pt-3 border-t border-white/30">
+              <div className="mt-3 pt-3 border-t border-white/30 space-y-3">
+                {/* Mobile Notification Button */}
+                <button
+                  onClick={() => {
+                    handleNotificationClick();
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between px-3 py-3 rounded-lg text-base font-medium transition-all duration-200 bg-white/20 backdrop-blur-sm border border-white/30 text-gray-700 hover:bg-white/30"
+                >
+                  <div className="flex items-center space-x-3">
+                    <span className="text-lg">🔔</span>
+                    <span>Notifications</span>
+                  </div>
+                  {unreadCount > 0 && (
+                    <span className="bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold">
+                      {unreadCount > 9 ? '9+' : unreadCount}
+                    </span>
+                  )}
+                </button>
+                
                 <div className="bg-white/20 backdrop-blur-sm rounded-lg p-3 border border-white/30">
                   <SignOutButton />
                 </div>
@@ -151,6 +210,12 @@ const AdminNavbar = () => {
           </div>
         )}
       </div>
+      
+      {/* Notification Panel */}
+      <NotificationPanel 
+        isVisible={showNotifications} 
+        onClose={() => setShowNotifications(false)} 
+      />
     </nav>
   );
 };
