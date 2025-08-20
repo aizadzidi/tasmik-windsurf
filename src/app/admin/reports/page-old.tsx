@@ -91,6 +91,9 @@ export default function AdminReportsPage() {
           return;
         }
 
+        // Collect student IDs once for batched queries below
+        const studentIds = studentsData.map((s: any) => s.id);
+
         if (viewMode === 'juz_tests') {
           // Batch fetch all memorization data and juz tests
           const [memorizationResults, passedJuzTestResults, allJuzTestResults] = await Promise.all([
