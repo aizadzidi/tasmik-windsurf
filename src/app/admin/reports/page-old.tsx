@@ -135,7 +135,7 @@ export default function AdminReportsPage() {
           ]);
 
           // Process the batched data
-          const studentProgressData = studentsData.map(student => {
+          const studentProgressData = studentsData.map((student: any) => {
             // Find highest memorized juz for this student
             const studentMemorization = memorizationResults.data?.filter(r => r.student_id === student.id) || [];
             const highestMemorizedJuz = studentMemorization.length > 0 
@@ -201,7 +201,7 @@ export default function AdminReportsPage() {
           const { data: allReports } = await query.order("date", { ascending: false });
 
           // Process the batched data
-          const studentProgressData = studentsData.map(student => {
+          const studentProgressData = studentsData.map((student: any) => {
             // Find latest report for this student
             const studentReports = allReports?.filter(r => r.student_id === student.id) || [];
             const latestReport = studentReports.length > 0 ? studentReports[0] : null;

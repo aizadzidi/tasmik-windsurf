@@ -35,7 +35,16 @@ function formatLatestReading(report: any) {
   if (report.type === 'Tasmi') {
     return `${report.surah} (${report.ayat_from}-${report.ayat_to})`;
   } else {
-    return formatMurajaahDisplay(report.juzuk_from, report.ayat_from, report.juzuk_to, report.ayat_to);
+    // For murajaah reports, use page numbers if available, otherwise show juzuk
+    if (report.page_from && report.page_to) {
+      return formatMurajaahDisplay(report.page_from, report.page_to);
+    } else if (report.juzuk_from && report.juzuk_to) {
+      return `Juz ${report.juzuk_from}${report.juzuk_to !== report.juzuk_from ? ` - ${report.juzuk_to}` : ''}`;
+    } else if (report.juzuk) {
+      return `Juz ${report.juzuk}`;
+    } else {
+      return "Murajaah reading";
+    }
   }
 }
 
@@ -404,7 +413,7 @@ export default function AdminReportsPage() {
                             {student.last_read_date ? formatAbsoluteDate(student.last_read_date) : '-'}
                           </td>
                           <td className="py-3 px-4">
-                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getActivityStatus(student.days_since_last_read).className}`}>
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getActivityStatus(student.days_since_last_read).color}`}>
                               {student.days_since_last_read === 999 ? '∞' : student.days_since_last_read}
                             </span>
                           </td>
