@@ -15,6 +15,8 @@ export interface StudentProgressData {
   last_read_date: string | null;
   days_since_last_read: number;
   report_type: 'Tasmi' | 'Old Murajaah' | 'New Murajaah' | 'juz_test' | null;
+  memorization_completed?: boolean;
+  memorization_completed_date?: string;
 }
 
 // Calculate days since last read
@@ -128,7 +130,13 @@ export function createMurajaahProgress(juz: number, hizb: number = 0, page: numb
 }
 
 // Get row color class based on days since last read
-export function getInactivityRowClass(daysSinceLastRead: number): string {
+export function getInactivityRowClass(daysSinceLastRead: number, memorization_completed?: boolean): string {
+  // For completed students, use purple color scheme
+  if (memorization_completed) {
+    return 'bg-purple-50 border-purple-200';
+  }
+  
+  // For students still memorizing
   if (daysSinceLastRead >= 14) return 'bg-red-50 border-red-200';
   if (daysSinceLastRead >= 7) return 'bg-orange-50 border-orange-200';
   if (daysSinceLastRead < 7 && daysSinceLastRead >= 0) return 'bg-green-50 border-green-200';
@@ -136,7 +144,13 @@ export function getInactivityRowClass(daysSinceLastRead: number): string {
 }
 
 // Get activity status text and color
-export function getActivityStatus(daysSinceLastRead: number): { text: string; color: string } {
+export function getActivityStatus(daysSinceLastRead: number, memorization_completed?: boolean): { text: string; color: string } {
+  // For completed students, always show "Completed" status
+  if (memorization_completed) {
+    return { text: 'Completed', color: 'text-purple-600' };
+  }
+  
+  // For students still memorizing
   if (daysSinceLastRead >= 14) return { text: 'Critical', color: 'text-red-600' };
   if (daysSinceLastRead >= 7) return { text: 'Warning', color: 'text-orange-600' };
   if (daysSinceLastRead < 7 && daysSinceLastRead >= 0) return { text: 'Active', color: 'text-green-600' };
@@ -172,6 +186,13 @@ export function filterStudentsByTeacher(students: StudentProgressData[], teacher
   if (!teacherFilter) return students;
   
   return students.filter(student => student.teacher_name === teacherFilter);
+}
+
+// Filter students by completion status
+export function filterStudentsByCompletion(students: StudentProgressData[], showCompleted: boolean): StudentProgressData[] {
+  return students.filter(student => 
+    showCompleted ? student.memorization_completed === true : student.memorization_completed !== true
+  );
 }
 
 // Get unique teachers from student data

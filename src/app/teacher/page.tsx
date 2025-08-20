@@ -84,7 +84,7 @@ export default function TeacherPage() {
     async function fetchStudents() {
       const { data, error } = await supabase
         .from("students")
-        .select("id, name")
+        .select("id, name, memorization_completed, memorization_completed_date")
         .eq("assigned_teacher_id", userId);
       if (!error && data) setStudents(data);
     }
@@ -207,6 +207,8 @@ export default function TeacherPage() {
           name,
           assigned_teacher_id,
           class_id,
+          memorization_completed,
+          memorization_completed_date,
           users!assigned_teacher_id (name),
           classes (name)
         `)
@@ -286,6 +288,8 @@ export default function TeacherPage() {
             last_read_date: latestTest?.test_date || null,
             days_since_last_read: gap,
             report_type: 'juz_test',
+            memorization_completed: student.memorization_completed,
+            memorization_completed_date: student.memorization_completed_date,
             highest_memorized_juz: highestMemorizedJuz,
             highest_passed_juz: highestTestedJuz,
             juz_test_gap: gap,
@@ -333,7 +337,9 @@ export default function TeacherPage() {
             latest_reading: latestReading,
             last_read_date: latestReport?.date || null,
             days_since_last_read: daysSinceLastRead,
-            report_type: latestReport?.type || null
+            report_type: latestReport?.type || null,
+            memorization_completed: student.memorization_completed,
+            memorization_completed_date: student.memorization_completed_date
           } as StudentProgressData;
         }
       });
@@ -692,9 +698,9 @@ export default function TeacherPage() {
                                 ? 'bg-yellow-50/80' 
                                 : ''
                             : '')
-                        : getInactivityRowClass(student.days_since_last_read);
+                        : getInactivityRowClass(student.days_since_last_read, student.memorization_completed);
                       
-                      const activityStatus = getActivityStatus(student.days_since_last_read);
+                      const activityStatus = getActivityStatus(student.days_since_last_read, student.memorization_completed);
                       const studentData = students.find(s => s.id === student.id);
                       
                       return (

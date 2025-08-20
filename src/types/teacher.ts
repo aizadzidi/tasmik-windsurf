@@ -3,6 +3,8 @@
 export interface Student {
   id: string;
   name: string;
+  memorization_completed?: boolean;
+  memorization_completed_date?: string;
 }
 
 export interface Report {

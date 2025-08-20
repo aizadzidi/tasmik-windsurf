@@ -16,6 +16,8 @@ interface Student {
   parent_id: string;
   assigned_teacher_id: string | null;
   class_id: string | null;
+  memorization_completed?: boolean;
+  memorization_completed_date?: string;
 }
 
 interface Teacher {
@@ -145,6 +147,38 @@ export default function AdminPage() {
     }
   };
 
+  const handleToggleCompletion = async (studentId: string, completed: boolean) => {
+    const action = completed ? 'mark as completed' : 'mark as incomplete';
+    if (!window.confirm(`Are you sure you want to ${action} this student's memorization?`)) return;
+    
+    setLoading(true);
+    setError("");
+    
+    try {
+      // Call the database function to update completion status
+      const { error } = await supabase.rpc('admin_mark_student_completed', {
+        student_uuid: studentId,
+        completed: completed
+      });
+      
+      if (error) {
+        setError("Failed to update completion status: " + error.message);
+      } else {
+        // Refresh the students data to get updated completion status
+        const { data: updatedStudents } = await supabase.from("students").select("*").order("name");
+        if (updatedStudents) {
+          setStudents(updatedStudents);
+          setSuccess(`Student ${completed ? 'marked as completed' : 'marked as incomplete'} successfully!`);
+          setTimeout(() => setSuccess(""), 3000);
+        }
+      }
+    } catch (err) {
+      setError("Failed to update completion status: " + (err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const filteredStudents = useMemo(() => students.filter(s => 
     s.name.toLowerCase().includes(searchTerm.toLowerCase()) &&
     (filterClass === "" || 
@@ -167,7 +201,7 @@ export default function AdminPage() {
         </header>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
           <Card className="p-4">
             <div className="text-2xl font-bold">{students.length}</div>
             <div className="text-sm text-gray-600">Total Students</div>
@@ -180,10 +214,19 @@ export default function AdminPage() {
             <div className="text-2xl font-bold text-orange-600">{students.filter(s => s.assigned_teacher_id).length}</div>
             <div className="text-sm text-gray-600">With a Teacher</div>
           </Card>
-          {filteredStudents.length !== students.length && (
+          <Card className="p-4">
+            <div className="text-2xl font-bold text-purple-600">{students.filter(s => s.memorization_completed).length}</div>
+            <div className="text-sm text-gray-600">Completed Memorization</div>
+          </Card>
+          {filteredStudents.length !== students.length ? (
             <Card className="p-4">
               <div className="text-2xl font-bold text-blue-600">{filteredStudents.length}</div>
               <div className="text-sm text-gray-600">Filtered Results</div>
+            </Card>
+          ) : (
+            <Card className="p-4">
+              <div className="text-2xl font-bold text-purple-600">{students.filter(s => !s.memorization_completed).length}</div>
+              <div className="text-sm text-gray-600">Still Memorizing</div>
             </Card>
           )}
         </div>
@@ -335,6 +378,7 @@ export default function AdminPage() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Parent</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Teacher</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Class</th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Memorization</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
@@ -342,7 +386,7 @@ export default function AdminPage() {
               {filteredStudents.map(s => (
                 <tr key={s.id}>
                   {editStudentId === s.id ? (
-                    <td className="px-4 py-3" colSpan={5}>
+                    <td className="px-4 py-3" colSpan={6}>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                           <label className="block text-xs font-medium text-gray-700 mb-1">Student Name</label>
@@ -422,6 +466,33 @@ export default function AdminPage() {
                       <td className="px-4 py-3 text-gray-600">
                         {classes.find(c => c.id === s.class_id)?.name || '-'}
                       </td>
+                      <td className="px-4 py-3 text-center">
+                        <div className="flex flex-col items-center gap-2">
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                            s.memorization_completed 
+                              ? 'bg-purple-100 text-purple-800' 
+                              : 'bg-gray-100 text-gray-800'
+                          }`}>
+                            {s.memorization_completed ? 'Completed' : 'In Progress'}
+                          </span>
+                          {s.memorization_completed_date && (
+                            <span className="text-xs text-gray-500">
+                              {new Date(s.memorization_completed_date).toLocaleDateString()}
+                            </span>
+                          )}
+                          <button
+                            onClick={() => handleToggleCompletion(s.id, !s.memorization_completed)}
+                            className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                              s.memorization_completed
+                                ? 'bg-red-100 hover:bg-red-200 text-red-700'
+                                : 'bg-purple-100 hover:bg-purple-200 text-purple-700'
+                            }`}
+                            disabled={loading}
+                          >
+                            {s.memorization_completed ? 'Mark Incomplete' : 'Mark Complete'}
+                          </button>
+                        </div>
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex gap-2">
                           <button 
@@ -444,7 +515,7 @@ export default function AdminPage() {
               ))}
               {filteredStudents.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="text-center py-8 text-gray-500">
+                  <td colSpan={6} className="text-center py-8 text-gray-500">
                     No students match the current filters.
                   </td>
                 </tr>
