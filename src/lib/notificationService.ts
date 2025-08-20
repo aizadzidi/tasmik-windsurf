@@ -26,13 +26,35 @@ export const notificationService = {
   // Create a new Juz test notification
   async createNotification(data: CreateNotificationData): Promise<{ success: boolean; error?: string }> {
     try {
+      // If names aren't provided, fetch them from the database
+      let studentName = data.student_name;
+      let teacherName = data.teacher_name;
+
+      if (!studentName || !teacherName) {
+        const [studentResult, teacherResult] = await Promise.all([
+          !studentName ? supabase
+            .from('students')
+            .select('name')
+            .eq('id', data.student_id)
+            .single() : Promise.resolve({ data: { name: studentName }, error: null }),
+          !teacherName ? supabase
+            .from('users')
+            .select('name')
+            .eq('id', data.teacher_id)
+            .single() : Promise.resolve({ data: { name: teacherName }, error: null })
+        ]);
+
+        studentName = studentResult.data?.name || data.student_name || 'Unknown Student';
+        teacherName = teacherResult.data?.name || data.teacher_name || 'Unknown Teacher';
+      }
+
       const { error } = await supabase
         .from('juz_test_notifications')
         .insert([{
           student_id: data.student_id,
           teacher_id: data.teacher_id,
-          student_name: data.student_name,
-          teacher_name: data.teacher_name,
+          student_name: studentName,
+          teacher_name: teacherName,
           suggested_juz: data.suggested_juz,
           teacher_notes: data.teacher_notes,
           status: 'pending'
@@ -53,7 +75,7 @@ export const notificationService = {
   // Get all notifications for admin (pending first, then by date)
   async getNotificationsForAdmin(): Promise<{ notifications: JuzTestNotification[]; error?: string }> {
     try {
-      // Simple query - no joins needed since names are stored in the table
+      // Fetch notifications without joins to avoid RLS/join issues
       const { data: notifications, error } = await supabase
         .from('juz_test_notifications')
         .select('*')
@@ -65,8 +87,67 @@ export const notificationService = {
         return { notifications: [], error: error.message };
       }
 
-      console.log('Notifications with stored names:', notifications);
-      return { notifications: notifications || [] };
+      const notificationsSafe = notifications || [];
+
+      // Find which names are missing and batch fetch them
+      const missingStudentIds = Array.from(new Set(
+        notificationsSafe
+          .filter(n => !n.student_name)
+          .map(n => n.student_id)
+          .filter(Boolean)
+      ));
+      const missingTeacherIds = Array.from(new Set(
+        notificationsSafe
+          .filter(n => !n.teacher_name)
+          .map(n => n.teacher_id)
+          .filter(Boolean)
+      ));
+
+      const [studentsLookupRes, teachersLookupRes] = await Promise.all([
+        missingStudentIds.length > 0
+          ? supabase.from('students').select('id, name').in('id', missingStudentIds)
+          : Promise.resolve({ data: [], error: null } as any),
+        missingTeacherIds.length > 0
+          ? supabase.from('users').select('id, name').in('id', missingTeacherIds)
+          : Promise.resolve({ data: [], error: null } as any)
+      ]);
+
+      const studentIdToName: Record<string, string> = Object.fromEntries(
+        (studentsLookupRes.data || []).map((s: any) => [s.id, s.name])
+      );
+      const teacherIdToName: Record<string, string> = Object.fromEntries(
+        (teachersLookupRes.data || []).map((u: any) => [u.id, u.name])
+      );
+
+      // Build processed notifications with resolved names
+      const processedNotifications: JuzTestNotification[] = notificationsSafe.map((n: any) => {
+        const studentName = n.student_name || studentIdToName[n.student_id] || 'Unknown Student';
+        const teacherName = n.teacher_name || teacherIdToName[n.teacher_id] || 'Unknown Teacher';
+        return { ...n, student_name: studentName, teacher_name: teacherName } as JuzTestNotification;
+      });
+
+      // Persist back any newly resolved names to avoid future lookups
+      const updates = processedNotifications
+        .filter((n, idx) => (
+          (!notificationsSafe[idx]?.student_name && n.student_name && n.student_name !== 'Unknown Student') ||
+          (!notificationsSafe[idx]?.teacher_name && n.teacher_name && n.teacher_name !== 'Unknown Teacher')
+        ))
+        .map(n => ({ id: n.id, student_name: n.student_name, teacher_name: n.teacher_name }));
+
+      if (updates.length > 0) {
+        // Best-effort update; ignore errors to keep UI responsive
+        await Promise.all(
+          updates.map(u =>
+            supabase
+              .from('juz_test_notifications')
+              .update({ student_name: u.student_name, teacher_name: u.teacher_name })
+              .eq('id', u.id)
+          )
+        ).catch(() => {});
+      }
+
+      console.log('Notifications with resolved names:', processedNotifications);
+      return { notifications: processedNotifications };
     } catch (err) {
       console.error('Error fetching notifications:', err);
       return { notifications: [], error: 'Failed to fetch notifications' };

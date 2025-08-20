@@ -22,15 +22,24 @@ export default function NotificationPanel({ isVisible, onClose }: NotificationPa
   const fetchNotifications = async () => {
     setLoading(true);
     setError(null);
-    
-    const result = await notificationService.getNotificationsForAdmin();
-    if (result.error) {
-      setError(result.error);
-    } else {
-      setNotifications(result.notifications);
+    try {
+      // Prefer server API (service role) for consistent names; fallback to client service
+      const res = await fetch('/api/admin/notifications');
+      if (res.ok) {
+        const data = await res.json();
+        setNotifications(data.notifications || []);
+      } else {
+        const result = await notificationService.getNotificationsForAdmin();
+        if (result.error) setError(result.error);
+        else setNotifications(result.notifications);
+      }
+    } catch (e: any) {
+      const result = await notificationService.getNotificationsForAdmin();
+      if (result.error) setError(result.error);
+      else setNotifications(result.notifications);
+    } finally {
+      setLoading(false);
     }
-    
-    setLoading(false);
   };
 
   const handleMarkAsAcknowledged = async (notificationId: string) => {
