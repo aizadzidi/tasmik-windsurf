@@ -62,33 +62,55 @@ export default function AdminPage() {
 
   useEffect(() => {
     async function fetchData() {
+      console.log('Admin page: Starting data fetch...');
       try {
         // Fetch students via secure API
         const studentsResponse = await fetch('/api/admin/students');
+        console.log('Students response:', studentsResponse.status, studentsResponse.ok);
         if (studentsResponse.ok) {
           const studentsData = await studentsResponse.json();
+          console.log('Students data received:', studentsData.length);
           setStudents(studentsData);
+        } else {
+          const errorData = await studentsResponse.text();
+          console.error('Students fetch failed:', studentsResponse.status, errorData);
+          setError(`Failed to load students: ${studentsResponse.status}`);
         }
 
         // Fetch parents via secure API
         const parentsResponse = await fetch('/api/admin/users?role=parent');
+        console.log('Parents response:', parentsResponse.status, parentsResponse.ok);
         if (parentsResponse.ok) {
           const parentsData = await parentsResponse.json();
+          console.log('Parents data received:', parentsData.length);
           setParents(parentsData);
+        } else {
+          const errorData = await parentsResponse.text();
+          console.error('Parents fetch failed:', parentsResponse.status, errorData);
         }
 
         // Fetch teachers via secure API
         const teachersResponse = await fetch('/api/admin/users?role=teacher');
+        console.log('Teachers response:', teachersResponse.status, teachersResponse.ok);
         if (teachersResponse.ok) {
           const teachersData = await teachersResponse.json();
+          console.log('Teachers data received:', teachersData.length);
           setTeachers(teachersData);
+        } else {
+          const errorData = await teachersResponse.text();
+          console.error('Teachers fetch failed:', teachersResponse.status, errorData);
         }
 
         // Fetch classes via secure API
         const classesResponse = await fetch('/api/admin/classes');
+        console.log('Classes response:', classesResponse.status, classesResponse.ok);
         if (classesResponse.ok) {
           const classesData = await classesResponse.json();
+          console.log('Classes data received:', classesData.length);
           setClasses(classesData);
+        } else {
+          const errorData = await classesResponse.text();
+          console.error('Classes fetch failed:', classesResponse.status, errorData);
         }
 
       } catch (error) {
