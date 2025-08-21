@@ -1,14 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
 
-// GET - Fetch all students (admin only)
-export async function GET() {
+// GET - Fetch students (admin only) - optionally filter by ID
+export async function GET(request: NextRequest) {
   try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+
     const data = await adminOperationSimple(async (client) => {
-      const { data, error } = await client
+      let query = client
         .from('students')
-        .select('*')
-        .order('name');
+        .select('*');
+      
+      if (id) {
+        query = query.eq('id', id);
+      } else {
+        query = query.order('name');
+      }
+      
+      const { data, error } = await query;
       
       if (error) throw error;
       return data;

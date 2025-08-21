@@ -727,6 +727,7 @@ export default function AdminReportsPage() {
               setSelectedStudentForTest(null);
             }}
             studentId={selectedStudentForTest}
+            studentName="Student" 
             juzNumber={selectedJuzNumber}
             onSubmit={() => {
               // Refresh the data after successful submission

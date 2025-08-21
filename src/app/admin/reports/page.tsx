@@ -13,7 +13,6 @@ import JuzTestProgressLineChart from "@/components/teacher/JuzTestProgressLineCh
 import {
   StudentProgressData,
   calculateDaysSinceLastRead,
-  formatRelativeDate,
   formatAbsoluteDate,
   getInactivityRowClass,
   getActivityStatus,
@@ -21,15 +20,14 @@ import {
   filterStudentsBySearch,
   filterStudentsByTeacher,
   getUniqueTeachers,
-  getSummaryStats,
-  SummaryStats
+  getSummaryStats
 } from "@/lib/reportUtils";
 import { formatMurajaahDisplay } from "@/lib/quranMapping";
 
 type ViewMode = 'tasmik' | 'murajaah' | 'juz_tests';
 
 // Helper function to format latest reading
-function formatLatestReading(report: any) {
+function formatLatestReading(report: { type: string; surah?: string; ayat_from?: number; ayat_to?: number; page_from?: number; page_to?: number; juzuk_from?: number; juzuk_to?: number; juzuk?: number } | null) {
   if (!report) return "No reading recorded";
   
   if (report.type === 'Tasmi') {
@@ -61,7 +59,7 @@ export default function AdminReportsPage() {
   
   // Juz Test modal state
   const [showJuzTestModal, setShowJuzTestModal] = useState(false);
-  const [selectedStudentForTest, setSelectedStudentForTest] = useState<string | null>(null);
+  const [selectedStudentForTest, setSelectedStudentForTest] = useState<{ id: string; name: string } | null>(null);
   const [selectedJuzNumber, setSelectedJuzNumber] = useState<number>(1);
   
   // View Records modal state
@@ -112,16 +110,27 @@ export default function AdminReportsPage() {
       }
 
       // Process the API data for display
-      const studentProgressData = studentsData.map((student: any) => {
+      const studentProgressData = studentsData.map((student: { 
+        id: string; 
+        name: string; 
+        teacher_name?: string; 
+        class_name?: string; 
+        memorized_juzuks?: number[]; 
+        juz_tests?: { passed: boolean; juz_number: number; test_date: string }[]; 
+        latestTasmikReport?: any; 
+        latestMurajaahReport?: any; 
+        memorization_completed?: boolean; 
+        memorization_completed_date?: string; 
+      }) => {
         if (viewMode === 'juz_tests') {
           // For juz tests mode
-          const highestMemorizedJuz = student.memorized_juzuks?.length > 0 
-            ? Math.max(...student.memorized_juzuks) 
+          const highestMemorizedJuz = (student.memorized_juzuks?.length ?? 0) > 0 
+            ? Math.max(...(student.memorized_juzuks ?? [])) 
             : 0;
           
-          const passedTests = student.juz_tests?.filter((test: any) => test.passed) || [];
+          const passedTests = student.juz_tests?.filter((test) => test.passed) || [];
           const highestPassedJuz = passedTests.length > 0 
-            ? Math.max(...passedTests.map((test: any) => test.juz_number))
+            ? Math.max(...passedTests.map((test) => test.juz_number))
             : 0;
           
           const latestTest = student.juz_tests?.[0] || null;
@@ -186,8 +195,8 @@ export default function AdminReportsPage() {
   }, []);
 
   // Modal handler functions
-  const handleOpenJuzTestModal = (studentId: string, juzNumber: number) => {
-    setSelectedStudentForTest(studentId);
+  const handleOpenJuzTestModal = (student: { id: string; name: string }, juzNumber: number) => {
+    setSelectedStudentForTest(student);
     setSelectedJuzNumber(juzNumber);
     setShowJuzTestModal(true);
   };
@@ -426,12 +435,26 @@ export default function AdminReportsPage() {
                                 View
                               </button>
                               {viewMode === 'juz_tests' && (
-                                <button 
-                                  onClick={() => handleOpenJuzTestHistory({ id: student.id, name: student.name })}
-                                  className="text-green-600 hover:text-green-800 text-sm font-medium"
-                                >
-                                  History
-                                </button>
+                                <>
+                                  <button 
+                                    onClick={() => handleOpenJuzTestHistory({ id: student.id, name: student.name })}
+                                    className="text-green-600 hover:text-green-800 text-sm font-medium"
+                                  >
+                                    History
+                                  </button>
+                                  <button 
+                                    onClick={() => {
+                                      // Determine the next Juz to test based on highest memorized
+                                      const nextJuz = (student as StudentProgressData & { highest_memorized_juz?: number }).highest_memorized_juz 
+                                        ? Math.min((student as StudentProgressData & { highest_memorized_juz?: number }).highest_memorized_juz!, 30) 
+                                        : 1;
+                                      handleOpenJuzTestModal({ id: student.id, name: student.name }, nextJuz);
+                                    }}
+                                    className="text-purple-600 hover:text-purple-800 text-sm font-medium"
+                                  >
+                                    Add Test
+                                  </button>
+                                </>
                               )}
                               {(viewMode === 'tasmik' || viewMode === 'murajaah') && (
                                 <button 
@@ -464,7 +487,8 @@ export default function AdminReportsPage() {
                 setShowJuzTestModal(false);
                 setSelectedStudentForTest(null);
               }}
-              studentId={selectedStudentForTest}
+              studentId={selectedStudentForTest.id}
+              studentName={selectedStudentForTest.name}
               juzNumber={selectedJuzNumber}
               onSubmit={() => {
                 // Refresh the data after successful submission

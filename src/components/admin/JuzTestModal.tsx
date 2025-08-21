@@ -1,12 +1,12 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabaseClient";
 
 interface JuzTestModalProps {
   isOpen: boolean;
   onClose: () => void;
   studentId: string;
+  studentName: string;
   juzNumber: number;
   onSubmit: () => void;
 }
@@ -25,11 +25,11 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
   isOpen,
   onClose,
   studentId,
+  studentName,
   juzNumber,
   onSubmit
 }) => {
   const [loading, setLoading] = useState(false);
-  const [studentName, setStudentName] = useState("");
   const [formData, setFormData] = useState({
     halaqah_name: "",
     page_from: 0,
@@ -55,20 +55,6 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
   const [passed, setPassed] = useState(false);
   const [shouldRepeat, setShouldRepeat] = useState(false);
 
-  const fetchStudentName = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("students")
-        .select("name")
-        .eq("id", studentId)
-        .single();
-
-      if (error) throw error;
-      setStudentName(data?.name || "");
-    } catch (error) {
-      console.error("Error fetching student name:", error);
-    }
-  };
 
   // Calculate page range based on test category and juz number
   const calculatePageRange = () => {
@@ -97,12 +83,6 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
     }
   }, [formData.test_juz, formData.test_hizb, juzNumber, isOpen]);
 
-  // Fetch student name when modal opens
-  useEffect(() => {
-    if (isOpen && studentId) {
-      fetchStudentName();
-    }
-  }, [isOpen, studentId]);
 
   const calculateTotalPercentage = () => {
     // Define the scoring weights for each category (to total 100 points exactly)
@@ -161,21 +141,13 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
   const handleSubmit = async () => {
     setLoading(true);
     try {
-      const currentUser = await supabase.auth.getUser();
-      
-      if (!currentUser.data.user) {
-        throw new Error("No authenticated user found");
-      }
-      
-      console.log("Current user:", currentUser.data.user);
-      
       const totalPercentage = calculateTotalPercentage();
 
       const testData = {
         student_id: studentId,
         juz_number: juzNumber,
         test_date: new Date().toISOString().split('T')[0],
-        examiner_id: currentUser.data.user.id,
+        examiner_id: null, // Will be set to null for now, can be improved later
         halaqah_name: formData.halaqah_name,
         page_from: formData.page_from,
         page_to: formData.page_to,
@@ -192,25 +164,27 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
       };
 
       console.log("Submitting test data:", testData);
-      console.log("Test data JSON:", JSON.stringify(testData, null, 2));
 
-      const { data, error } = await supabase
-        .from("juz_tests")
-        .insert([testData])
-        .select();
+      const response = await fetch('/api/admin/juz-tests', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(testData),
+      });
 
-      if (error) {
-        console.error("Supabase error details:", error);
-        throw error;
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to submit juz test');
       }
 
+      const data = await response.json();
       console.log("Juz test submitted successfully:", data);
       alert("Juz test submitted successfully!");
       onSubmit();
       onClose();
     } catch (error) {
       console.error("Error submitting juz test:", error);
-      console.error("Error details:", JSON.stringify(error, null, 2));
       
       // Show more detailed error message
       let errorMessage = "Unknown error occurred";
@@ -261,7 +235,7 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
                     Student&apos;s name / اسم الطالب
                   </label>
                   <div className="p-2 bg-gray-100 rounded border font-medium">
-                    {studentName || "Loading..."}
+                    {studentName}
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2">

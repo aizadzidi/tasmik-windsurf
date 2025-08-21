@@ -1,7 +1,12 @@
 "use client";
 import React, { useState, useEffect } from "react";
+import { Check, ChevronsUpDown } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card } from "@/components/ui/Card";
+import { Button } from "@/components/ui/Button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { cn } from "@/lib/utils";
 
 interface Student {
   id: string;
@@ -24,6 +29,11 @@ export default function BulkHistoricalEntry() {
   const [submitLoading, setSubmitLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [openStudentSelectorId, setOpenStudentSelectorId] = useState<string | null>(null);
+  const strictFilter = (value: string, search: string) => {
+    if (!search) return 1;
+    return value.toLowerCase().includes(search.toLowerCase()) ? 1 : -1;
+  };
 
   useEffect(() => {
     fetchStudents();
@@ -31,17 +41,20 @@ export default function BulkHistoricalEntry() {
 
   const fetchStudents = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("students")
-      .select("id, name")
-      .order("name");
-    
-    if (error) {
-      setError("Failed to fetch students: " + error.message);
-    } else if (data) {
-      setStudents(data);
+    try {
+      const res = await fetch("/api/admin/students", { cache: "no-store" });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({} as any));
+        throw new Error(j?.error || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      const mapped: Student[] = (Array.isArray(data) ? data : []).map((s: any) => ({ id: s.id, name: s.name }))
+      setStudents(mapped);
+    } catch (err: any) {
+      setError("Failed to fetch students: " + (err?.message || "Unknown error"));
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const addRecord = () => {
@@ -165,12 +178,9 @@ export default function BulkHistoricalEntry() {
       )}
 
       <div className="mb-4">
-        <button
-          onClick={addRecord}
-          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
-        >
+        <Button onClick={addRecord} className="bg-blue-600 hover:bg-blue-700">
           Add Record
-        </button>
+        </Button>
       </div>
 
       {records.length > 0 && (
@@ -194,32 +204,52 @@ export default function BulkHistoricalEntry() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Student <span className="text-red-500">*</span>
                   </label>
-                  <div className="space-y-2">
-                    <input
-                      type="text"
-                      placeholder="Type to filter students..."
-                      value={record.studentFilter}
-                      onChange={(e) => updateRecord(record.id, "studentFilter", e.target.value)}
-                      className="w-full border-gray-300 rounded-md shadow-sm p-2 border text-sm"
-                    />
-                    <select
-                      value={record.student_id}
-                      onChange={(e) => updateRecord(record.id, "student_id", e.target.value)}
-                      className="w-full border-gray-300 rounded-md shadow-sm p-2 border text-sm"
-                      required
-                    >
-                      <option value="">Select student</option>
-                      {students
-                        .filter(student => 
-                          student.name.toLowerCase().includes(record.studentFilter.toLowerCase())
-                        )
-                        .map(student => (
-                        <option key={student.id} value={student.id}>
-                          {student.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  <Popover
+                    open={openStudentSelectorId === record.id}
+                    onOpenChange={(o) => setOpenStudentSelectorId(o ? record.id : null)}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={false}
+                        className={cn("w-full justify-between", !record.student_id && "text-muted-foreground")}
+                      >
+                        {record.student_id
+                          ? students.find((s) => s.id === record.student_id)?.name
+                          : "Select student"}
+                        <ChevronsUpDown className="opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="p-0 w-[--radix-popover-trigger-width]" align="start">
+                      <Command filter={strictFilter}>
+                        <CommandInput placeholder="Search student..." className="h-9" />
+                        <CommandList>
+                          <CommandEmpty>No student found.</CommandEmpty>
+                          <CommandGroup>
+                            {students.map((s) => (
+                                <CommandItem
+                                  key={s.id}
+                                  value={s.name}
+                                  onSelect={() => {
+                                    updateRecord(record.id, "student_id", s.id)
+                                    setOpenStudentSelectorId(null)
+                                  }}
+                                >
+                                  {s.name}
+                                  <Check
+                                    className={cn(
+                                      "ml-auto",
+                                      record.student_id === s.id ? "opacity-100" : "opacity-0"
+                                    )}
+                                  />
+                                </CommandItem>
+                              ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
 
                 <div>
