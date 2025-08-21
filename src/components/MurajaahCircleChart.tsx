@@ -1,95 +1,85 @@
 "use client";
 import React from 'react';
 import type { Report } from "@/types/teacher";
-import { getPageRangeFromJuz } from "@/lib/quranMapping";
+import { getJuzFromPage, getPageRangeFromJuz } from "@/lib/quranMapping";
 
 interface MurajaahCircleChartProps {
   reports: Report[];
 }
 
 export function MurajaahCircleChart({ reports }: MurajaahCircleChartProps) {
-  // Find current juz from latest Tasmi report
-  const tasmiReports = reports.filter(r => r.type === "Tasmi" && r.juzuk);
-  const juzValues = tasmiReports.map(r => r.juzuk).filter((juz): juz is number => juz !== null);
-  const currentJuz = juzValues.length > 0 
-    ? Math.max(...juzValues)
-    : 1;
-
-  // Find the highest page from Tasmi reports for students who haven't completed Juz 1
-  const tasmiPagesReports = reports.filter(r => r.type === "Tasmi" && r.page_to);
-  const maxTasmiPage = tasmiPagesReports.length > 0 
-    ? Math.max(...tasmiPagesReports.map(r => r.page_to).filter((page): page is number => page !== null))
+  // 1) Determine the latest Tasmi boundary (what has been memorized)
+  // Prefer explicit page_to values; otherwise fall back to highest juz boundary
+  const tasmiReports = reports.filter(r => r.type === "Tasmi");
+  const tasmiWithPages = tasmiReports.filter(r => r.page_to !== null);
+  const highestTasmiPage = tasmiWithPages.length > 0
+    ? Math.max(...tasmiWithPages.map(r => r.page_to as number))
     : 0;
 
-  // Calculate required page range based on student's progress
-  let requiredEndPage: number;
-  if (currentJuz >= 3) {
-    // Student has completed Juz 2+, track up to their previous completed juz
-    const previousJuz = currentJuz - 1;
-    const previousJuzRange = getPageRangeFromJuz(previousJuz);
-    requiredEndPage = previousJuzRange ? previousJuzRange.endPage : 40; // Fallback to end of Juz 2
-  } else if (currentJuz === 2) {
-    // Student is working on Juz 2 (has completed Juz 1), cycle ends at last page of Juz 1
-    const juz1Range = getPageRangeFromJuz(1);
-    requiredEndPage = juz1Range ? juz1Range.endPage : 20; // End of Juz 1
-  } else if (maxTasmiPage > 0) {
-    // Student is still working on Juz 1, use their latest Tasmik page
-    requiredEndPage = maxTasmiPage;
-  } else {
-    // No Tasmik records, default to end of Juz 1
-    const juz1Range = getPageRangeFromJuz(1);
-    requiredEndPage = juz1Range ? juz1Range.endPage : 20;
-  }
-  
-  // Filter murajaah reports
+  const highestTasmiJuz = tasmiReports
+    .map(r => r.juzuk)
+    .filter((j): j is number => j !== null)
+    .reduce((max, j) => Math.max(max, j), 0);
+
+  // Total pages to review is up to the latest Tasmi boundary.
+  // - If we have page info, use that exact page
+  // - Else, use the end page of the highest juz memorized (approximation)
+  const totalPagesToReview = highestTasmiPage > 0
+    ? highestTasmiPage
+    : (highestTasmiJuz > 0 ? (getPageRangeFromJuz(highestTasmiJuz)?.endPage || 20) : 20);
+
+  // Current juz is derived from that boundary
+  const currentJuz = getJuzFromPage(totalPagesToReview) || highestTasmiJuz || 1;
+
+  // 2) Gather all Murajaah reports
   const murajaahReports = reports.filter(r => 
     ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type)
   );
 
-  // Create a set of all pages that have been reviewed
-  const reviewedPages = new Set<number>();
-  murajaahReports.forEach(report => {
-    if (report.page_from && report.page_to) {
-      const startPage = Math.min(report.page_from, report.page_to);
-      const endPage = Math.max(report.page_from, report.page_to);
-      for (let page = startPage; page <= endPage; page++) {
-        reviewedPages.add(page);
-      }
-    }
-  });
-
-  // Check which pages in the required range (1 to requiredEndPage) have been reviewed
-  const requiredPages = new Set<number>();
-  for (let page = 1; page <= requiredEndPage; page++) {
-    requiredPages.add(page);
-  }
-
-  // Count how many times each required page has been reviewed
+  // 3) Count how many times each page (1..totalPagesToReview) has been reviewed
   const pageReviewCounts = new Map<number, number>();
-  for (let page = 1; page <= requiredEndPage; page++) {
+  for (let page = 1; page <= totalPagesToReview; page++) {
     pageReviewCounts.set(page, 0);
   }
 
+  // Count reviews for each page
   murajaahReports.forEach(report => {
     if (report.page_from && report.page_to) {
       const startPage = Math.min(report.page_from, report.page_to);
       const endPage = Math.max(report.page_from, report.page_to);
       for (let page = startPage; page <= endPage; page++) {
-        if (page <= requiredEndPage) {
+        if (page <= totalPagesToReview) {
           pageReviewCounts.set(page, (pageReviewCounts.get(page) || 0) + 1);
         }
       }
     }
   });
 
-  // Calculate completion cycles
-  const minReviewCount = Math.min(...Array.from(pageReviewCounts.values()));
-  const completedCycles = minReviewCount;
-  
-  // Calculate current cycle progress
-  const pagesCompletedInCurrentCycle = Array.from(pageReviewCounts.values())
-    .filter(count => count > completedCycles).length;
-  const currentCycleProgress = (pagesCompletedInCurrentCycle / requiredPages.size) * 100;
+  // 4) Calculate completion cycles (how many full cycles completed for ALL pages)
+  const reviewCounts = Array.from(pageReviewCounts.values());
+  const completedCycles = reviewCounts.length > 0 ? Math.min(...reviewCounts) : 0;
+
+  // 5) Progress toward completing review up to latest Tasmi boundary
+  //    We want the circle to reflect the current murajaah coverage relative to memorized pages.
+  //    Once a full pass is complete (i.e., every page reviewed at least once), show 100%.
+  const pagesReviewedAtLeastOnce = reviewCounts.filter(count => count > 0).length;
+  const currentCycleProgress = totalPagesToReview > 0
+    ? (pagesReviewedAtLeastOnce / totalPagesToReview) * 100
+    : 0;
+
+  // Debug logging to help understand the data
+  console.log('MurajaahCircleChart Debug:', {
+    highestTasmiPage,
+    highestTasmiJuz,
+    boundaryTotalPagesToReview: totalPagesToReview,
+    derivedCurrentJuz: currentJuz,
+    murajaahReportsCount: murajaahReports.length,
+    completedCycles,
+    pagesReviewedAtLeastOnce,
+    currentCycleProgress: currentCycleProgress.toFixed(1) + '%',
+    sampleReviewCounts: Array.from(pageReviewCounts.entries()).slice(0, 10),
+    lastMurajaahReport: murajaahReports[0]
+  });
   
   // Circle parameters
   const size = 200;
@@ -150,7 +140,7 @@ export function MurajaahCircleChart({ reports }: MurajaahCircleChartProps) {
             {currentCycleProgress.toFixed(1)}%
           </div>
           <div className="text-sm text-gray-600">
-            Current Cycle
+            Current Murajaah
           </div>
           {completedCycles > 0 && (
             <div className="text-xs text-blue-600 font-medium mt-1">
@@ -178,8 +168,11 @@ export function MurajaahCircleChart({ reports }: MurajaahCircleChartProps) {
         <div className="text-sm text-gray-700">
           <span className="font-medium">Current Juz: {currentJuz}</span>
         </div>
+        <div className="text-xs text-gray-500">
+          Reviewing {totalPagesToReview} pages
+        </div>
         <div className="text-xs text-green-600 font-medium">
-          {completedCycles} times completed
+          {completedCycles} complete cycles
         </div>
       </div>
     </div>

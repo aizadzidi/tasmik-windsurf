@@ -557,11 +557,12 @@ export default function TeacherPage() {
                       const isRelevantStudent = filteredMonitorStudents.some(s => s.id === r.student_id);
                       if (!isRelevantStudent) return false;
                       
-                      // Filter by report type based on viewMode
+                      // For the Murajaah circle we need both Murajaah (for coverage)
+                      // and Tasmi (for boundary). Keep Tasmi-only when in Tasmik view.
                       if (viewMode === 'tasmik') {
                         return r.type === 'Tasmi';
                       } else if (viewMode === 'murajaah') {
-                        return ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
+                        return r.type === 'Tasmi' || ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
                       }
                       return true;
                     })} 

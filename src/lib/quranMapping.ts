@@ -70,9 +70,9 @@ export function getJuzFromPageRange(pageFrom: number, pageTo?: number): number |
     return getJuzFromPage(pageFrom);
   }
 
-  // If range provided, use the starting page to determine Juz
-  // This is because memorization typically follows sequential order
-  return getJuzFromPage(pageFrom);
+  // If range provided, use the ending page to determine Juz
+  // This ensures the juz reflects the completion level for multiple page submissions
+  return getJuzFromPage(pageTo);
 }
 
 /**
@@ -154,15 +154,16 @@ export function formatMurajaahDisplay(pageFrom: number, pageTo?: number): string
     pageTo = pageFrom;
   }
 
-  const juz = getJuzFromPage(pageFrom);
+  // Use the ending page to determine the Juz for display consistency
+  const juz = getJuzFromPage(pageTo);
   if (!juz) {
     return null;
   }
 
   // Check if range spans multiple Juz
-  const juzTo = getJuzFromPage(pageTo);
-  if (juzTo !== juz) {
-    // For now, show the starting Juz
+  const juzFrom = getJuzFromPage(pageFrom);
+  if (juzFrom !== juz) {
+    // For now, show the ending Juz (where student completed)
     // In future, could show "Juz X-Y" for multi-Juz ranges
   }
 

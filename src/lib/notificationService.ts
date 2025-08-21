@@ -48,21 +48,54 @@ export const notificationService = {
         teacherName = teacherResult.data?.name || data.teacher_name || 'Unknown Teacher';
       }
 
-      const { error } = await supabase
-        .from('juz_test_notifications')
-        .insert([{
-          student_id: data.student_id,
-          teacher_id: data.teacher_id,
-          student_name: studentName,
-          teacher_name: teacherName,
-          suggested_juz: data.suggested_juz,
-          teacher_notes: data.teacher_notes,
-          status: 'pending'
-        }]);
+      // Prepare payloads. Prefer inserting names for richer data, but
+      // gracefully fall back if the columns don't exist in the DB yet.
+      const payloadWithNames = {
+        student_id: data.student_id,
+        teacher_id: data.teacher_id,
+        student_name: studentName,
+        teacher_name: teacherName,
+        suggested_juz: data.suggested_juz,
+        teacher_notes: data.teacher_notes,
+        status: 'pending' as const
+      };
+      const payloadBase = {
+        student_id: data.student_id,
+        teacher_id: data.teacher_id,
+        suggested_juz: data.suggested_juz,
+        teacher_notes: data.teacher_notes,
+        status: 'pending' as const
+      };
 
-      if (error) {
-        console.error('Error creating notification:', error);
-        return { success: false, error: error.message };
+      let insertError: any = null;
+
+      // Try inserting with names first
+      const { error: firstError } = await supabase
+        .from('juz_test_notifications')
+        .insert([payloadWithNames]);
+
+      if (firstError) {
+        insertError = firstError;
+        // If schema doesn't have the name columns yet, retry without them
+        const schemaMissing =
+          firstError.code === 'PGRST204' ||
+          /column .*student_name|teacher_name/i.test(firstError.message || '');
+
+        if (schemaMissing) {
+          const { error: retryError } = await supabase
+            .from('juz_test_notifications')
+            .insert([payloadBase]);
+          if (retryError) {
+            insertError = retryError;
+          } else {
+            insertError = null;
+          }
+        }
+      }
+
+      if (insertError) {
+        console.error('Error creating notification:', insertError);
+        return { success: false, error: insertError.message };
       }
 
       return { success: true };
