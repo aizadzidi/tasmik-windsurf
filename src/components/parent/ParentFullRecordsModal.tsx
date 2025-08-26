@@ -252,56 +252,73 @@ export default function ParentFullRecordsModal({
             </div>
           ) : (
             <div className="p-6">
-              <div className="space-y-6">
-                {reportsByWeek.map(({ weekStart, weekEnd, reports: weekReports }) => (
-                  <div key={weekStart} className="border border-gray-200 rounded-lg overflow-hidden">
-                    <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
-                      <h3 className="font-semibold text-gray-800">
-                        Week of {new Date(weekStart).toLocaleDateString()} - {new Date(weekEnd).toLocaleDateString()}
-                      </h3>
-                      <p className="text-sm text-gray-600">{weekReports.length} record{weekReports.length !== 1 ? 's' : ''}</p>
-                    </div>
-                    
-                    <div className="divide-y divide-gray-100">
-                      {weekReports.map((report) => (
-                        <div key={report.id} className={`p-4 hover:bg-gray-50 transition-colors ${getGradeBgColor(report.grade)}`}>
-                          <div className="flex items-start justify-between">
-                            <div className="flex-1">
-                              <div className="flex items-center space-x-3 mb-2">
-                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                  report.type === 'Tasmi' 
-                                    ? 'bg-green-100 text-green-700' 
-                                    : 'bg-blue-100 text-blue-700'
-                                }`}>
-                                  {report.type}
-                                </span>
-                                <span className="text-sm text-gray-600">
-                                  {new Date(report.date).toLocaleDateString()}
-                                </span>
-                                {report.grade && (
-                                  <span className={`text-sm font-medium ${getGradeColor(report.grade)}`}>
-                                    {report.grade}
-                                  </span>
-                                )}
+              {filteredReports.length === 0 ? (
+                <div className="p-8 text-center text-gray-600">No records available.</div>
+              ) : (
+                <div className="overflow-hidden rounded-xl border border-gray-200 shadow-lg">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b text-sm">Type</th>
+                          <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b text-sm">Surah</th>
+                          <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Juz</th>
+                          <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Ayat</th>
+                          <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Page</th>
+                          <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Grade</th>
+                          <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Date</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white">
+                        {filteredReports.map((report, index) => (
+                          <tr key={report.id} className={`transition-colors hover:bg-gray-50 ${index % 2 === 0 ? 'bg-white' : 'bg-gray-25'}`}>
+                            <td className="px-4 py-3 text-gray-700 border-b border-gray-100">
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                {report.type}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-gray-800 font-medium border-b border-gray-100 text-sm">{report.surah}</td>
+                            <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-purple-100 text-purple-800 text-xs font-semibold">
+                                {report.juzuk}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                              <span className="text-xs font-mono">{report.ayat_from}-{report.ayat_to}</span>
+                            </td>
+                            <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                              <span className="text-xs font-mono">
+                                {report.page_from && report.page_to ? 
+                                  `${Math.min(report.page_from, report.page_to)}-${Math.max(report.page_from, report.page_to)}` : 
+                                  '-'
+                                }
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-center border-b border-gray-100">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                                report.grade === 'mumtaz' ? 'bg-green-100 text-green-800' :
+                                report.grade === 'jayyid jiddan' ? 'bg-yellow-100 text-yellow-800' :
+                                report.grade === 'jayyid' ? 'bg-orange-100 text-orange-800' :
+                                'bg-gray-100 text-gray-800'
+                              }`}>
+                                {report.grade ? report.grade.charAt(0).toUpperCase() + report.grade.slice(1) : ''}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                              <div className="text-xs">
+                                <div className="font-medium">{report.date}</div>
+                                <div className="text-gray-500">
+                                  {getWeekBoundaries(report.date).weekRange}
+                                </div>
                               </div>
-                              
-                              <div className="text-gray-800 font-medium mb-1">{report.surah}</div>
-                              
-                              <div className="flex items-center space-x-4 text-sm text-gray-600">
-                                <span>Ayat: {report.ayat_from}-{report.ayat_to}</span>
-                                {report.juzuk && <span>Juz: {report.juzuk}</span>}
-                                {(report.page_from || report.page_to) && (
-                                  <span>{formatPageRange(report.page_from, report.page_to)}</span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                ))}
-              </div>
+                </div>
+              )}
             </div>
           )}
         </div>

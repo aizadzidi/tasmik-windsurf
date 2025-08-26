@@ -38,7 +38,7 @@ export default function ParentPage() {
   const [children, setChildren] = useState<StudentProgressData[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   
   // View and filter state
   const [viewMode, setViewMode] = useState<ViewMode>('tasmik');
@@ -523,29 +523,16 @@ export default function ParentPage() {
               <Card className="p-6">
                 <h3 className="text-lg font-semibold text-gray-800 mb-4">Children Progress Overview</h3>
                 {filteredChildren.length > 0 && (
-                  selectedStudentId ? (
-                    <QuranProgressBar
-                      reports={reports.filter(r => {
-                        const isRelevantChild = r.student_id === selectedStudentId;
-                        if (!isRelevantChild) return false;
-                        if (viewMode === 'tasmik') {
-                          return r.type === 'Tasmi';
-                        } else if (viewMode === 'murajaah') {
-                          return r.type === 'Tasmi' || ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
-                        }
-                        return true;
-                      })}
-                      viewMode={viewMode}
+                  selectedStudentIds.length === 0 && viewMode === 'murajaah' ? (
+                    <MultiMurajaahConcentricChart
+                      students={filteredChildren.map(c => ({ id: c.id, name: c.name }))}
+                      reports={reports.filter(r => filteredChildren.some(c => c.id === r.student_id))}
                     />
                   ) : (
-                    viewMode === 'murajaah' ? (
-                      <MultiMurajaahConcentricChart
-                        students={filteredChildren.map(c => ({ id: c.id, name: c.name }))}
-                        reports={reports.filter(r => filteredChildren.some(c => c.id === r.student_id))}
-                      />
-                    ) : (
-                      <div className="space-y-4">
-                        {filteredChildren.map(child => {
+                    <div className="space-y-4">
+                      {(() => {
+                        const ids = selectedStudentIds.length > 0 ? selectedStudentIds : filteredChildren.map(c => c.id);
+                        return filteredChildren.filter(child => ids.includes(child.id)).map(child => {
                           const childReports = reports.filter(r => {
                             if (r.student_id !== child.id) return false;
                             if (viewMode === 'tasmik') {
@@ -561,22 +548,21 @@ export default function ParentPage() {
                               <QuranProgressBar reports={childReports} viewMode={viewMode} />
                             </div>
                           );
-                        })}
-                      </div>
-                    )
+                        });
+                      })()}
+                    </div>
                   )
                 )}
               </Card>
               <Card className="p-6">
                 <h3 className="text-lg font-semibold text-gray-800 mb-4">Activity Analytics</h3>
                 <ChartTabs 
-                  selectedStudentId={selectedStudentId} 
+                  selectedStudentId={selectedStudentIds.length === 1 ? selectedStudentIds[0] : null} 
                   studentNamesMap={Object.fromEntries(filteredChildren.map(c => [c.id, c.name]))}
-                  groupByStudentOverride={!selectedStudentId}
+                  groupByStudentOverride={selectedStudentIds.length !== 1}
                   reports={reports.filter(r => {
-                  const isRelevantChild = selectedStudentId 
-                    ? r.student_id === selectedStudentId 
-                    : filteredChildren.some(c => c.id === r.student_id);
+                  const selection = selectedStudentIds.length > 0 ? selectedStudentIds : filteredChildren.map(c => c.id);
+                  const isRelevantChild = selection.includes(r.student_id);
                   if (!isRelevantChild) return false;
                   
                   // Filter by report type based on viewMode
@@ -594,7 +580,7 @@ export default function ParentPage() {
             <div className="grid grid-cols-1 gap-6 mb-6">
               <JuzTestProgressLineChart 
                 className="col-span-1" 
-                studentId={selectedStudentId || (filteredChildren.length === 1 ? filteredChildren[0].id : undefined)}
+                studentId={(selectedStudentIds.length === 1 ? selectedStudentIds[0] : null) || (filteredChildren.length === 1 ? filteredChildren[0].id : undefined)}
               />
             </div>
           )}
@@ -706,27 +692,48 @@ export default function ParentPage() {
                       return (
                         <tr key={child.id} className={`${rowClass}`}>
                           <td className="px-4 py-3 font-medium text-gray-900">
-                            <div>
-                              <button
-                                onClick={() => setSelectedStudentId(prev => prev === child.id ? null : child.id)}
-                                className={`font-semibold underline-offset-2 ${selectedStudentId === child.id ? 'text-blue-700 underline' : 'text-blue-600 hover:underline'}`}
-                                title={selectedStudentId === child.id ? 'Showing charts for this student' : 'Show charts for this student'}
-                              >
-                                {child.name}
-                              </button>
-                              {child.class_name && (
-                                <div className="text-xs text-gray-600">{child.class_name}</div>
+                            <div className="flex items-start gap-2">
+                              {selectedStudentIds.length > 0 && (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedStudentIds.includes(child.id)}
+                                  onChange={() => {
+                                    setSelectedStudentIds(prev => prev.includes(child.id)
+                                      ? prev.filter(id => id !== child.id)
+                                      : [...prev, child.id]
+                                    );
+                                  }}
+                                  className="mt-1 h-4 w-4 text-blue-600 border-gray-300 rounded"
+                                  aria-label={`Select ${child.name}`}
+                                />
                               )}
-                              {child.teacher_name && (
-                                <div className="text-xs text-gray-500">Teacher: {child.teacher_name}</div>
-                              )}
-                              {child.memorization_completed && (
-                                <div className="mt-1">
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
-                                    Completed
-                                  </span>
-                                </div>
-                              )}
+                              <div>
+                                <button
+                                  onClick={() => {
+                                    setSelectedStudentIds(prev => prev.includes(child.id)
+                                      ? prev.filter(id => id !== child.id)
+                                      : [...prev, child.id]
+                                    );
+                                  }}
+                                  className={`font-semibold underline-offset-2 ${selectedStudentIds.includes(child.id) ? 'text-blue-700 underline' : 'text-blue-600 hover:underline'}`}
+                                  title={selectedStudentIds.includes(child.id) ? 'Selected for charts' : 'Select for charts'}
+                                >
+                                  {child.name}
+                                </button>
+                                {child.class_name && (
+                                  <div className="text-xs text-gray-600">{child.class_name}</div>
+                                )}
+                                {child.teacher_name && (
+                                  <div className="text-xs text-gray-500">Teacher: {child.teacher_name}</div>
+                                )}
+                                {child.memorization_completed && (
+                                  <div className="mt-1">
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+                                      Completed
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </td>
                           

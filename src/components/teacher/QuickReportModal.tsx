@@ -76,6 +76,9 @@ export default function QuickReportModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [isPageRange, setIsPageRange] = useState(false);
+  const [isMultiSurah, setIsMultiSurah] = useState(false);
+  const [surahFrom, setSurahFrom] = useState<string>("");
+  const [surahTo, setSurahTo] = useState<string>("");
 
   // Auto-fill Juz based on page input
   useEffect(() => {
@@ -101,8 +104,10 @@ export default function QuickReportModal({
     const requiredPageValidation = isPageRange 
       ? (!form.page_from || !form.page_to)
       : !form.page_from;
-      
-    if (!form.surah || !form.ayat_from || !form.ayat_to || requiredPageValidation || !form.grade) {
+    
+    const hasSurah = isMultiSurah ? (Boolean(surahFrom) && Boolean(surahTo)) : !!form.surah;
+    
+    if (!hasSurah || !form.ayat_from || !form.ayat_to || requiredPageValidation || !form.grade) {
       setError("Please fill in all required fields");
       return;
     }
@@ -123,20 +128,40 @@ export default function QuickReportModal({
       const finalPageTo = isPageRange ? newPageTo : newPageFrom;
 
       // Create new report with actual submission date
-      // Each submission is now stored as a separate record
-      const { error: insertError } = await supabase.from("reports").insert([{
+      // If multiple surahs selected, create one row per surah
+      const baseRow = {
         teacher_id: userId,
         student_id: student.id,
         type: reportType,
-        surah: form.surah,
         juzuk: form.juzuk ? parseInt(form.juzuk) : null,
         ayat_from: newAyatFrom,
         ayat_to: newAyatTo,
         page_from: newPageFrom,
         page_to: finalPageTo,
         grade: form.grade,
-        date: submissionDate // Store actual submission date
-      }]);
+        date: submissionDate
+      } as const;
+
+      // Determine surahs to insert
+      let selectedSurahs: string[] = [];
+      if (isMultiSurah) {
+        const startIdx = SURAHS.indexOf(surahFrom);
+        const endIdx = SURAHS.indexOf(surahTo);
+        if (startIdx === -1 || endIdx === -1) {
+          setError("Invalid surah range selected");
+          setIsSubmitting(false);
+          return;
+        }
+        const from = Math.min(startIdx, endIdx);
+        const to = Math.max(startIdx, endIdx);
+        selectedSurahs = SURAHS.slice(from, to + 1);
+      } else {
+        selectedSurahs = [form.surah];
+      }
+
+      const rows = selectedSurahs.map(s => ({ ...baseRow, surah: s }));
+
+      const { error: insertError } = await supabase.from("reports").insert(rows);
 
       if (insertError) {
         setError(insertError.message);
@@ -179,17 +204,73 @@ export default function QuickReportModal({
           {/* Surah */}
           <div className="sm:col-span-2">
             <label className="block text-sm font-medium mb-1 text-gray-700">Surah *</label>
-            <select
-              value={form.surah}
-              onChange={e => setForm(f => ({ ...f, surah: e.target.value }))}
-              required
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
-            >
-              <option value="">Select a surah</option>
-              {SURAHS.map(surah => (
-                <option key={surah} value={surah}>{surah}</option>
-              ))}
-            </select>
+            {!isMultiSurah ? (
+              <select
+                value={form.surah}
+                onChange={e => setForm(f => ({ ...f, surah: e.target.value }))}
+                required
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
+              >
+                <option value="">Select a surah</option>
+                {SURAHS.map(surah => (
+                  <option key={surah} value={surah}>{surah}</option>
+                ))}
+              </select>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">From</label>
+                  <select
+                    value={surahFrom}
+                    onChange={(e) => setSurahFrom(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
+                  >
+                    <option value="">Select</option>
+                    {SURAHS.map(surah => (
+                      <option key={surah} value={surah}>{surah}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">To</label>
+                  <select
+                    value={surahTo}
+                    onChange={(e) => setSurahTo(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
+                  >
+                    <option value="">Select</option>
+                    {SURAHS.map(surah => (
+                      <option key={surah} value={surah}>{surah}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+            <div className="flex items-center mt-2">
+              <input
+                type="checkbox"
+                id="multiSurah"
+                checked={isMultiSurah}
+                onChange={e => {
+                  const checked = e.target.checked;
+                  setIsMultiSurah(checked);
+                  if (checked) {
+                    // seed range with current selection
+                    setSurahFrom(prev => prev || form.surah || "");
+                    setSurahTo(prev => prev || form.surah || "");
+                  } else {
+                    // collapse back to single surah using 'from' value if set
+                    if (surahFrom) setForm(f => ({ ...f, surah: surahFrom }));
+                    setSurahFrom("");
+                    setSurahTo("");
+                  }
+                }}
+                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              />
+              <label htmlFor="multiSurah" className="ml-2 text-sm text-gray-600">
+                Multiple surahs (surah range)
+              </label>
+            </div>
           </div>
 
           {/* Ayat Range */}

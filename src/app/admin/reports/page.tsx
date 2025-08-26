@@ -56,6 +56,7 @@ export default function AdminReportsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [teacherFilter, setTeacherFilter] = useState("");
   const [sortBy, setSortBy] = useState<'activity' | 'name' | 'teacher'>('activity');
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   
   // Juz Test modal state
   const [showJuzTestModal, setShowJuzTestModal] = useState(false);
@@ -307,18 +308,21 @@ export default function AdminReportsPage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
               <Card className="bg-white/80 backdrop-blur-sm border border-white/20 shadow-lg p-6">
                 <h3 className="text-lg font-semibold text-gray-800 mb-4">Student Activity Trend</h3>
-                <ActivityTrendChart students={filteredStudents} />
+                <ActivityTrendChart students={selectedStudentId ? filteredStudents.filter(s => s.id === selectedStudentId) : filteredStudents} />
               </Card>
               <Card className="bg-white/80 backdrop-blur-sm border border-white/20 shadow-lg p-6">
                 <h3 className="text-lg font-semibold text-gray-800 mb-4">Teacher Performance</h3>
-                <TeacherPerformanceChart students={filteredStudents} />
+                <TeacherPerformanceChart students={selectedStudentId ? filteredStudents.filter(s => s.id === selectedStudentId) : filteredStudents} />
               </Card>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-6 mb-6">
               <Card className="bg-white/80 backdrop-blur-sm border border-white/20 shadow-lg p-6">
                 <h3 className="text-lg font-semibold text-gray-800 mb-4">Juz Test Progress Overview</h3>
-                <JuzTestProgressLineChart className="col-span-1" />
+                <JuzTestProgressLineChart 
+                  className="col-span-1" 
+                  studentId={selectedStudentId || (filteredStudents.length === 1 ? filteredStudents[0].id : undefined)}
+                />
               </Card>
             </div>
           )}
@@ -407,10 +411,29 @@ export default function AdminReportsPage() {
                       filteredStudents.map((student) => (
                         <tr key={student.id} className={`border-b border-gray-100 ${getInactivityRowClass(student.days_since_last_read)}`}>
                           <td className="py-3 px-4">
-                            <div className="font-medium text-gray-900">{student.name}</div>
-                            {student.memorization_completed && (
-                              <div className="text-xs text-green-600 font-medium">✓ Completed</div>
-                            )}
+                            <div className="flex items-start gap-2">
+                              {selectedStudentId !== null && (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedStudentId === student.id}
+                                  onChange={() => setSelectedStudentId(prev => prev === student.id ? null : student.id)}
+                                  className="mt-1 h-4 w-4 text-blue-600 border-gray-300 rounded"
+                                  aria-label={`Select ${student.name}`}
+                                />
+                              )}
+                              <div>
+                                <button
+                                  onClick={() => setSelectedStudentId(prev => prev === student.id ? null : student.id)}
+                                  className={`font-medium underline-offset-2 ${selectedStudentId === student.id ? 'text-blue-700 underline' : 'text-blue-600 hover:underline'}`}
+                                  title={selectedStudentId === student.id ? 'Showing charts for this student' : 'Show charts for this student'}
+                                >
+                                  {student.name}
+                                </button>
+                                {student.memorization_completed && (
+                                  <div className="text-xs text-green-600 font-medium">✓ Completed</div>
+                                )}
+                              </div>
+                            </div>
                           </td>
                           <td className="py-3 px-4 text-gray-700">
                             {student.teacher_name || '-'}
