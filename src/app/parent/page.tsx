@@ -113,7 +113,7 @@ export default function ParentPage() {
           // Get juz test data
           supabase
             .from("juz_tests")
-            .select("student_id, juz_number, test_date, passed, total_percentage")
+            .select("student_id, juz_number, test_date, passed, total_percentage, examiner_name")
             .in("student_id", studentIds)
             .order("test_date", { ascending: false })
             .then(result => {
@@ -170,6 +170,7 @@ export default function ParentPage() {
               test_date: string;
               passed: boolean;
               total_percentage: number;
+              examiner_name?: string;
             };
           };
         });
@@ -676,6 +677,7 @@ export default function ParentPage() {
                           test_date: string;
                           passed: boolean;
                           total_percentage: number;
+                          examiner_name?: string;
                         };
                       };
                       
@@ -757,12 +759,16 @@ export default function ParentPage() {
                                           ? 'text-green-600' 
                                           : 'text-red-600'
                                       }`}>
-                                        {extendedChild.latest_test_result.total_percentage}% 
-                                        ({extendedChild.latest_test_result.passed ? 'PASSED' : 'FAILED'})
+                                        {extendedChild.latest_test_result.examiner_name === 'Historical Entry' 
+                                          ? (extendedChild.latest_test_result.passed ? 'PASSED' : 'FAILED')
+                                          : `${extendedChild.latest_test_result.total_percentage}% (${extendedChild.latest_test_result.passed ? 'PASSED' : 'FAILED'})`
+                                        }
                                       </div>
-                                      <div className="text-xs text-gray-500">
-                                        {formatAbsoluteDate(child.last_read_date)}
-                                      </div>
+                                      {extendedChild.latest_test_result.examiner_name !== 'Historical Entry' && (
+                                        <div className="text-xs text-gray-500">
+                                          {formatAbsoluteDate(child.last_read_date)}
+                                        </div>
+                                      )}
                                     </>
                                   ) : (
                                     <div className="text-gray-400 italic">No tests</div>

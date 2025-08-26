@@ -117,7 +117,7 @@ export default function AdminReportsPage() {
         teacher_name?: string; 
         class_name?: string; 
         memorized_juzuks?: number[]; 
-        juz_tests?: { passed: boolean; juz_number: number; test_date: string }[]; 
+        juz_tests?: { passed: boolean; juz_number: number; test_date: string; total_percentage?: number }[]; 
         latestTasmikReport?: any; 
         latestMurajaahReport?: any; 
         memorization_completed?: boolean; 
@@ -125,33 +125,39 @@ export default function AdminReportsPage() {
       }) => {
         if (viewMode === 'juz_tests') {
           // For juz tests mode
-          const highestMemorizedJuz = (student.memorized_juzuks?.length ?? 0) > 0 
+          const highestCompletedJuz = (student.memorized_juzuks?.length ?? 0) > 0 
             ? Math.max(...(student.memorized_juzuks ?? [])) 
             : 0;
-          
-          const passedTests = student.juz_tests?.filter((test) => test.passed) || [];
-          const highestPassedJuz = passedTests.length > 0 
-            ? Math.max(...passedTests.map((test) => test.juz_number))
-            : 0;
-          
+
+          // Latest Tasmik juz worked on (may be the current in-progress juz)
+          const latestTasmiJuz = student.latestTasmikReport?.juzuk || highestCompletedJuz || 0;
+
+          // Determine effective memorized juz to use for gap: exclude current in-progress juz
+          // If latest tasmi juz isn't in the completed list, do not count it
+          const latestIsCompleted = (student.memorized_juzuks || []).includes(latestTasmiJuz);
+          const memorizedForGap = latestIsCompleted ? latestTasmiJuz : highestCompletedJuz;
+
+          // Latest test (passed or failed)
           const latestTest = student.juz_tests?.[0] || null;
-          const gap = highestMemorizedJuz - highestPassedJuz;
+          const latestTestJuz = latestTest?.juz_number || 0;
+
+          const gap = Math.max(0, (memorizedForGap || 0) - latestTestJuz);
 
           return {
             id: student.id,
             name: student.name,
             teacher_name: student.teacher_name,
             class_name: student.class_name,
-            latest_reading: `Memorized: Juz ${highestMemorizedJuz}`,
+            latest_reading: `Memorized: Juz ${latestTasmiJuz}`,
             last_read_date: latestTest?.test_date || null,
-            days_since_last_read: latestTest?.test_date ? calculateDaysSinceLastRead(latestTest.test_date) : 999,
+            days_since_last_read: gap, // reused field for convenience, but UI will treat as gap in juz_tests view
             report_type: 'juz_test',
             memorization_completed: student.memorization_completed,
             memorization_completed_date: student.memorization_completed_date,
-            highest_memorized_juz: highestMemorizedJuz,
-            highest_passed_juz: highestPassedJuz,
-            gap: gap,
-            latest_test: latestTest
+            highest_memorized_juz: latestTasmiJuz,
+            highest_completed_juz: highestCompletedJuz,
+            latest_test_result: latestTest,
+            juz_test_gap: gap
           };
         } else {
           // For tasmik/murajaah modes
@@ -394,10 +400,21 @@ export default function AdminReportsPage() {
                     <tr className="border-b border-gray-200">
                       <th className="text-left py-3 px-4 font-medium text-gray-700">NAME</th>
                       <th className="text-left py-3 px-4 font-medium text-gray-700">TEACHER</th>
-                      <th className="text-left py-3 px-4 font-medium text-gray-700">LATEST READING</th>
-                      <th className="text-left py-3 px-4 font-medium text-gray-700">LAST READ</th>
-                      <th className="text-left py-3 px-4 font-medium text-gray-700">DAYS</th>
-                      <th className="text-left py-3 px-4 font-medium text-gray-700">ACTIONS</th>
+                      {viewMode === 'juz_tests' ? (
+                        <>
+                          <th className="text-left py-3 px-4 font-medium text-gray-700">CURRENT PROGRESS</th>
+                          <th className="text-left py-3 px-4 font-medium text-gray-700">LATEST TEST</th>
+                          <th className="text-left py-3 px-4 font-medium text-gray-700">GAP</th>
+                          <th className="text-left py-3 px-4 font-medium text-gray-700">ACTIONS</th>
+                        </>
+                      ) : (
+                        <>
+                          <th className="text-left py-3 px-4 font-medium text-gray-700">LATEST READING</th>
+                          <th className="text-left py-3 px-4 font-medium text-gray-700">LAST READ</th>
+                          <th className="text-left py-3 px-4 font-medium text-gray-700">DAYS</th>
+                          <th className="text-left py-3 px-4 font-medium text-gray-700">ACTIONS</th>
+                        </>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -408,8 +425,22 @@ export default function AdminReportsPage() {
                         </td>
                       </tr>
                     ) : (
-                      filteredStudents.map((student) => (
-                        <tr key={student.id} className={`border-b border-gray-100 ${getInactivityRowClass(student.days_since_last_read)}`}>
+                      filteredStudents.map((student) => {
+                        const extended = student as StudentProgressData & {
+                          highest_memorized_juz?: number;
+                          highest_completed_juz?: number;
+                          latest_test_result?: { juz_number: number; test_date: string; passed?: boolean; total_percentage?: number } | null;
+                          juz_test_gap?: number;
+                        };
+                        const rowClass = viewMode === 'juz_tests'
+                          ? ((extended.juz_test_gap || 0) >= 3
+                              ? 'bg-red-50/80'
+                              : (extended.juz_test_gap || 0) >= 1
+                                ? 'bg-yellow-50/80'
+                                : '')
+                          : getInactivityRowClass(student.days_since_last_read);
+                        return (
+                        <tr key={student.id} className={`border-b border-gray-100 ${rowClass}`}>
                           <td className="py-3 px-4">
                             <div className="flex items-start gap-2">
                               {selectedStudentId !== null && (
@@ -438,27 +469,33 @@ export default function AdminReportsPage() {
                           <td className="py-3 px-4 text-gray-700">
                             {student.teacher_name || '-'}
                           </td>
-                          <td className="py-3 px-4 text-gray-700">
-                            {student.latest_reading}
-                          </td>
-                          <td className="py-3 px-4 text-gray-700">
-                            {student.last_read_date ? formatAbsoluteDate(student.last_read_date) : '-'}
-                          </td>
-                          <td className="py-3 px-4">
-                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getActivityStatus(student.days_since_last_read).color}`}>
-                              {student.days_since_last_read === 999 ? '∞' : student.days_since_last_read}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4">
-                            <div className="flex space-x-2">
-                              <button 
-                                onClick={() => handleOpenViewRecordsModal({ id: student.id, name: student.name })}
-                                className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-                              >
-                                View
-                              </button>
-                              {viewMode === 'juz_tests' && (
-                                <>
+                          {viewMode === 'juz_tests' ? (
+                            <>
+                              <td className="py-3 px-4 text-gray-700">
+                                Memorized: Juz {extended.highest_memorized_juz || 0}
+                              </td>
+                              <td className="py-3 px-4 text-gray-700">
+                                {extended.latest_test_result ? (
+                                  <div>
+                                    <div className="font-medium">Juz {extended.latest_test_result.juz_number}</div>
+                                    {typeof extended.latest_test_result.total_percentage !== 'undefined' && (
+                                      <div className={`text-xs font-medium ${extended.latest_test_result?.passed ? 'text-green-600' : 'text-red-600'}`}>
+                                        {extended.latest_test_result.total_percentage}% ({extended.latest_test_result.passed ? 'PASSED' : 'FAILED'})
+                                      </div>
+                                    )}
+                                    <div className="text-xs text-gray-500">{formatAbsoluteDate(student.last_read_date)}</div>
+                                  </div>
+                                ) : (
+                                  <span className="text-gray-400 italic">No tests</span>
+                                )}
+                              </td>
+                              <td className="py-3 px-4">
+                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${((extended.juz_test_gap || 0) >= 3) ? 'text-red-700 bg-red-100' : ((extended.juz_test_gap || 0) >= 1) ? 'text-amber-700 bg-amber-100' : 'text-green-700 bg-green-100'}`}>
+                                  {extended.juz_test_gap || 0}
+                                </span>
+                              </td>
+                              <td className="py-3 px-4">
+                                <div className="flex space-x-2">
                                   <button 
                                     onClick={() => handleOpenJuzTestHistory({ id: student.id, name: student.name })}
                                     className="text-green-600 hover:text-green-800 text-sm font-medium"
@@ -467,33 +504,53 @@ export default function AdminReportsPage() {
                                   </button>
                                   <button 
                                     onClick={() => {
-                                      // Determine the next Juz to test based on highest memorized
-                                      const nextJuz = (student as StudentProgressData & { highest_memorized_juz?: number }).highest_memorized_juz 
-                                        ? Math.min((student as StudentProgressData & { highest_memorized_juz?: number }).highest_memorized_juz!, 30) 
-                                        : 1;
+                                      const nextJuz = Math.min((extended.highest_memorized_juz || 1), 30);
                                       handleOpenJuzTestModal({ id: student.id, name: student.name }, nextJuz);
                                     }}
                                     className="text-purple-600 hover:text-purple-800 text-sm font-medium"
                                   >
                                     Add Test
                                   </button>
-                                </>
-                              )}
-                              {(viewMode === 'tasmik' || viewMode === 'murajaah') && (
-                                <button 
-                                  onClick={() => handleOpenQuickModal(
-                                    { id: student.id, name: student.name }, 
-                                    viewMode === 'tasmik' ? 'Tasmi' : 'Murajaah'
-                                  )}
-                                  className="text-purple-600 hover:text-purple-800 text-sm font-medium"
-                                >
-                                  Add
-                                </button>
-                              )}
-                            </div>
-                          </td>
+                                </div>
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              <td className="py-3 px-4 text-gray-700">
+                                {student.latest_reading}
+                              </td>
+                              <td className="py-3 px-4 text-gray-700">
+                                {student.last_read_date ? formatAbsoluteDate(student.last_read_date) : '-'}
+                              </td>
+                              <td className="py-3 px-4">
+                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getActivityStatus(student.days_since_last_read).color}`}>
+                                  {student.days_since_last_read === 999 ? '∞' : student.days_since_last_read}
+                                </span>
+                              </td>
+                              <td className="py-3 px-4">
+                                <div className="flex space-x-2">
+                                  <button 
+                                    onClick={() => handleOpenViewRecordsModal({ id: student.id, name: student.name })}
+                                    className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                                  >
+                                    View
+                                  </button>
+                                  <button 
+                                    onClick={() => handleOpenQuickModal(
+                                      { id: student.id, name: student.name }, 
+                                      viewMode === 'tasmik' ? 'Tasmi' : 'Murajaah'
+                                    )}
+                                    className="text-purple-600 hover:text-purple-800 text-sm font-medium"
+                                  >
+                                    Add
+                                  </button>
+                                </div>
+                              </td>
+                            </>
+                          )}
                         </tr>
-                      ))
+                        );
+                      })
                     )}
                   </tbody>
                 </table>

@@ -224,12 +224,20 @@ export default function ParentFullRecordsModal({
                           </span>
                           <span className="text-sm text-gray-700 font-medium">Juz {test.juz_number}</span>
                         </div>
-                        <div className="text-sm text-gray-600">{new Date(test.test_date).toLocaleDateString()}</div>
+                        {test.examiner_name !== 'Historical Entry' && (
+                          <div className="text-sm text-gray-600">{new Date(test.test_date).toLocaleDateString()}</div>
+                        )}
                       </div>
                       <div className="mt-2 text-sm text-gray-700">
-                        Score: <span className="font-semibold">{test.total_percentage}%</span>
+                        {test.examiner_name === 'Historical Entry' 
+                          ? (
+                            <span className="font-semibold">{test.passed ? 'Passed' : 'Failed'}</span>
+                          ) 
+                          : (
+                            <>Score: <span className="font-semibold">{test.total_percentage}%</span></>
+                          )}
                       </div>
-                      {(test.examiner_name || test.remarks) && (
+                      {test.examiner_name !== 'Historical Entry' && (test.examiner_name || test.remarks) && (
                         <div className="mt-1 text-xs text-gray-600">
                           {test.examiner_name && <div>Examiner: {test.examiner_name}</div>}
                           {test.remarks && <div>Remarks: {test.remarks}</div>}

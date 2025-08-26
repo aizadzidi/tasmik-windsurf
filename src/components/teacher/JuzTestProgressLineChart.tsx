@@ -217,12 +217,16 @@ export default function JuzTestProgressLineChart({
                 <div className="text-sm font-medium text-gray-900">
                   Juz {data.juz} Test
                 </div>
-                <div className="text-sm text-gray-600">
-                  Date: {new Date(data.date).toLocaleDateString()}
-                </div>
-                <div className="text-sm text-gray-600">
-                  Score: {data.y}%
-                </div>
+                {data.examiner !== 'Historical Entry' && (
+                  <div className="text-sm text-gray-600">
+                    Date: {new Date(data.date).toLocaleDateString()}
+                  </div>
+                )}
+                {data.examiner === 'Historical Entry' ? (
+                  <div className="text-sm text-gray-600">Result: {data.passed ? 'PASSED' : 'FAILED'}</div>
+                ) : (
+                  <div className="text-sm text-gray-600">Score: {data.y}%</div>
+                )}
                 <div className={`text-sm font-medium ${data.passed ? 'text-green-600' : 'text-red-600'}`}>
                   {data.passed ? 'PASSED' : 'FAILED'}
                 </div>
@@ -231,7 +235,7 @@ export default function JuzTestProgressLineChart({
                     Latest of {totalTestsForJuz} attempts
                   </div>
                 )}
-                {data.examiner && (
+                {data.examiner && data.examiner !== 'Historical Entry' && (
                   <div className="text-xs text-gray-500 mt-1">
                     Examiner: {data.examiner}
                   </div>

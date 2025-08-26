@@ -288,13 +288,15 @@ export default function JuzTestHistoryModal({
                       </div>
                       <div>
                         <h3 className="font-medium text-gray-900">Juz {test.juz_number}</h3>
-                        <p className="text-sm text-gray-500">
-                          {new Date(test.test_date).toLocaleDateString('en-US', {
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric'
-                          })}
-                        </p>
+                        {test.examiner_name !== 'Historical Entry' && (
+                          <p className="text-sm text-gray-500">
+                            {new Date(test.test_date).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric'
+                            })}
+                          </p>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -303,7 +305,7 @@ export default function JuzTestHistoryModal({
                           ? 'bg-green-100 text-green-800' 
                           : 'bg-red-100 text-red-800'
                       }`}>
-                        {test.total_percentage}%
+                        {test.examiner_name === 'Historical Entry' ? (test.passed ? 'Passed' : 'Failed') : `${test.total_percentage}%`}
                       </div>
                       <div className="flex gap-1">
                         <button
@@ -332,18 +334,20 @@ export default function JuzTestHistoryModal({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="text-gray-500">Examiner:</span>
-                      <p className="font-medium">{test.examiner_name || 'Not specified'}</p>
+                  {test.examiner_name !== 'Historical Entry' && (
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="text-gray-500">Examiner:</span>
+                        <p className="font-medium">{test.examiner_name || 'Not specified'}</p>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">Scores:</span>
+                        <p className="font-medium">
+                          T: {test.tajweed_score || 0}/5 • R: {test.recitation_score || 0}/5
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-gray-500">Scores:</span>
-                      <p className="font-medium">
-                        T: {test.tajweed_score || 0}/5 • R: {test.recitation_score || 0}/5
-                      </p>
-                    </div>
-                  </div>
+                  )}
 
                   {test.should_repeat && (
                     <div className="mt-2">
@@ -353,7 +357,7 @@ export default function JuzTestHistoryModal({
                     </div>
                   )}
 
-                  {test.remarks && (
+                  {test.examiner_name !== 'Historical Entry' && test.remarks && (
                     <div className="mt-3 pt-3 border-t border-gray-100">
                       <p className="text-sm text-gray-600 italic">"{test.remarks}"</p>
                     </div>
