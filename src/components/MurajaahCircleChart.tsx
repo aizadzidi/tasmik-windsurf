@@ -8,10 +8,20 @@ interface MurajaahCircleChartProps {
 }
 
 export function MurajaahCircleChart({ reports }: MurajaahCircleChartProps) {
-  // 1) For murajaah cycles, completion should be relative to the entire Quran (30 juz / 604 pages)
-  // Regardless of latest Tasmi boundary, use 604 pages as the cycle target.
-  const totalPagesToReview = 604;
-  const currentJuz = 30;
+  // Determine target boundary from latest Tasmi progress (max page_to or highest juz end page)
+  const tasmiReports = reports.filter(r => r.type === 'Tasmi');
+  const maxTasmiPageTo = Math.max(
+    ...tasmiReports.map(r => (r.page_to !== null && !isNaN(r.page_to) ? r.page_to : 0)),
+    0
+  );
+  const maxTasmiJuz = Math.max(
+    ...tasmiReports.map(r => (r.juzuk !== null && !isNaN(r.juzuk) ? r.juzuk : 0)),
+    0
+  );
+  const juzEndPage = maxTasmiJuz > 0 ? (getPageRangeFromJuz(maxTasmiJuz)?.endPage || 0) : 0;
+  const targetEndPage = Math.max(maxTasmiPageTo, juzEndPage);
+  const totalPagesToReview = targetEndPage > 0 ? targetEndPage : 604;
+  const currentJuz = getJuzFromPage(totalPagesToReview) || 30;
 
   // 2) Gather all Murajaah reports
   const murajaahReports = reports.filter(r => 
@@ -41,12 +51,23 @@ export function MurajaahCircleChart({ reports }: MurajaahCircleChartProps) {
   const reviewCounts = Array.from(pageReviewCounts.values());
   const completedCycles = reviewCounts.length > 0 ? Math.min(...reviewCounts) : 0;
 
-  // 5) Progress toward completing review up to latest Tasmi boundary
-  //    We want the circle to reflect the current murajaah coverage relative to memorized pages.
-  //    Once a full pass is complete (i.e., every page reviewed at least once), show 100%.
-  const pagesReviewedAtLeastOnce = reviewCounts.filter(count => count > 0).length;
+  // 5) Progress is based on highest reviewed page relative to Tasmi boundary
+  const murajaahMaxPage = Math.min(
+    Math.max(
+      0,
+      ...murajaahReports.map(r => {
+        const pf = r.page_from || 0;
+        const pt = r.page_to || 0;
+        const maxPage = Math.max(pf, pt);
+        if (maxPage > 0) return maxPage;
+        if (r.juzuk) return getPageRangeFromJuz(r.juzuk)?.endPage || 0;
+        return 0;
+      })
+    ),
+    totalPagesToReview
+  );
   const currentCycleProgress = totalPagesToReview > 0
-    ? (pagesReviewedAtLeastOnce / totalPagesToReview) * 100
+    ? (murajaahMaxPage / totalPagesToReview) * 100
     : 0;
 
   // Debug logging to help understand the data
@@ -55,7 +76,7 @@ export function MurajaahCircleChart({ reports }: MurajaahCircleChartProps) {
     derivedCurrentJuz: currentJuz,
     murajaahReportsCount: murajaahReports.length,
     completedCycles,
-    pagesReviewedAtLeastOnce,
+    murajaahMaxPage,
     currentCycleProgress: currentCycleProgress.toFixed(1) + '%',
     sampleReviewCounts: Array.from(pageReviewCounts.entries()).slice(0, 10),
     lastMurajaahReport: murajaahReports[0]

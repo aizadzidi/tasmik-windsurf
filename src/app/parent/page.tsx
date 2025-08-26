@@ -2,6 +2,7 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { QuranProgressBar, ChartTabs } from "@/components/ReportCharts";
+import { MultiMurajaahConcentricChart } from "@/components/MultiMurajaahConcentricChart";
 import Navbar from "@/components/Navbar";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -184,7 +185,8 @@ export default function ParentPage() {
         if (viewMode === 'tasmik') {
           reportsQuery = reportsQuery.eq("type", "Tasmi");
         } else if (viewMode === 'murajaah') {
-          reportsQuery = reportsQuery.in("type", ["Murajaah", "Old Murajaah", "New Murajaah"]);
+          // Include Tasmi as well so charts can compute Murajaah target boundary from latest Tasmi
+          reportsQuery = reportsQuery.in("type", ["Tasmi", "Murajaah", "Old Murajaah", "New Murajaah"]);
         }
         
         const { data: allReports } = await reportsQuery.order("date", { ascending: false });
@@ -521,23 +523,48 @@ export default function ParentPage() {
               <Card className="p-6">
                 <h3 className="text-lg font-semibold text-gray-800 mb-4">Children Progress Overview</h3>
                 {filteredChildren.length > 0 && (
-                  <QuranProgressBar 
-                    reports={reports.filter(r => {
-                      const isRelevantChild = selectedStudentId 
-                        ? r.student_id === selectedStudentId 
-                        : filteredChildren.some(c => c.id === r.student_id);
-                      if (!isRelevantChild) return false;
-                      
-                      // For murajaah cycle, include Tasmi to follow latest memorization boundary
-                      if (viewMode === 'tasmik') {
-                        return r.type === 'Tasmi';
-                      } else if (viewMode === 'murajaah') {
-                        return r.type === 'Tasmi' || ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
-                      }
-                      return true;
-                    })} 
-                    viewMode={viewMode}
-                  />
+                  selectedStudentId ? (
+                    <QuranProgressBar
+                      reports={reports.filter(r => {
+                        const isRelevantChild = r.student_id === selectedStudentId;
+                        if (!isRelevantChild) return false;
+                        if (viewMode === 'tasmik') {
+                          return r.type === 'Tasmi';
+                        } else if (viewMode === 'murajaah') {
+                          return r.type === 'Tasmi' || ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
+                        }
+                        return true;
+                      })}
+                      viewMode={viewMode}
+                    />
+                  ) : (
+                    viewMode === 'murajaah' ? (
+                      <MultiMurajaahConcentricChart
+                        students={filteredChildren.map(c => ({ id: c.id, name: c.name }))}
+                        reports={reports.filter(r => filteredChildren.some(c => c.id === r.student_id))}
+                      />
+                    ) : (
+                      <div className="space-y-4">
+                        {filteredChildren.map(child => {
+                          const childReports = reports.filter(r => {
+                            if (r.student_id !== child.id) return false;
+                            if (viewMode === 'tasmik') {
+                              return r.type === 'Tasmi';
+                            } else if (viewMode === 'murajaah') {
+                              return r.type === 'Tasmi' || ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
+                            }
+                            return true;
+                          });
+                          return (
+                            <div key={child.id}>
+                              <div className="text-sm font-semibold text-gray-800 mb-1">{child.name}</div>
+                              <QuranProgressBar reports={childReports} viewMode={viewMode} />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )
+                  )
                 )}
               </Card>
               <Card className="p-6">
