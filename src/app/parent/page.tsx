@@ -16,10 +16,8 @@ import JuzTestProgressLineChart from "@/components/teacher/JuzTestProgressLineCh
 import {
   StudentProgressData,
   calculateDaysSinceLastRead,
-  formatRelativeDate,
   formatAbsoluteDate,
   getInactivityRowClass,
-  getActivityStatus,
   filterStudentsBySearch,
   getSummaryStats,
   SummaryStats
@@ -28,6 +26,7 @@ import { formatMurajaahDisplay } from "@/lib/quranMapping";
 import type { Report } from "@/types/teacher";
 import jsPDF from "jspdf";
 import autoTable from 'jspdf-autotable';
+import { getWeekBoundaries } from "@/lib/gradeUtils";
 
 
 type ViewMode = 'tasmik' | 'murajaah' | 'juz_tests';
@@ -38,12 +37,13 @@ export default function ParentPage() {
   const [children, setChildren] = useState<StudentProgressData[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   
   // View and filter state
   const [viewMode, setViewMode] = useState<ViewMode>('tasmik');
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
-  const [sortBy, setSortBy] = useState<'activity' | 'name'>('activity');
+  // Sorting UI removed; default to name order in view
   
   // Full records modal
   const [showFullRecordsModal, setShowFullRecordsModal] = useState(false);
@@ -82,6 +82,8 @@ export default function ParentPage() {
           name,
           assigned_teacher_id,
           class_id,
+          memorization_completed,
+          memorization_completed_date,
           users!assigned_teacher_id (name),
           classes (name)
         `)
@@ -152,6 +154,8 @@ export default function ParentPage() {
             last_read_date: latestTest?.test_date || null,
             days_since_last_read: latestTest?.test_date ? calculateDaysSinceLastRead(latestTest.test_date) : 999,
             report_type: 'juz_test',
+            memorization_completed: (student as { memorization_completed?: boolean }).memorization_completed,
+            memorization_completed_date: (student as { memorization_completed_date?: string }).memorization_completed_date,
             highest_memorized_juz: highestMemorizedJuz,
             highest_passed_juz: highestPassedJuz,
             juz_test_gap: gap,
@@ -225,7 +229,9 @@ export default function ParentPage() {
             latest_reading: latestReading,
             last_read_date: latestReport?.date || null,
             days_since_last_read: daysSinceLastRead,
-            report_type: latestReport?.type || null
+            report_type: latestReport?.type || null,
+            memorization_completed: (student as { memorization_completed?: boolean }).memorization_completed,
+            memorization_completed_date: (student as { memorization_completed_date?: string }).memorization_completed_date
           } as StudentProgressData;
         });
 
@@ -244,19 +250,11 @@ export default function ParentPage() {
     }
   }, [fetchChildrenData, parentId]);
 
-  // Filtered and sorted children
+  // Filtered and sorted children (always sort by name)
   const filteredChildren = useMemo(() => {
-    let filtered = filterStudentsBySearch(children, debouncedSearchTerm);
-    
-    // Apply sorting
-    if (sortBy === 'activity') {
-      filtered = [...filtered].sort((a, b) => b.days_since_last_read - a.days_since_last_read);
-    } else if (sortBy === 'name') {
-      filtered = [...filtered].sort((a, b) => a.name.localeCompare(b.name));
-    }
-    
-    return filtered;
-  }, [children, debouncedSearchTerm, sortBy]);
+    const filtered = filterStudentsBySearch(children, debouncedSearchTerm);
+    return [...filtered].sort((a, b) => a.name.localeCompare(b.name));
+  }, [children, debouncedSearchTerm]);
 
   // Summary statistics
   const summaryStats: SummaryStats = useMemo(() => {
@@ -525,14 +523,16 @@ export default function ParentPage() {
                 {filteredChildren.length > 0 && (
                   <QuranProgressBar 
                     reports={reports.filter(r => {
-                      const isRelevantChild = filteredChildren.some(c => c.id === r.student_id);
+                      const isRelevantChild = selectedStudentId 
+                        ? r.student_id === selectedStudentId 
+                        : filteredChildren.some(c => c.id === r.student_id);
                       if (!isRelevantChild) return false;
                       
-                      // Filter by report type based on viewMode
+                      // For murajaah cycle, include Tasmi to follow latest memorization boundary
                       if (viewMode === 'tasmik') {
                         return r.type === 'Tasmi';
                       } else if (viewMode === 'murajaah') {
-                        return ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
+                        return r.type === 'Tasmi' || ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
                       }
                       return true;
                     })} 
@@ -542,8 +542,14 @@ export default function ParentPage() {
               </Card>
               <Card className="p-6">
                 <h3 className="text-lg font-semibold text-gray-800 mb-4">Activity Analytics</h3>
-                <ChartTabs reports={reports.filter(r => {
-                  const isRelevantChild = filteredChildren.some(c => c.id === r.student_id);
+                <ChartTabs 
+                  selectedStudentId={selectedStudentId} 
+                  studentNamesMap={Object.fromEntries(filteredChildren.map(c => [c.id, c.name]))}
+                  groupByStudentOverride={!selectedStudentId}
+                  reports={reports.filter(r => {
+                  const isRelevantChild = selectedStudentId 
+                    ? r.student_id === selectedStudentId 
+                    : filteredChildren.some(c => c.id === r.student_id);
                   if (!isRelevantChild) return false;
                   
                   // Filter by report type based on viewMode
@@ -553,14 +559,15 @@ export default function ParentPage() {
                     return ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type);
                   }
                   return true;
-                })} />
+                })}
+                />
               </Card>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-6 mb-6">
               <JuzTestProgressLineChart 
                 className="col-span-1" 
-                studentId={filteredChildren.length === 1 ? filteredChildren[0].id : undefined}
+                studentId={selectedStudentId || (filteredChildren.length === 1 ? filteredChildren[0].id : undefined)}
               />
             </div>
           )}
@@ -606,20 +613,8 @@ export default function ParentPage() {
             </div>
 
             {/* Filters */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-              {viewMode !== 'juz_tests' && (
-                <div>
-                  <select
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value as 'activity' | 'name')}
-                    className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
-                  >
-                    <option value="activity">Sort by Activity</option>
-                    <option value="name">Sort by Name</option>
-                  </select>
-                </div>
-              )}
-              <div className={viewMode === 'juz_tests' ? 'md:col-span-3' : 'md:col-span-2'}>
+            <div className="grid grid-cols-1 mb-6">
+              <div>
                 <input
                   type="text"
                   placeholder="Search children..."
@@ -650,8 +645,7 @@ export default function ParentPage() {
                       ) : (
                         <>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Latest Reading</th>
-                          <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Last Read</th>
-                          <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Days</th>
+                          <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Week</th>
                         </>
                       )}
                       <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
@@ -680,20 +674,31 @@ export default function ParentPage() {
                                 ? 'bg-yellow-50/80' 
                                 : ''
                             : '')
-                        : getInactivityRowClass(child.days_since_last_read);
-                      
-                      const activityStatus = getActivityStatus(child.days_since_last_read);
+                        : getInactivityRowClass(child.days_since_last_read, child.memorization_completed);
                       
                       return (
                         <tr key={child.id} className={`${rowClass}`}>
                           <td className="px-4 py-3 font-medium text-gray-900">
                             <div>
-                              <div className="font-semibold">{child.name}</div>
+                              <button
+                                onClick={() => setSelectedStudentId(prev => prev === child.id ? null : child.id)}
+                                className={`font-semibold underline-offset-2 ${selectedStudentId === child.id ? 'text-blue-700 underline' : 'text-blue-600 hover:underline'}`}
+                                title={selectedStudentId === child.id ? 'Showing charts for this student' : 'Show charts for this student'}
+                              >
+                                {child.name}
+                              </button>
                               {child.class_name && (
                                 <div className="text-xs text-gray-600">{child.class_name}</div>
                               )}
                               {child.teacher_name && (
                                 <div className="text-xs text-gray-500">Teacher: {child.teacher_name}</div>
+                              )}
+                              {child.memorization_completed && (
+                                <div className="mt-1">
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+                                    Completed
+                                  </span>
+                                </div>
                               )}
                             </div>
                           </td>
@@ -763,20 +768,17 @@ export default function ParentPage() {
                               </td>
                               <td className="px-4 py-3 text-center text-gray-700">
                                 <div className="text-sm">
-                                  <div>{formatAbsoluteDate(child.last_read_date)}</div>
-                                  <div className="text-xs text-gray-500">
-                                    {formatRelativeDate(child.last_read_date)}
-                                  </div>
-                                </div>
-                              </td>
-                              <td className="px-4 py-3 text-center">
-                                <div className="flex flex-col items-center">
-                                  <span className="text-lg font-bold text-gray-800">
-                                    {child.days_since_last_read === 999 ? '∞' : child.days_since_last_read}
-                                  </span>
-                                  <span className={`text-xs font-medium ${activityStatus.color}`}>
-                                    {activityStatus.text}
-                                  </span>
+                                  {child.last_read_date ? (() => {
+                                    const { monday } = getWeekBoundaries(child.last_read_date);
+                                    const mondayDate = new Date(monday);
+                                    const weekIndex = Math.floor((mondayDate.getDate() - 1) / 7) + 1;
+                                    const monthName = mondayDate.toLocaleString('default', { month: 'short' });
+                                    return (
+                                      <>
+                                        <div>{`${monthName} W${weekIndex}`}</div>
+                                      </>
+                                    );
+                                  })() : '-'}
                                 </div>
                               </td>
                             </>
@@ -816,7 +818,7 @@ export default function ParentPage() {
                     })}
                     {filteredChildren.length === 0 && (
                       <tr>
-                        <td colSpan={viewMode === 'juz_tests' ? 5 : 5} className="text-center py-8 text-gray-600">
+                        <td colSpan={viewMode === 'juz_tests' ? 5 : 4} className="text-center py-8 text-gray-600">
                           <p>No children match the current filters.</p>
                         </td>
                       </tr>

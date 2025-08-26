@@ -18,6 +18,17 @@ interface Report {
   date: string;
 }
 
+interface JuzTestRecord {
+  id: string;
+  student_id: string;
+  juz_number: number;
+  test_date: string;
+  total_percentage: number;
+  passed: boolean;
+  examiner_name?: string;
+  remarks?: string;
+}
+
 interface ParentFullRecordsModalProps {
   student: {
     id: string;
@@ -37,6 +48,7 @@ export default function ParentFullRecordsModal({
   viewMode = 'tasmik'
 }: ParentFullRecordsModalProps) {
   const [reports, setReports] = useState<Report[]>([]);
+  const [juzTests, setJuzTests] = useState<JuzTestRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [initialLoad, setInitialLoad] = useState(true);
 
@@ -61,15 +73,28 @@ export default function ParentFullRecordsModal({
     }
     
     try {
-      // Fetch all reports for this student
-      const { data, error } = await supabase
-        .from("reports")
-        .select("*")
-        .eq("student_id", student.id)
-        .order("date", { ascending: false });
-      
-      if (!error && data) {
-        setReports(data);
+      if (viewMode === 'juz_tests') {
+        const { data, error } = await supabase
+          .from('juz_tests')
+          .select('*')
+          .eq('student_id', student.id)
+          .order('test_date', { ascending: false });
+        if (!error && data) {
+          setJuzTests(data as JuzTestRecord[]);
+        } else {
+          setJuzTests([]);
+        }
+      } else {
+        // Fetch all reports for this student
+        const { data, error } = await supabase
+          .from("reports")
+          .select("*")
+          .eq("student_id", student.id)
+          .order("date", { ascending: false });
+        
+        if (!error && data) {
+          setReports(data);
+        }
       }
     } catch (err) {
       console.error("Failed to fetch student reports:", err);
@@ -164,7 +189,7 @@ export default function ParentFullRecordsModal({
         </div>
 
         {/* Content */}
-        <div className="overflow-y-auto max-h-[calc(90vh-80px)]">
+        <div className="overflow-y-auto max-h[calc(90vh-80px)]">
           {loading ? (
             <div className="p-6">
               <div className="animate-pulse space-y-4">
@@ -175,6 +200,45 @@ export default function ParentFullRecordsModal({
                   ))}
                 </div>
               </div>
+            </div>
+          ) : viewMode === 'juz_tests' ? (
+            <div className="p-6">
+              {juzTests.length === 0 ? (
+                <div className="p-8 text-center">
+                  <div className="text-gray-400 mb-4">
+                    <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-medium text-gray-600 mb-2">No Records Found</h3>
+                  <p className="text-gray-500">No Juz test records available for {student.name}</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {juzTests.map((test) => (
+                    <div key={test.id} className={`p-4 rounded-lg border ${test.passed ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${test.passed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                            {test.passed ? 'PASSED' : 'FAILED'}
+                          </span>
+                          <span className="text-sm text-gray-700 font-medium">Juz {test.juz_number}</span>
+                        </div>
+                        <div className="text-sm text-gray-600">{new Date(test.test_date).toLocaleDateString()}</div>
+                      </div>
+                      <div className="mt-2 text-sm text-gray-700">
+                        Score: <span className="font-semibold">{test.total_percentage}%</span>
+                      </div>
+                      {(test.examiner_name || test.remarks) && (
+                        <div className="mt-1 text-xs text-gray-600">
+                          {test.examiner_name && <div>Examiner: {test.examiner_name}</div>}
+                          {test.remarks && <div>Remarks: {test.remarks}</div>}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ) : filteredReports.length === 0 ? (
             <div className="p-8 text-center">
@@ -188,25 +252,6 @@ export default function ParentFullRecordsModal({
             </div>
           ) : (
             <div className="p-6">
-              {/* Summary Stats */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                <div className="bg-blue-50 rounded-lg p-4">
-                  <div className="text-2xl font-bold text-blue-600">{filteredReports.length}</div>
-                  <div className="text-blue-700 font-medium">Total Records</div>
-                </div>
-                <div className="bg-green-50 rounded-lg p-4">
-                  <div className="text-2xl font-bold text-green-600">
-                    {filteredReports.filter(r => r.grade === 'mumtaz').length}
-                  </div>
-                  <div className="text-green-700 font-medium">Mumtaz Grades</div>
-                </div>
-                <div className="bg-purple-50 rounded-lg p-4">
-                  <div className="text-2xl font-bold text-purple-600">{reportsByWeek.length}</div>
-                  <div className="text-purple-700 font-medium">Active Weeks</div>
-                </div>
-              </div>
-
-              {/* Records by Week */}
               <div className="space-y-6">
                 {reportsByWeek.map(({ weekStart, weekEnd, reports: weekReports }) => (
                   <div key={weekStart} className="border border-gray-200 rounded-lg overflow-hidden">

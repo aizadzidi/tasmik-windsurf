@@ -193,42 +193,110 @@ function convertToWeekLabel(weekRange: string): string {
   return weekRange; // fallback
 }
 
-export function ActivityBarChart({ reports }: { reports: Report[] }) {
-  // Get weekly summaries and calculate combined pages per week
+export function ActivityBarChart({ reports, groupByStudent = false, studentNamesMap }: { reports: Report[]; groupByStudent?: boolean; studentNamesMap?: Record<string, string>; }) {
+  if (groupByStudent) {
+    // Grouped by student per week (clustered bars per week)
+    const weeklySummaries = groupReportsIntoWeeklySummaries(reports);
+
+    // Collect unique human-readable week labels in chronological order
+    const weekLabelToIndex: Record<string, number> = {};
+    weeklySummaries.forEach(s => {
+      const label = convertToWeekLabel(s.weekRange);
+      if (!(label in weekLabelToIndex)) weekLabelToIndex[label] = 0;
+    });
+    const sortedWeeks = Object.keys(weekLabelToIndex).sort((a, b) => {
+      const weekA = a.match(/Week (\d+) of (\w+) (\d+)/);
+      const weekB = b.match(/Week (\d+) of (\w+) (\d+)/);
+      if (!weekA || !weekB) return 0;
+      const yearA = parseInt(weekA[3]);
+      const yearB = parseInt(weekB[3]);
+      if (yearA !== yearB) return yearA - yearB;
+      const monthA = new Date(weekA[2] + ' 1, 2025').getMonth();
+      const monthB = new Date(weekB[2] + ' 1, 2025').getMonth();
+      if (monthA !== monthB) return monthA - monthB;
+      return parseInt(weekA[1]) - parseInt(weekB[1]);
+    });
+
+    // Build pages per student per week
+    const studentIds = Array.from(new Set(weeklySummaries.map(s => s.studentId))).sort((a, b) => {
+      const nameA = (studentNamesMap?.[a] || a).toLowerCase();
+      const nameB = (studentNamesMap?.[b] || b).toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+
+    const pagesByStudentWeek: Record<string, Record<string, number>> = {};
+    weeklySummaries.forEach(summary => {
+      const weekLabel = convertToWeekLabel(summary.weekRange);
+      const pages = summary.combinedPageTo && summary.combinedPageFrom
+        ? (summary.combinedPageTo - summary.combinedPageFrom + 1)
+        : 0;
+      if (!pagesByStudentWeek[summary.studentId]) pagesByStudentWeek[summary.studentId] = {};
+      pagesByStudentWeek[summary.studentId][weekLabel] = (pagesByStudentWeek[summary.studentId][weekLabel] || 0) + pages;
+    });
+
+    // Simple color palette
+    const palette = [
+      '#ef4444', // red-500
+      '#22c55e', // green-500
+      '#3b82f6', // blue-500
+      '#f59e0b', // amber-500
+      '#a855f7', // purple-500
+      '#06b6d4', // cyan-500
+      '#84cc16', // lime-500
+      '#ec4899', // pink-500
+    ];
+
+    const datasets = studentIds.map((studentId, index) => ({
+      label: studentNamesMap?.[studentId] || studentId,
+      data: sortedWeeks.map(week => pagesByStudentWeek[studentId]?.[week] || 0),
+      backgroundColor: palette[index % palette.length],
+    }));
+
+    const data = {
+      labels: sortedWeeks,
+      datasets,
+    };
+
+    return (
+      <div className="mb-4">
+        <div className="text-sm font-semibold mb-1">Activity by Student</div>
+        <Bar data={data} options={{
+          responsive: true,
+          plugins: { legend: { display: true, position: 'right' } },
+          scales: {
+            x: { ticks: { maxRotation: 45, minRotation: 45 } },
+            y: { title: { display: true, text: 'Pages' } }
+          }
+        }} height={120} />
+      </div>
+    );
+  }
+
+  // Fallback to weekly aggregation
   const weeklySummaries = groupReportsIntoWeeklySummaries(reports);
   const weeklyPages: Record<string, number> = {};
-  
   weeklySummaries.forEach(summary => {
-    const pages = summary.combinedPageTo && summary.combinedPageFrom 
-      ? (summary.combinedPageTo - summary.combinedPageFrom + 1) 
+    const pages = summary.combinedPageTo && summary.combinedPageFrom
+      ? (summary.combinedPageTo - summary.combinedPageFrom + 1)
       : 0;
-    
-    // Convert week range to week label format
     const weekLabel = convertToWeekLabel(summary.weekRange);
-    
-    if (!weeklyPages[weekLabel]) {
-      weeklyPages[weekLabel] = 0;
-    }
+    if (!weeklyPages[weekLabel]) weeklyPages[weekLabel] = 0;
     weeklyPages[weekLabel] += pages;
   });
-  
-  // Sort weeks chronologically (same logic as before)
+
   const sortedWeeks = Object.keys(weeklyPages).sort((a, b) => {
     const weekA = a.match(/Week (\d+) of (\w+) (\d+)/);
     const weekB = b.match(/Week (\d+) of (\w+) (\d+)/);
     if (!weekA || !weekB) return 0;
-    
     const yearA = parseInt(weekA[3]);
     const yearB = parseInt(weekB[3]);
     if (yearA !== yearB) return yearA - yearB;
-    
     const monthA = new Date(weekA[2] + ' 1, 2025').getMonth();
     const monthB = new Date(weekB[2] + ' 1, 2025').getMonth();
     if (monthA !== monthB) return monthA - monthB;
-    
     return parseInt(weekA[1]) - parseInt(weekB[1]);
   });
-  
+
   const data = {
     labels: sortedWeeks,
     datasets: [
@@ -239,71 +307,109 @@ export function ActivityBarChart({ reports }: { reports: Report[] }) {
       },
     ],
   };
-  
+
   return (
     <div className="mb-4">
       <div className="text-sm font-semibold mb-1">Activity</div>
-      <Bar data={data} options={{ 
-        responsive: true, 
+      <Bar data={data} options={{
+        responsive: true,
         plugins: { legend: { display: false } },
         scales: {
-          x: {
-            ticks: {
-              maxRotation: 45,
-              minRotation: 45
-            }
-          },
-          y: {
-            title: {
-              display: true,
-              text: 'Pages per Week'
-            }
-          }
+          x: { ticks: { maxRotation: 45, minRotation: 45 } },
+          y: { title: { display: true, text: 'Pages per Week' } }
         }
       }} height={120} />
     </div>
   );
 }
 
-export function GradeChart({ reports }: { reports: Report[] }) {
-  // Get weekly summaries with pre-calculated average grades
+export function GradeChart({ reports, groupByStudent = false, studentNamesMap }: { reports: Report[]; groupByStudent?: boolean; studentNamesMap?: Record<string, string>; }) {
+  if (groupByStudent) {
+    const weeklySummaries = groupReportsIntoWeeklySummaries(reports);
+    const gradesPerStudent: Record<string, { sum: number; count: number }> = {};
+    weeklySummaries.forEach(summary => {
+      if (summary.averageGrade) {
+        const val = gradeToNumber(summary.averageGrade);
+        if (val !== null) {
+          if (!gradesPerStudent[summary.studentId]) gradesPerStudent[summary.studentId] = { sum: 0, count: 0 };
+          gradesPerStudent[summary.studentId].sum += val;
+          gradesPerStudent[summary.studentId].count += 1;
+        }
+      }
+    });
+
+    const studentIds = Object.keys(gradesPerStudent).sort((a, b) => {
+      const nameA = (studentNamesMap?.[a] || a).toLowerCase();
+      const nameB = (studentNamesMap?.[b] || b).toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+
+    const data = {
+      labels: studentIds.map(id => studentNamesMap?.[id] || id),
+      datasets: [
+        {
+          label: "Average Grade",
+          data: studentIds.map(id => {
+            const g = gradesPerStudent[id];
+            return g && g.count > 0 ? g.sum / g.count : null;
+          }),
+          backgroundColor: "#22c55e",
+        },
+      ],
+    };
+
+    return (
+      <div className="mb-4">
+        <div className="text-sm font-semibold mb-1">Grades by Student</div>
+        <Bar data={data} options={{
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { maxRotation: 45, minRotation: 45 } },
+            y: {
+              title: { display: true, text: 'Average Grade' },
+              min: 1,
+              max: 3,
+              ticks: {
+                stepSize: 1,
+                callback: function(value) {
+                  const tickLabels: Record<number, string> = { 1: 'Jayyid', 2: 'Jayyid Jiddan', 3: 'Mumtaz' };
+                  return tickLabels[value as number] || String(value);
+                }
+              }
+            }
+          }
+        }} height={120} />
+      </div>
+    );
+  }
+
+  // Weekly averages chart
   const weeklySummaries = groupReportsIntoWeeklySummaries(reports);
   const weeklyAverages: Record<string, number> = {};
-  
   weeklySummaries.forEach(summary => {
     if (summary.averageGrade) {
       const gradeValue = gradeToNumber(summary.averageGrade);
       if (gradeValue !== null) {
-        // Convert week range to week label format
         const weekLabel = convertToWeekLabel(summary.weekRange);
-        
-        if (!weeklyAverages[weekLabel]) {
-          weeklyAverages[weekLabel] = 0;
-        }
-        // For multiple report types in same week, take average
         weeklyAverages[weekLabel] = gradeValue;
       }
     }
   });
-  
-  // Sort weeks chronologically (same logic as activity chart)
+
   const sortedWeeks = Object.keys(weeklyAverages).sort((a, b) => {
     const weekA = a.match(/Week (\d+) of (\w+) (\d+)/);
     const weekB = b.match(/Week (\d+) of (\w+) (\d+)/);
     if (!weekA || !weekB) return 0;
-    
     const yearA = parseInt(weekA[3]);
     const yearB = parseInt(weekB[3]);
     if (yearA !== yearB) return yearA - yearB;
-    
     const monthA = new Date(weekA[2] + ' 1, 2025').getMonth();
     const monthB = new Date(weekB[2] + ' 1, 2025').getMonth();
     if (monthA !== monthB) return monthA - monthB;
-    
-    
     return parseInt(weekA[1]) - parseInt(weekB[1]);
   });
-  
+
   const data = {
     labels: sortedWeeks,
     datasets: [
@@ -317,36 +423,24 @@ export function GradeChart({ reports }: { reports: Report[] }) {
       },
     ],
   };
-  
+
   return (
     <div className="mb-4">
       <div className="text-sm font-semibold mb-1">Grades</div>
-      <Line data={data} options={{ 
-        responsive: true, 
+      <Line data={data} options={{
+        responsive: true,
         plugins: { legend: { display: false } },
         scales: {
-          x: {
-            ticks: {
-              maxRotation: 45,
-              minRotation: 45
-            }
-          },
+          x: { ticks: { maxRotation: 45, minRotation: 45 } },
           y: {
-            title: {
-              display: true,
-              text: 'Average Grade'
-            },
+            title: { display: true, text: 'Average Grade' },
             min: 1,
             max: 3,
             ticks: {
               stepSize: 1,
               callback: function(value) {
-                const tickLabels: Record<number, string> = {
-                  1: 'Jayyid',
-                  2: 'Jayyid Jiddan', 
-                  3: 'Mumtaz'
-                };
-                return tickLabels[value as number] || value;
+                const tickLabels: Record<number, string> = { 1: 'Jayyid', 2: 'Jayyid Jiddan', 3: 'Mumtaz' };
+                return tickLabels[value as number] || String(value);
               }
             }
           }
@@ -356,8 +450,9 @@ export function GradeChart({ reports }: { reports: Report[] }) {
   );
 }
 
-export function ChartTabs({ reports }: { reports: Report[] }) {
+export function ChartTabs({ reports, selectedStudentId, studentNamesMap, groupByStudentOverride }: { reports: Report[]; selectedStudentId?: string | null; studentNamesMap?: Record<string, string>; groupByStudentOverride?: boolean; }) {
   const [tab, setTab] = React.useState("activity");
+  const groupByStudent = typeof groupByStudentOverride === 'boolean' ? groupByStudentOverride : !selectedStudentId;
   return (
     <div className="mb-6">
       <div className="flex gap-2 mb-2">
@@ -365,16 +460,18 @@ export function ChartTabs({ reports }: { reports: Report[] }) {
           className={`px-3 py-1 rounded ${tab === "activity" ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-800"}`}
           onClick={() => setTab("activity")}
         >
-          Activity
+          {groupByStudent ? 'Activity by Student' : 'Activity'}
         </button>
         <button
           className={`px-3 py-1 rounded ${tab === "grades" ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-800"}`}
           onClick={() => setTab("grades")}
         >
-          Grades
+          {groupByStudent ? 'Grades by Student' : 'Grades'}
         </button>
       </div>
-      {tab === "activity" ? <ActivityBarChart reports={reports} /> : <GradeChart reports={reports} />}
+      {tab === "activity" 
+        ? <ActivityBarChart reports={reports} groupByStudent={groupByStudent} studentNamesMap={studentNamesMap} /> 
+        : <GradeChart reports={reports} groupByStudent={groupByStudent} studentNamesMap={studentNamesMap} />}
     </div>
   );
 }

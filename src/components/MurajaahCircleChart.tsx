@@ -8,28 +8,10 @@ interface MurajaahCircleChartProps {
 }
 
 export function MurajaahCircleChart({ reports }: MurajaahCircleChartProps) {
-  // 1) Determine the latest Tasmi boundary (what has been memorized)
-  // Prefer explicit page_to values; otherwise fall back to highest juz boundary
-  const tasmiReports = reports.filter(r => r.type === "Tasmi");
-  const tasmiWithPages = tasmiReports.filter(r => r.page_to !== null);
-  const highestTasmiPage = tasmiWithPages.length > 0
-    ? Math.max(...tasmiWithPages.map(r => r.page_to as number))
-    : 0;
-
-  const highestTasmiJuz = tasmiReports
-    .map(r => r.juzuk)
-    .filter((j): j is number => j !== null)
-    .reduce((max, j) => Math.max(max, j), 0);
-
-  // Total pages to review is up to the latest Tasmi boundary.
-  // - If we have page info, use that exact page
-  // - Else, use the end page of the highest juz memorized (approximation)
-  const totalPagesToReview = highestTasmiPage > 0
-    ? highestTasmiPage
-    : (highestTasmiJuz > 0 ? (getPageRangeFromJuz(highestTasmiJuz)?.endPage || 20) : 20);
-
-  // Current juz is derived from that boundary
-  const currentJuz = getJuzFromPage(totalPagesToReview) || highestTasmiJuz || 1;
+  // 1) For murajaah cycles, completion should be relative to the entire Quran (30 juz / 604 pages)
+  // Regardless of latest Tasmi boundary, use 604 pages as the cycle target.
+  const totalPagesToReview = 604;
+  const currentJuz = 30;
 
   // 2) Gather all Murajaah reports
   const murajaahReports = reports.filter(r => 
@@ -69,8 +51,6 @@ export function MurajaahCircleChart({ reports }: MurajaahCircleChartProps) {
 
   // Debug logging to help understand the data
   console.log('MurajaahCircleChart Debug:', {
-    highestTasmiPage,
-    highestTasmiJuz,
     boundaryTotalPagesToReview: totalPagesToReview,
     derivedCurrentJuz: currentJuz,
     murajaahReportsCount: murajaahReports.length,
