@@ -2,6 +2,11 @@
 import React, { useState, useEffect, useMemo } from "react";
 import AdminNavbar from "@/components/admin/AdminNavbar";
 import { Card } from "@/components/ui/Card";
+import { Button } from "@/components/ui/Button";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ChevronsUpDown, Check } from "lucide-react";
+import { cn } from "@/lib/utils";
 import ClassDistributionChart from "@/components/admin/ClassDistributionChart";
 import TeacherAssignmentChart from "@/components/admin/TeacherAssignmentChart";
 
@@ -48,6 +53,7 @@ export default function AdminPage() {
   const [newStudentParentId, setNewStudentParentId] = useState("");
   const [newStudentTeacherId, setNewStudentTeacherId] = useState("");
   const [newStudentClassId, setNewStudentClassId] = useState("");
+  const [addParentOpen, setAddParentOpen] = useState(false);
   
   // Filter states
   const [searchTerm, setSearchTerm] = useState("");
@@ -59,6 +65,7 @@ export default function AdminPage() {
   const [editStudentForm, setEditStudentForm] = useState<{ name: string; parent_id: string; assigned_teacher_id: string; class_id: string }>({ name: '', parent_id: '', assigned_teacher_id: '', class_id: '' });
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState("");
+  const [editParentOpen, setEditParentOpen] = useState(false);
 
   useEffect(() => {
     async function fetchData() {
@@ -351,16 +358,54 @@ export default function AdminPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Parent (Optional)
                 </label>
-                <select
-                  className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
-                  value={newStudentParentId}
-                  onChange={e => setNewStudentParentId(e.target.value)}
-                >
-                  <option value="">Select parent (optional)</option>
-                  {parents.map(p => (
-                    <option key={p.id} value={p.id}>{p.name} ({p.email})</option>
-                  ))}
-                </select>
+                <Popover open={addParentOpen} onOpenChange={setAddParentOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={addParentOpen}
+                      className="w-full justify-between"
+                   >
+                      {newStudentParentId
+                        ? `${parents.find(p => p.id === newStudentParentId)?.name || ""} (${parents.find(p => p.id === newStudentParentId)?.email || ""})`
+                        : "Select parent (optional)"}
+                      <ChevronsUpDown className="opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[420px] p-0">
+                    <Command>
+                      <CommandInput placeholder="Search parent..." className="h-9" />
+                      <CommandList>
+                        <CommandEmpty>No parent found.</CommandEmpty>
+                        <CommandGroup>
+                          <CommandItem
+                            value="none"
+                            onSelect={() => {
+                              setNewStudentParentId("");
+                              setAddParentOpen(false);
+                            }}
+                          >
+                            No parent assigned
+                            <Check className={cn("ml-auto", newStudentParentId === "" ? "opacity-100" : "opacity-0")} />
+                          </CommandItem>
+                          {parents.map(p => (
+                            <CommandItem
+                              key={p.id}
+                              value={p.name + " " + p.email}
+                              onSelect={() => {
+                                setNewStudentParentId(p.id);
+                                setAddParentOpen(false);
+                              }}
+                            >
+                              {p.name} ({p.email})
+                              <Check className={cn("ml-auto", newStudentParentId === p.id ? "opacity-100" : "opacity-0")} />
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               </div>
               
               <div>
@@ -474,16 +519,54 @@ export default function AdminPage() {
                         </div>
                         <div>
                           <label className="block text-xs font-medium text-gray-700 mb-1">Parent</label>
-                          <select
-                            className="w-full border-gray-300 rounded-md shadow-sm p-2 border text-sm"
-                            value={editStudentForm.parent_id}
-                            onChange={e => setEditStudentForm({ ...editStudentForm, parent_id: e.target.value })}
-                          >
-                            <option value="">No parent assigned</option>
-                            {parents.map(p => (
-                              <option key={p.id} value={p.id}>{p.name} ({p.email})</option>
-                            ))}
-                          </select>
+                          <Popover open={editParentOpen} onOpenChange={setEditParentOpen}>
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant="outline"
+                                role="combobox"
+                                aria-expanded={editParentOpen}
+                                className="w-full justify-between"
+                              >
+                                {editStudentForm.parent_id
+                                  ? `${parents.find(p => p.id === editStudentForm.parent_id)?.name || ""} (${parents.find(p => p.id === editStudentForm.parent_id)?.email || ""})`
+                                  : "No parent assigned"}
+                                <ChevronsUpDown className="opacity-50" />
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[420px] p-0">
+                              <Command>
+                                <CommandInput placeholder="Search parent..." className="h-9" />
+                                <CommandList>
+                                  <CommandEmpty>No parent found.</CommandEmpty>
+                                  <CommandGroup>
+                                    <CommandItem
+                                      value="none"
+                                      onSelect={() => {
+                                        setEditStudentForm({ ...editStudentForm, parent_id: "" });
+                                        setEditParentOpen(false);
+                                      }}
+                                    >
+                                      No parent assigned
+                                      <Check className={cn("ml-auto", editStudentForm.parent_id === "" ? "opacity-100" : "opacity-0")} />
+                                    </CommandItem>
+                                    {parents.map(p => (
+                                      <CommandItem
+                                        key={p.id}
+                                        value={p.name + " " + p.email}
+                                        onSelect={() => {
+                                          setEditStudentForm({ ...editStudentForm, parent_id: p.id });
+                                          setEditParentOpen(false);
+                                        }}
+                                      >
+                                        {p.name} ({p.email})
+                                        <Check className={cn("ml-auto", editStudentForm.parent_id === p.id ? "opacity-100" : "opacity-0")} />
+                                      </CommandItem>
+                                    ))}
+                                  </CommandGroup>
+                                </CommandList>
+                              </Command>
+                            </PopoverContent>
+                          </Popover>
                         </div>
                         <div>
                           <label className="block text-xs font-medium text-gray-700 mb-1">Teacher</label>
