@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
           // Get juz test data (if table exists)
           client
             .from('juz_tests')
-            .select('student_id, juz_number, test_date, passed, total_percentage')
+            .select('student_id, juz_number, test_date, passed, total_percentage, examiner_name')
             .in('student_id', studentIds)
             .order('juz_number', { ascending: false })
             .then(result => {

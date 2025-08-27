@@ -429,7 +429,7 @@ export default function AdminReportsPage() {
                         const extended = student as StudentProgressData & {
                           highest_memorized_juz?: number;
                           highest_completed_juz?: number;
-                          latest_test_result?: { juz_number: number; test_date: string; passed?: boolean; total_percentage?: number } | null;
+                          latest_test_result?: { juz_number: number; test_date: string; passed?: boolean; total_percentage?: number; examiner_name?: string } | null;
                           juz_test_gap?: number;
                         };
                         const rowClass = viewMode === 'juz_tests'
@@ -478,12 +478,14 @@ export default function AdminReportsPage() {
                                 {extended.latest_test_result ? (
                                   <div>
                                     <div className="font-medium">Juz {extended.latest_test_result.juz_number}</div>
-                                    {typeof extended.latest_test_result.total_percentage !== 'undefined' && (
-                                      <div className={`text-xs font-medium ${extended.latest_test_result?.passed ? 'text-green-600' : 'text-red-600'}`}>
-                                        {extended.latest_test_result.total_percentage}% ({extended.latest_test_result.passed ? 'PASSED' : 'FAILED'})
-                                      </div>
+                                    <div className={`text-xs font-medium ${extended.latest_test_result?.passed ? 'text-green-600' : 'text-red-600'}`}>
+                                      {extended.latest_test_result.examiner_name === 'Historical Entry'
+                                        ? (extended.latest_test_result.passed ? 'PASSED' : 'FAILED')
+                                        : `${extended.latest_test_result.total_percentage}% (${extended.latest_test_result.passed ? 'PASSED' : 'FAILED'})`}
+                                    </div>
+                                    {extended.latest_test_result.examiner_name !== 'Historical Entry' && (
+                                      <div className="text-xs text-gray-500">{formatAbsoluteDate(student.last_read_date)}</div>
                                     )}
-                                    <div className="text-xs text-gray-500">{formatAbsoluteDate(student.last_read_date)}</div>
                                   </div>
                                 ) : (
                                   <span className="text-gray-400 italic">No tests</span>

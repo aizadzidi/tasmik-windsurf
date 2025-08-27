@@ -285,7 +285,7 @@ export default function TeacherPage() {
             // Get highest tested juz (passed or failed)
             supabase
               .from("juz_tests")
-              .select("juz_number, test_date, passed, total_percentage")
+              .select("juz_number, test_date, passed, total_percentage, examiner_name")
               .eq("student_id", student.id)
               .order("juz_number", { ascending: false })
               .limit(1)
@@ -732,6 +732,7 @@ export default function TeacherPage() {
                           test_date: string;
                           passed: boolean;
                           total_percentage: number;
+                          examiner_name?: string;
                         };
                       };
 
@@ -806,12 +807,15 @@ export default function TeacherPage() {
                                               ? 'text-green-600' 
                                               : 'text-red-600'
                                           }`}>
-                                            {extendedStudent.latest_test_result.total_percentage}% 
-                                            ({extendedStudent.latest_test_result.passed ? 'PASSED' : 'FAILED'})
+                                            {extendedStudent.latest_test_result.examiner_name === 'Historical Entry'
+                                              ? (extendedStudent.latest_test_result.passed ? 'PASSED' : 'FAILED')
+                                              : `${extendedStudent.latest_test_result.total_percentage}% (${extendedStudent.latest_test_result.passed ? 'PASSED' : 'FAILED'})`}
                                           </div>
-                                          <div className="text-xs text-gray-500">
-                                            {formatAbsoluteDate(student.last_read_date)}
-                                          </div>
+                                          {extendedStudent.latest_test_result.examiner_name !== 'Historical Entry' && (
+                                            <div className="text-xs text-gray-500">
+                                              {formatAbsoluteDate(student.last_read_date)}
+                                            </div>
+                                          )}
                                         </>
                                       ) : (
                                         <div className="text-gray-400 italic">No tests</div>
