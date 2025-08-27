@@ -33,13 +33,7 @@ export function MultiMurajaahConcentricChart({ students, reports, size = 260 }: 
         ...tasmiReports.map(r => (r.page_to !== null && !isNaN(r.page_to) ? r.page_to : 0)),
         0
       );
-      const maxTasmiJuz = Math.max(
-        ...tasmiReports.map(r => (r.juzuk !== null && !isNaN(r.juzuk) ? r.juzuk : 0)),
-        0
-      );
-      const juzEndPage = maxTasmiJuz > 0 ? (getPageRangeFromJuz(maxTasmiJuz)?.endPage || 0) : 0;
-      const targetEndPage = Math.max(maxTasmiPageTo, juzEndPage);
-      const targetPages = targetEndPage > 0 ? targetEndPage : totalPagesToReview;
+      const targetPages = maxTasmiPageTo > 0 ? maxTasmiPageTo : totalPagesToReview;
       const pageReviewCounts = new Map<number, number>();
       for (let p = 1; p <= targetPages; p++) pageReviewCounts.set(p, 0);
       murajaahReports.forEach(r => {

@@ -8,19 +8,13 @@ interface MurajaahCircleChartProps {
 }
 
 export function MurajaahCircleChart({ reports }: MurajaahCircleChartProps) {
-  // Determine target boundary from latest Tasmi progress (max page_to or highest juz end page)
+  // Determine target boundary from latest Tasmi progress (use latest max page_to only)
   const tasmiReports = reports.filter(r => r.type === 'Tasmi');
   const maxTasmiPageTo = Math.max(
     ...tasmiReports.map(r => (r.page_to !== null && !isNaN(r.page_to) ? r.page_to : 0)),
     0
   );
-  const maxTasmiJuz = Math.max(
-    ...tasmiReports.map(r => (r.juzuk !== null && !isNaN(r.juzuk) ? r.juzuk : 0)),
-    0
-  );
-  const juzEndPage = maxTasmiJuz > 0 ? (getPageRangeFromJuz(maxTasmiJuz)?.endPage || 0) : 0;
-  const targetEndPage = Math.max(maxTasmiPageTo, juzEndPage);
-  const totalPagesToReview = targetEndPage > 0 ? targetEndPage : 604;
+  const totalPagesToReview = maxTasmiPageTo > 0 ? maxTasmiPageTo : 604;
   const currentJuz = getJuzFromPage(totalPagesToReview) || 30;
 
   // 2) Gather all Murajaah reports

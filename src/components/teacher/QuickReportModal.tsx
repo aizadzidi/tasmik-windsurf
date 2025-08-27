@@ -128,7 +128,6 @@ export default function QuickReportModal({
       const finalPageTo = isPageRange ? newPageTo : newPageFrom;
 
       // Create new report with actual submission date
-      // If multiple surahs selected, create one row per surah
       const baseRow = {
         teacher_id: userId,
         student_id: student.id,
@@ -142,8 +141,8 @@ export default function QuickReportModal({
         date: submissionDate
       } as const;
 
-      // Determine surahs to insert
-      let selectedSurahs: string[] = [];
+      // Determine surah label to insert (grouped for multi-surah)
+      let surahLabel: string;
       if (isMultiSurah) {
         const startIdx = SURAHS.indexOf(surahFrom);
         const endIdx = SURAHS.indexOf(surahTo);
@@ -154,14 +153,14 @@ export default function QuickReportModal({
         }
         const from = Math.min(startIdx, endIdx);
         const to = Math.max(startIdx, endIdx);
-        selectedSurahs = SURAHS.slice(from, to + 1);
+        surahLabel = `${SURAHS[from]} - ${SURAHS[to]}`;
       } else {
-        selectedSurahs = [form.surah];
+        surahLabel = form.surah;
       }
 
-      const rows = selectedSurahs.map(s => ({ ...baseRow, surah: s }));
+      const row = { ...baseRow, surah: surahLabel };
 
-      const { error: insertError } = await supabase.from("reports").insert(rows);
+      const { error: insertError } = await supabase.from("reports").insert(row);
 
       if (insertError) {
         setError(insertError.message);
