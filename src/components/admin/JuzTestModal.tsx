@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { getPageRangeFromJuz } from "@/lib/quranMapping";
 
 interface JuzTestModalProps {
   isOpen: boolean;
@@ -58,17 +59,18 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
 
   // Calculate page range based on test category and juz number
   const calculatePageRange = () => {
-    if (formData.test_hizb) {
-      // Hizb is half a juz (approximately 10-11 pages)
-      const juzStartPage = (juzNumber - 1) * 20 + 1;
-      const hizb1End = juzStartPage + 10;
-      return { from: juzStartPage, to: hizb1End };
-    } else {
-      // Default to full juz: Juz 1 = pages 1-21, Juz 2 = pages 22-41, etc.
-      const startPage = (juzNumber - 1) * 20 + 1;
-      const endPage = startPage + 20; // 21 pages total (1-21, 22-41, etc.)
-      return { from: startPage, to: endPage };
+    const range = getPageRangeFromJuz(juzNumber);
+    if (!range) {
+      return { from: 0, to: 0 };
     }
+    if (formData.test_hizb) {
+      // Split the actual juz range into two halves
+      const totalPages = range.endPage - range.startPage + 1; // usually 21 except last Juz
+      const firstHalfSize = Math.ceil(totalPages / 2);
+      const hizb1End = range.startPage + firstHalfSize - 1;
+      return { from: range.startPage, to: hizb1End };
+    }
+    return { from: range.startPage, to: range.endPage };
   };
 
   // Update page range when test categories change
