@@ -195,20 +195,36 @@ export default function AdminExamPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {Object.entries(filteredResults.reduce((acc, r) => { (acc[r.class] = acc[r.class] || []).push(r); return acc; }, {} as Record<string, typeof filteredResults>)).map(([className, results]) => (
-                  <React.Fragment key={className}>
-                    <tr className="bg-gray-200"><td colSpan={selectedExam?.type === "Exam" ? 5 : 4} className="px-4 py-2 font-bold text-gray-800">{className}</td></tr>
-                    {results.map((r, i) => (
-                      <tr key={i}>
-                        <td className="px-4 py-2 whitespace-nowrap">{r.student}</td>
-                        <td className="px-4 py-2 whitespace-nowrap">{r.subject}</td>
-                        <td className="px-4 py-2 whitespace-nowrap">{r.mark}</td>
-                        <td className="px-4 py-2 whitespace-nowrap">{r.grade}</td>
-                        {selectedExam?.type === "Exam" && <td className="px-4 py-2 whitespace-nowrap text-xs">{conductAxes.map(ax => `${ax.charAt(0).toUpperCase()}: ${r.conduct?.[ax] ?? '-'}`).join(", ")}</td>}
-                      </tr>
-                    ))}
-                  </React.Fragment>
-                ))}
+                {Object.entries(filteredResults.reduce((acc, r) => { (acc[r.class] = acc[r.class] || []).push(r); return acc; }, {} as Record<string, typeof filteredResults>)).map(([className, results]) => {
+                  const studentGroups = results.reduce((acc, r) => { (acc[r.student] = acc[r.student] || []).push(r); return acc; }, {} as Record<string, typeof results>);
+                  return (
+                    <React.Fragment key={className}>
+                      <tr className="bg-gray-200"><td colSpan={selectedExam?.type === "Exam" ? 5 : 4} className="px-4 py-2 font-bold text-gray-800">{className}</td></tr>
+                      {Object.entries(studentGroups).map(([studentName, studentResults]) => (
+                        <tr key={studentName}>
+                          <td className="px-4 py-2 whitespace-nowrap font-medium">{studentName}</td>
+                          <td className="px-4 py-2">
+                            <div className="space-y-1">
+                              {studentResults.map((r, i) => (
+                                <div key={i} className="text-sm">
+                                  <span className="font-medium">{r.subject}:</span> {r.mark} ({r.grade})
+                                  {selectedExam?.type === "Exam" && r.conduct && (
+                                    <span className="text-xs text-gray-500 ml-2">
+                                      {conductAxes.map(ax => `${ax.charAt(0).toUpperCase()}: ${r.conduct?.[ax] ?? '-'}`).join(", ")}
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="px-4 py-2 text-center text-gray-400">-</td>
+                          <td className="px-4 py-2 text-center text-gray-400">-</td>
+                          {selectedExam?.type === "Exam" && <td className="px-4 py-2 text-center text-gray-400">-</td>}
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>

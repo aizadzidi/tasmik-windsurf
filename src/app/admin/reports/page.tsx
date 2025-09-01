@@ -60,7 +60,7 @@ export default function AdminReportsPage() {
   
   // Juz Test modal state
   const [showJuzTestModal, setShowJuzTestModal] = useState(false);
-  const [selectedStudentForTest, setSelectedStudentForTest] = useState<{ id: string; name: string } | null>(null);
+  const [selectedStudentForTest, setSelectedStudentForTest] = useState<{ id: string; name: string; teacher_name?: string } | null>(null);
   const [selectedJuzNumber, setSelectedJuzNumber] = useState<number>(1);
   
   // View Records modal state
@@ -117,7 +117,7 @@ export default function AdminReportsPage() {
         teacher_name?: string; 
         class_name?: string; 
         memorized_juzuks?: number[]; 
-        juz_tests?: { passed: boolean; juz_number: number; test_date: string; total_percentage?: number }[]; 
+        juz_tests?: { passed: boolean; juz_number: number; test_date: string; total_percentage?: number; test_hizb?: boolean }[]; 
         latestTasmikReport?: any; 
         latestMurajaahReport?: any; 
         memorization_completed?: boolean; 
@@ -202,7 +202,7 @@ export default function AdminReportsPage() {
   }, []);
 
   // Modal handler functions
-  const handleOpenJuzTestModal = (student: { id: string; name: string }, juzNumber: number) => {
+  const handleOpenJuzTestModal = (student: { id: string; name: string; teacher_name?: string }, juzNumber: number) => {
     setSelectedStudentForTest(student);
     setSelectedJuzNumber(juzNumber);
     setShowJuzTestModal(true);
@@ -429,7 +429,7 @@ export default function AdminReportsPage() {
                         const extended = student as StudentProgressData & {
                           highest_memorized_juz?: number;
                           highest_completed_juz?: number;
-                          latest_test_result?: { juz_number: number; test_date: string; passed?: boolean; total_percentage?: number; examiner_name?: string } | null;
+                          latest_test_result?: { juz_number: number; test_date: string; passed?: boolean; total_percentage?: number; examiner_name?: string; test_hizb?: boolean } | null;
                           juz_test_gap?: number;
                         };
                         const rowClass = viewMode === 'juz_tests'
@@ -472,12 +472,26 @@ export default function AdminReportsPage() {
                           {viewMode === 'juz_tests' ? (
                             <>
                               <td className="py-3 px-4 text-gray-700">
-                                Memorized: Juz {extended.highest_memorized_juz || 0}
+                                {(() => {
+                                  // Show Hizb if the latest passed test was a Hizb test
+                                  const latestTest = extended.latest_test_result;
+                                  if (latestTest && latestTest.passed && latestTest.test_hizb) {
+                                    const hizbNumber = (latestTest.juz_number - 1) * 2 + 1;
+                                    return `Hizb ${hizbNumber}`;
+                                  }
+                                  // Otherwise show Juz from memorization
+                                  return `Memorized: Juz ${extended.highest_memorized_juz || 0}`;
+                                })()}
                               </td>
                               <td className="py-3 px-4 text-gray-700">
                                 {extended.latest_test_result ? (
                                   <div>
-                                    <div className="font-medium">Juz {extended.latest_test_result.juz_number}</div>
+                                    <div className="font-medium">
+                                      {extended.latest_test_result.test_hizb 
+                                        ? `Hizb ${(extended.latest_test_result.juz_number - 1) * 2 + 1}`
+                                        : `Juz ${extended.latest_test_result.juz_number}`
+                                      }
+                                    </div>
                                     <div className={`text-xs font-medium ${extended.latest_test_result?.passed ? 'text-green-600' : 'text-red-600'}`}>
                                       {extended.latest_test_result.examiner_name === 'Historical Entry'
                                         ? (extended.latest_test_result.passed ? 'PASSED' : 'FAILED')
@@ -507,7 +521,7 @@ export default function AdminReportsPage() {
                                   <button 
                                     onClick={() => {
                                       const nextJuz = Math.min((extended.highest_memorized_juz || 1), 30);
-                                      handleOpenJuzTestModal({ id: student.id, name: student.name }, nextJuz);
+                                      handleOpenJuzTestModal({ id: student.id, name: student.name, teacher_name: student.teacher_name || undefined }, nextJuz);
                                     }}
                                     className="text-purple-600 hover:text-purple-800 text-sm font-medium"
                                   >
@@ -571,7 +585,9 @@ export default function AdminReportsPage() {
               }}
               studentId={selectedStudentForTest.id}
               studentName={selectedStudentForTest.name}
-              juzNumber={selectedJuzNumber}
+              defaultJuzNumber={selectedJuzNumber}
+              teacherName={selectedStudentForTest.teacher_name}
+              availableTeachers={uniqueTeachers}
               onSubmit={() => {
                 // Refresh the data after successful submission
                 fetchStudentProgress();

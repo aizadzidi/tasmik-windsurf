@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+import EditJuzTestForm from './EditJuzTestForm';
 
 interface JuzTest {
   id: string;
@@ -20,6 +21,15 @@ interface JuzTest {
   page_to?: number;
   test_juz?: boolean;
   test_hizb?: boolean;
+  section2_scores?: {
+    memorization?: { [key: string]: number };
+    middle_verse?: { [key: string]: number };
+    last_words?: { [key: string]: number };
+    reversal_reading?: { [key: string]: number };
+    verse_position?: { [key: string]: number };
+    read_verse_no?: { [key: string]: number };
+    understanding?: { [key: string]: number };
+  };
 }
 
 interface EditJuzTestFormData {
@@ -34,6 +44,18 @@ interface EditJuzTestFormData {
   page_to?: number;
   test_juz: boolean;
   test_hizb: boolean;
+  section2_scores?: {
+    memorization?: { [key: string]: number };
+    middle_verse?: { [key: string]: number };
+    last_words?: { [key: string]: number };
+    reversal_reading?: { [key: string]: number };
+    verse_position?: { [key: string]: number };
+    read_verse_no?: { [key: string]: number };
+    understanding?: { [key: string]: number };
+  };
+  should_repeat?: boolean;
+  passed?: boolean;
+  total_percentage?: number;
 }
 
 interface JuzTestHistoryModalProps {
@@ -99,6 +121,110 @@ export default function JuzTestHistoryModal({
     return Math.round((total / 10) * 100);
   };
 
+  // Function to get question category configuration
+  const getQuestionConfig = (isHizbTest: boolean = false) => {
+    if (isHizbTest) {
+      return {
+        memorization: { title: "Repeat and Continue / الإعادة والمتابعة", questionNumbers: [1, 2, 3] },
+        middle_verse: { title: "Middle of the verse / وسط الآية", questionNumbers: [1] },
+        last_words: { title: "Last of the verse / آخر الآية", questionNumbers: [1] },
+        reversal_reading: { title: "Reversal reading / القراءة بالعكس", questionNumbers: [1, 2] },
+        verse_position: { title: "Position of the verse / موضع الآية", questionNumbers: [1, 2] },
+        read_verse_no: { title: "Read verse number / قراءة رقم الآية", questionNumbers: [1] },
+        understanding: { title: "Understanding of the verse / فهم الآية", questionNumbers: [1] }
+      };
+    } else {
+      return {
+        memorization: { title: "Repeat and Continue / الإعادة والمتابعة", questionNumbers: [1, 2, 3, 4, 5] },
+        middle_verse: { title: "Middle of the verse / وسط الآية", questionNumbers: [1, 2] },
+        last_words: { title: "Last of the verse / آخر الآية", questionNumbers: [1, 2] },
+        reversal_reading: { title: "Reversal reading / القراءة بالعكس", questionNumbers: [1, 2, 3] },
+        verse_position: { title: "Position of the verse / موضع الآية", questionNumbers: [1, 2, 3] },
+        read_verse_no: { title: "Read verse number / قراءة رقم الآية", questionNumbers: [1, 2, 3] },
+        understanding: { title: "Understanding of the verse / فهم الآية", questionNumbers: [1, 2, 3] }
+      };
+    }
+  };
+
+  // Function to render detailed scores
+  const renderDetailedScores = (test: JuzTest) => {
+    if (!test.section2_scores) return null;
+
+    const config = getQuestionConfig(test.test_hizb || false);
+    
+    return (
+      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+        {Object.entries(config).map(([categoryKey, categoryConfig]) => {
+          const categoryScores = test.section2_scores?.[categoryKey as keyof typeof test.section2_scores] || {};
+          const totalScore = Object.values(categoryScores).reduce((sum, score) => sum + (score || 0), 0);
+          const maxScore = categoryConfig.questionNumbers.length * 5;
+          const percentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
+          
+          return (
+            <div key={categoryKey} className="bg-white/70 rounded p-2 border border-gray-200">
+              <div className="font-medium text-gray-700 mb-1">{categoryConfig.title}</div>
+              <div className="flex justify-between items-center">
+                <div className="flex gap-1">
+                  {categoryConfig.questionNumbers.map(questionNum => {
+                    const score = categoryScores[String(questionNum)] || 0;
+                    return (
+                      <span key={questionNum} className={`inline-flex items-center justify-center w-5 h-5 rounded text-xs font-medium ${
+                        score >= 4 ? 'bg-green-100 text-green-700' :
+                        score >= 3 ? 'bg-yellow-100 text-yellow-700' :
+                        score >= 1 ? 'bg-orange-100 text-orange-700' :
+                        'bg-red-100 text-red-700'
+                      }`}>
+                        {score}
+                      </span>
+                    );
+                  })}
+                </div>
+                <div className={`font-semibold ${
+                  percentage >= 80 ? 'text-green-600' :
+                  percentage >= 60 ? 'text-yellow-600' :
+                  'text-red-600'
+                }`}>
+                  {percentage}%
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        
+        {/* Tajweed and Recitation scores */}
+        <div className="bg-white/70 rounded p-2 border border-gray-200">
+          <div className="font-medium text-gray-700 mb-1">Tajweed / التجويد</div>
+          <div className="flex justify-between items-center">
+            <span className={`inline-flex items-center justify-center w-5 h-5 rounded text-xs font-medium ${
+              (test.tajweed_score || 0) >= 4 ? 'bg-green-100 text-green-700' :
+              (test.tajweed_score || 0) >= 3 ? 'bg-yellow-100 text-yellow-700' :
+              (test.tajweed_score || 0) >= 1 ? 'bg-orange-100 text-orange-700' :
+              'bg-red-100 text-red-700'
+            }`}>
+              {test.tajweed_score || 0}
+            </span>
+            <div className="font-semibold text-gray-600">{test.tajweed_score || 0}/5</div>
+          </div>
+        </div>
+        
+        <div className="bg-white/70 rounded p-2 border border-gray-200">
+          <div className="font-medium text-gray-700 mb-1">Good recitation / حسن الأداء</div>
+          <div className="flex justify-between items-center">
+            <span className={`inline-flex items-center justify-center w-5 h-5 rounded text-xs font-medium ${
+              (test.recitation_score || 0) >= 4 ? 'bg-green-100 text-green-700' :
+              (test.recitation_score || 0) >= 3 ? 'bg-yellow-100 text-yellow-700' :
+              (test.recitation_score || 0) >= 1 ? 'bg-orange-100 text-orange-700' :
+              'bg-red-100 text-red-700'
+            }`}>
+              {test.recitation_score || 0}
+            </span>
+            <div className="font-semibold text-gray-600">{test.recitation_score || 0}/5</div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const handleEdit = (test: JuzTest) => {
     setEditingTest(test);
     setShowEditForm(true);
@@ -111,19 +237,21 @@ export default function JuzTestHistoryModal({
     }
 
     try {
-      const { error } = await supabase
-        .from('juz_tests')
-        .delete()
-        .eq('id', testId);
+      const response = await fetch(`/api/admin/juz-tests?id=${testId}`, {
+        method: 'DELETE',
+      });
 
-      if (error) throw error;
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete test record');
+      }
 
       setTests(tests.filter(test => test.id !== testId));
       setDeleteConfirm(null);
       onRefresh?.();
     } catch (error) {
       console.error('Error deleting test:', error);
-      alert('Failed to delete test record. Please try again.');
+      alert(`Failed to delete test record: ${error instanceof Error ? error.message : 'Please try again.'}`);
     }
   };
 
@@ -131,52 +259,40 @@ export default function JuzTestHistoryModal({
     if (!editingTest) return;
 
     try {
-      const totalPercentage = calculateTotalPercentage(formData.tajweed_score, formData.recitation_score);
-      const passed = totalPercentage >= 60;
+      const response = await fetch(`/api/admin/juz-tests?id=${editingTest.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData),
+      });
 
-      const updateData = {
-        juz_number: formData.juz_number,
-        test_date: formData.test_date,
-        examiner_name: formData.examiner_name || undefined,
-        halaqah_name: formData.halaqah_name || undefined,
-        tajweed_score: formData.tajweed_score,
-        recitation_score: formData.recitation_score,
-        total_percentage: totalPercentage,
-        passed: passed,
-        remarks: formData.remarks || undefined,
-        page_from: formData.page_from || undefined,
-        page_to: formData.page_to || undefined,
-        test_juz: formData.test_juz,
-        test_hizb: formData.test_hizb
-      };
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to update test record');
+      }
 
-      const { error } = await supabase
-        .from('juz_tests')
-        .update(updateData)
-        .eq('id', editingTest.id);
-
-      if (error) throw error;
-
-      setTests(tests.map(test => 
-        test.id === editingTest.id 
-          ? { ...test, ...updateData } as JuzTest
-          : test
-      ));
-
+      // Refresh tests from server
+      await fetchTests();
+      onRefresh?.();
+      
       setShowEditForm(false);
       setEditingTest(null);
-      onRefresh?.();
     } catch (error) {
       console.error('Error updating test:', error);
-      alert('Failed to update test record. Please try again.');
+      alert(`Failed to update test record: ${error instanceof Error ? error.message : 'Please try again.'}`);
     }
   };
 
-  // Simple filter by search term
-  const filteredTests = tests.filter(test => 
-    test.juz_number.toString().includes(searchTerm) ||
-    (test.examiner_name || '').toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Simple filter by search term - includes hizb number search
+  const filteredTests = tests.filter(test => {
+    const displayNumber = test.test_hizb ? (test.juz_number - 1) * 2 + 1 : test.juz_number;
+    const displayType = test.test_hizb ? 'hizb' : 'juz';
+    
+    return displayNumber.toString().includes(searchTerm) ||
+           displayType.toLowerCase().includes(searchTerm.toLowerCase()) ||
+           (test.examiner_name || '').toLowerCase().includes(searchTerm.toLowerCase());
+  });
 
   const passedCount = tests.filter(t => t.passed).length;
   const totalTests = tests.length;
@@ -217,7 +333,7 @@ export default function JuzTestHistoryModal({
             <div className="mt-4">
               <input
                 type="text"
-                placeholder="Search by Juz number or examiner..."
+                placeholder="Search by Juz/Hizb number or examiner..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full px-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -258,7 +374,7 @@ export default function JuzTestHistoryModal({
                     </svg>
                   </div>
                   <p className="text-gray-600 mb-2">No test records found</p>
-                  <p className="text-gray-500 text-sm">This student hasn't taken any Juz tests yet</p>
+                  <p className="text-gray-500 text-sm">This student hasn&apos;t taken any Juz tests yet</p>
                 </>
               ) : (
                 <>
@@ -273,7 +389,7 @@ export default function JuzTestHistoryModal({
               )}
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {filteredTests.map((test) => (
                 <div
                   key={test.id}
@@ -281,76 +397,90 @@ export default function JuzTestHistoryModal({
                 >
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-medium ${
+                      <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg ${
                         test.passed ? 'bg-green-500' : 'bg-red-500'
                       }`}>
                         {test.juz_number}
                       </div>
                       <div>
-                        <h3 className="font-medium text-gray-900">Juz {test.juz_number}</h3>
-                        {test.examiner_name !== 'Historical Entry' && (
-                          <p className="text-sm text-gray-500">
-                            {new Date(test.test_date).toLocaleDateString('en-US', {
-                              month: 'short',
-                              day: 'numeric',
-                              year: 'numeric'
-                            })}
-                          </p>
-                        )}
+                        <h3 className="font-bold text-lg text-gray-900">
+                          {test.test_hizb ? `Hizb ${(test.juz_number - 1) * 2 + 1}` : `Juz ${test.juz_number}`}
+                        </h3>
+                        <div className="flex flex-col gap-1">
+                          {test.examiner_name !== 'Historical Entry' && (
+                            <p className="text-sm text-gray-500">
+                              {new Date(test.test_date).toLocaleDateString('en-US', {
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric'
+                              })}
+                            </p>
+                          )}
+                          <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium w-fit ${
+                            test.passed 
+                              ? 'bg-green-100 text-green-800' 
+                              : 'bg-red-100 text-red-800'
+                          }`}>
+                            {test.examiner_name === 'Historical Entry' 
+                              ? (test.passed ? 'Historical Pass' : 'Historical Fail') 
+                              : `${test.total_percentage}% ${test.passed ? 'PASSED' : 'FAILED'}`}
+                          </div>
+                        </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                        test.passed 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-red-100 text-red-800'
-                      }`}>
-                        {test.examiner_name === 'Historical Entry' ? (test.passed ? 'Passed' : 'Failed') : `${test.total_percentage}%`}
-                      </div>
-                      <div className="flex gap-1">
-                        <button
-                          onClick={() => handleEdit(test)}
-                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title="Edit test"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                          </svg>
-                        </button>
-                        <button
-                          onClick={() => handleDelete(test.id)}
-                          className={`p-1.5 rounded-lg transition-colors ${
-                            deleteConfirm === test.id
-                              ? 'text-white bg-red-600 hover:bg-red-700'
-                              : 'text-gray-400 hover:text-red-600 hover:bg-red-50'
-                          }`}
-                          title={deleteConfirm === test.id ? 'Click again to confirm' : 'Delete test'}
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                      </div>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => handleEdit(test)}
+                        className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        title="Edit test"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => handleDelete(test.id)}
+                        className={`p-1.5 rounded-lg transition-colors ${
+                          deleteConfirm === test.id
+                            ? 'text-white bg-red-600 hover:bg-red-700'
+                            : 'text-gray-400 hover:text-red-600 hover:bg-red-50'
+                        }`}
+                        title={deleteConfirm === test.id ? 'Click again to confirm' : 'Delete test'}
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
                     </div>
                   </div>
 
                   {test.examiner_name !== 'Historical Entry' && (
-                    <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div className="grid grid-cols-2 gap-4 text-sm mb-3">
                       <div>
                         <span className="text-gray-500">Examiner:</span>
                         <p className="font-medium">{test.examiner_name || 'Not specified'}</p>
                       </div>
                       <div>
-                        <span className="text-gray-500">Scores:</span>
+                        <span className="text-gray-500">Summary Scores:</span>
                         <p className="font-medium">
-                          T: {test.tajweed_score || 0}/5 • R: {test.recitation_score || 0}/5
+                          Tajweed: {test.tajweed_score || 0}/5 • Recitation: {test.recitation_score || 0}/5
                         </p>
                       </div>
                     </div>
                   )}
 
+                  {/* Detailed Scores Section */}
+                  {test.section2_scores && (
+                    <div>
+                      <div className="text-sm font-semibold text-gray-700 mb-2 border-b border-gray-200 pb-1">
+                        Detailed Category Breakdown:
+                      </div>
+                      {renderDetailedScores(test)}
+                    </div>
+                  )}
+
                   {test.should_repeat && (
-                    <div className="mt-2">
+                    <div className="mt-3">
                       <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
                         Needs Repetition
                       </span>
@@ -358,8 +488,10 @@ export default function JuzTestHistoryModal({
                   )}
 
                   {test.examiner_name !== 'Historical Entry' && test.remarks && (
-                    <div className="mt-3 pt-3 border-t border-gray-100">
-                      <p className="text-sm text-gray-600 italic">"{test.remarks}"</p>
+                    <div className="mt-3 pt-3 border-t border-gray-200">
+                      <p className="text-sm text-gray-600">
+                        <span className="font-medium">Remarks:</span> <em>&quot;{test.remarks}&quot;</em>
+                      </p>
                     </div>
                   )}
                 </div>
@@ -384,145 +516,3 @@ export default function JuzTestHistoryModal({
   );
 }
 
-// Edit Form Component - Simplified
-interface EditJuzTestFormProps {
-  test: JuzTest;
-  onSave: (formData: EditJuzTestFormData) => void;
-  onCancel: () => void;
-}
-
-function EditJuzTestForm({ test, onSave, onCancel }: EditJuzTestFormProps) {
-  const [formData, setFormData] = useState<EditJuzTestFormData>({
-    juz_number: test.juz_number,
-    test_date: test.test_date,
-    examiner_name: test.examiner_name || '',
-    halaqah_name: test.halaqah_name || '',
-    tajweed_score: test.tajweed_score || 0,
-    recitation_score: test.recitation_score || 0,
-    remarks: test.remarks || '',
-    page_from: test.page_from,
-    page_to: test.page_to,
-    test_juz: test.test_juz || true,
-    test_hizb: test.test_hizb || false
-  });
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onSave(formData);
-  };
-
-  const totalPercentage = Math.round(((formData.tajweed_score + formData.recitation_score) / 10) * 100);
-  const willPass = totalPercentage >= 60;
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-60 p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[85vh] overflow-y-auto">
-        <div className="p-6 border-b border-gray-100">
-          <h3 className="text-lg font-semibold text-gray-900">Edit Test Record</h3>
-          <p className="text-gray-500 text-sm">Juz {test.juz_number}</p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Juz Number</label>
-              <select
-                value={formData.juz_number}
-                onChange={(e) => setFormData({ ...formData, juz_number: parseInt(e.target.value) })}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              >
-                {Array.from({ length: 30 }, (_, i) => (
-                  <option key={i + 1} value={i + 1}>Juz {i + 1}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Test Date</label>
-              <input
-                type="date"
-                value={formData.test_date}
-                onChange={(e) => setFormData({ ...formData, test_date: e.target.value })}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Examiner Name</label>
-            <input
-              type="text"
-              value={formData.examiner_name}
-              onChange={(e) => setFormData({ ...formData, examiner_name: e.target.value })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="Enter examiner name"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Tajweed Score</label>
-              <input
-                type="number"
-                min="0"
-                max="5"
-                value={formData.tajweed_score}
-                onChange={(e) => setFormData({ ...formData, tajweed_score: parseInt(e.target.value) || 0 })}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Recitation Score</label>
-              <input
-                type="number"
-                min="0"
-                max="5"
-                value={formData.recitation_score}
-                onChange={(e) => setFormData({ ...formData, recitation_score: parseInt(e.target.value) || 0 })}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              />
-            </div>
-          </div>
-
-          {/* Score Preview */}
-          <div className={`p-3 rounded-lg ${willPass ? 'bg-green-50' : 'bg-red-50'}`}>
-            <div className="text-sm text-gray-600 mb-1">Total Score:</div>
-            <div className={`font-semibold ${willPass ? 'text-green-700' : 'text-red-700'}`}>
-              {totalPercentage}% - {willPass ? 'PASS' : 'FAIL'}
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Remarks</label>
-            <textarea
-              value={formData.remarks}
-              onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              rows={3}
-              placeholder="Optional remarks or notes..."
-            />
-          </div>
-
-          <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
-            <button
-              type="button"
-              onClick={onCancel}
-              className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors"
-            >
-              Save Changes
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}

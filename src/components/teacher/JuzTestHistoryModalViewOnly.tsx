@@ -14,6 +14,16 @@ interface JuzTest {
   tajweed_score?: number;
   recitation_score?: number;
   remarks?: string;
+  test_hizb?: boolean;
+  section2_scores?: {
+    memorization?: { [key: string]: number };
+    middle_verse?: { [key: string]: number };
+    last_words?: { [key: string]: number };
+    reversal_reading?: { [key: string]: number };
+    verse_position?: { [key: string]: number };
+    read_verse_no?: { [key: string]: number };
+    understanding?: { [key: string]: number };
+  };
 }
 
 interface JuzTestHistoryModalViewOnlyProps {
@@ -77,6 +87,110 @@ export default function JuzTestHistoryModalViewOnly({
 
   const passedCount = tests.filter(t => t.passed).length;
   const totalTests = tests.length;
+
+  // Function to get question category configuration
+  const getQuestionConfig = (isHizbTest: boolean = false) => {
+    if (isHizbTest) {
+      return {
+        memorization: { title: "Repeat and Continue / الإعادة والمتابعة", questionNumbers: [1, 2, 3] },
+        middle_verse: { title: "Middle of the verse / وسط الآية", questionNumbers: [1] },
+        last_words: { title: "Last of the verse / آخر الآية", questionNumbers: [1] },
+        reversal_reading: { title: "Reversal reading / القراءة بالعكس", questionNumbers: [1, 2] },
+        verse_position: { title: "Position of the verse / موضع الآية", questionNumbers: [1, 2] },
+        read_verse_no: { title: "Read verse number / قراءة رقم الآية", questionNumbers: [1] },
+        understanding: { title: "Understanding of the verse / فهم الآية", questionNumbers: [1] }
+      };
+    } else {
+      return {
+        memorization: { title: "Repeat and Continue / الإعادة والمتابعة", questionNumbers: [1, 2, 3, 4, 5] },
+        middle_verse: { title: "Middle of the verse / وسط الآية", questionNumbers: [1, 2] },
+        last_words: { title: "Last of the verse / آخر الآية", questionNumbers: [1, 2] },
+        reversal_reading: { title: "Reversal reading / القراءة بالعكس", questionNumbers: [1, 2, 3] },
+        verse_position: { title: "Position of the verse / موضع الآية", questionNumbers: [1, 2, 3] },
+        read_verse_no: { title: "Read verse number / قراءة رقم الآية", questionNumbers: [1, 2, 3] },
+        understanding: { title: "Understanding of the verse / فهم الآية", questionNumbers: [1, 2, 3] }
+      };
+    }
+  };
+
+  // Function to render detailed scores
+  const renderDetailedScores = (test: JuzTest) => {
+    if (!test.section2_scores) return null;
+
+    const config = getQuestionConfig(test.test_hizb || false);
+    
+    return (
+      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+        {Object.entries(config).map(([categoryKey, categoryConfig]) => {
+          const categoryScores = test.section2_scores?.[categoryKey as keyof typeof test.section2_scores] || {};
+          const totalScore = Object.values(categoryScores).reduce((sum, score) => sum + (score || 0), 0);
+          const maxScore = categoryConfig.questionNumbers.length * 5;
+          const percentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
+          
+          return (
+            <div key={categoryKey} className="bg-white/70 rounded p-2 border border-gray-200">
+              <div className="font-medium text-gray-700 mb-1">{categoryConfig.title}</div>
+              <div className="flex justify-between items-center">
+                <div className="flex gap-1">
+                  {categoryConfig.questionNumbers.map(questionNum => {
+                    const score = categoryScores[String(questionNum)] || 0;
+                    return (
+                      <span key={questionNum} className={`inline-flex items-center justify-center w-5 h-5 rounded text-xs font-medium ${
+                        score >= 4 ? 'bg-green-100 text-green-700' :
+                        score >= 3 ? 'bg-yellow-100 text-yellow-700' :
+                        score >= 1 ? 'bg-orange-100 text-orange-700' :
+                        'bg-red-100 text-red-700'
+                      }`}>
+                        {score}
+                      </span>
+                    );
+                  })}
+                </div>
+                <div className={`font-semibold ${
+                  percentage >= 80 ? 'text-green-600' :
+                  percentage >= 60 ? 'text-yellow-600' :
+                  'text-red-600'
+                }`}>
+                  {percentage}%
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        
+        {/* Tajweed and Recitation scores */}
+        <div className="bg-white/70 rounded p-2 border border-gray-200">
+          <div className="font-medium text-gray-700 mb-1">Tajweed / التجويد</div>
+          <div className="flex justify-between items-center">
+            <span className={`inline-flex items-center justify-center w-5 h-5 rounded text-xs font-medium ${
+              (test.tajweed_score || 0) >= 4 ? 'bg-green-100 text-green-700' :
+              (test.tajweed_score || 0) >= 3 ? 'bg-yellow-100 text-yellow-700' :
+              (test.tajweed_score || 0) >= 1 ? 'bg-orange-100 text-orange-700' :
+              'bg-red-100 text-red-700'
+            }`}>
+              {test.tajweed_score || 0}
+            </span>
+            <div className="font-semibold text-gray-600">{test.tajweed_score || 0}/5</div>
+          </div>
+        </div>
+        
+        <div className="bg-white/70 rounded p-2 border border-gray-200">
+          <div className="font-medium text-gray-700 mb-1">Good recitation / حسن الأداء</div>
+          <div className="flex justify-between items-center">
+            <span className={`inline-flex items-center justify-center w-5 h-5 rounded text-xs font-medium ${
+              (test.recitation_score || 0) >= 4 ? 'bg-green-100 text-green-700' :
+              (test.recitation_score || 0) >= 3 ? 'bg-yellow-100 text-yellow-700' :
+              (test.recitation_score || 0) >= 1 ? 'bg-orange-100 text-orange-700' :
+              'bg-red-100 text-red-700'
+            }`}>
+              {test.recitation_score || 0}
+            </span>
+            <div className="font-semibold text-gray-600">{test.recitation_score || 0}/5</div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   if (!isOpen) return null;
 
@@ -155,7 +269,7 @@ export default function JuzTestHistoryModalViewOnly({
                     </svg>
                   </div>
                   <p className="text-gray-600 mb-2">No test records found</p>
-                  <p className="text-gray-500 text-sm">This student hasn't taken any Juz tests yet</p>
+                  <p className="text-gray-500 text-sm">This student hasn&apos;t taken any Juz tests yet</p>
                 </>
               ) : (
                 <>
@@ -170,7 +284,7 @@ export default function JuzTestHistoryModalViewOnly({
               )}
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {filteredTests.map((test) => (
                 <div
                   key={test.id}
@@ -178,53 +292,69 @@ export default function JuzTestHistoryModalViewOnly({
                 >
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-medium ${
+                      <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg ${
                         test.passed ? 'bg-green-500' : 'bg-red-500'
                       }`}>
                         {test.juz_number}
                       </div>
                       <div>
-                        <h3 className="font-medium text-gray-900">Juz {test.juz_number}</h3>
-                        {test.examiner_name !== 'Historical Entry' && (
-                          <p className="text-sm text-gray-500">
-                            {new Date(test.test_date).toLocaleDateString('en-US', {
-                              month: 'short',
-                              day: 'numeric',
-                              year: 'numeric'
-                            })}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                        test.passed 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-red-100 text-red-800'
-                      }`}>
-                        {test.examiner_name === 'Historical Entry' ? (test.passed ? 'Passed' : 'Failed') : `${test.total_percentage}%`}
+                        <h3 className="font-bold text-lg text-gray-900">
+                          {test.test_hizb ? `Hizb ${(test.juz_number - 1) * 2 + 1}` : `Juz ${test.juz_number}`}
+                        </h3>
+                        <div className="flex flex-col gap-1">
+                          {test.examiner_name !== 'Historical Entry' && (
+                            <p className="text-sm text-gray-500">
+                              {new Date(test.test_date).toLocaleDateString('en-US', {
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric'
+                              })}
+                            </p>
+                          )}
+                          <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium w-fit ${
+                            test.passed 
+                              ? 'bg-green-100 text-green-800' 
+                              : 'bg-red-100 text-red-800'
+                          }`}>
+                            {test.examiner_name === 'Historical Entry' 
+                              ? (test.passed ? 'Historical Pass' : 'Historical Fail') 
+                              : `${test.total_percentage}% ${test.passed ? 'PASSED' : 'FAILED'}`}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
 
                   {test.examiner_name !== 'Historical Entry' && (
-                    <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div className="grid grid-cols-2 gap-4 text-sm mb-3">
                       <div>
                         <span className="text-gray-500">Examiner:</span>
                         <p className="font-medium">{test.examiner_name || 'Not specified'}</p>
                       </div>
                       <div>
-                        <span className="text-gray-500">Scores:</span>
+                        <span className="text-gray-500">Summary Scores:</span>
                         <p className="font-medium">
-                          T: {test.tajweed_score || 0}/5 • R: {test.recitation_score || 0}/5
+                          Tajweed: {test.tajweed_score || 0}/5 • Recitation: {test.recitation_score || 0}/5
                         </p>
                       </div>
                     </div>
                   )}
 
+                  {/* Detailed Scores Section */}
+                  {test.section2_scores && (
+                    <div>
+                      <div className="text-sm font-semibold text-gray-700 mb-2 border-b border-gray-200 pb-1">
+                        Detailed Category Breakdown:
+                      </div>
+                      {renderDetailedScores(test)}
+                    </div>
+                  )}
+
                   {test.examiner_name !== 'Historical Entry' && test.remarks && (
-                    <div className="mt-3 pt-3 border-t border-gray-100">
-                      <p className="text-sm text-gray-600 italic">"{test.remarks}"</p>
+                    <div className="mt-3 pt-3 border-t border-gray-200">
+                      <p className="text-sm text-gray-600">
+                        <span className="font-medium">Remarks:</span> <em>&quot;{test.remarks}&quot;</em>
+                      </p>
                     </div>
                   )}
                 </div>

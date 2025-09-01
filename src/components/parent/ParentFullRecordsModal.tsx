@@ -27,6 +27,18 @@ interface JuzTestRecord {
   passed: boolean;
   examiner_name?: string;
   remarks?: string;
+  test_hizb?: boolean;
+  section2_scores?: {
+    memorization?: { [key: string]: number };
+    middle_verse?: { [key: string]: number };
+    last_words?: { [key: string]: number };
+    reversal_reading?: { [key: string]: number };
+    verse_position?: { [key: string]: number };
+    read_verse_no?: { [key: string]: number };
+    understanding?: { [key: string]: number };
+  };
+  tajweed_score?: number;
+  recitation_score?: number;
 }
 
 interface ParentFullRecordsModalProps {
@@ -47,6 +59,7 @@ export default function ParentFullRecordsModal({
   userId,
   viewMode = 'tasmik'
 }: ParentFullRecordsModalProps) {
+  // onRefresh is not used in this component but kept for interface compatibility
   const [reports, setReports] = useState<Report[]>([]);
   const [juzTests, setJuzTests] = useState<JuzTestRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -104,48 +117,111 @@ export default function ParentFullRecordsModal({
     }
   };
 
-  const getGradeColor = (grade: string | null) => {
-    if (!grade) return 'text-gray-400';
-    switch (grade.toLowerCase()) {
-      case 'mumtaz': return 'text-emerald-600';
-      case 'jayyid jiddan': return 'text-blue-600';
-      case 'jayyid': return 'text-amber-600';
-      default: return 'text-gray-600';
+
+  // Function to get question category configuration
+  const getQuestionConfig = (isHizbTest: boolean = false) => {
+    if (isHizbTest) {
+      return {
+        memorization: { title: "Repeat and Continue / الإعادة والمتابعة", questionNumbers: [1, 2, 3] },
+        middle_verse: { title: "Middle of the verse / وسط الآية", questionNumbers: [1] },
+        last_words: { title: "Last of the verse / آخر الآية", questionNumbers: [1] },
+        reversal_reading: { title: "Reversal reading / القراءة بالعكس", questionNumbers: [1, 2] },
+        verse_position: { title: "Position of the verse / موضع الآية", questionNumbers: [1, 2] },
+        read_verse_no: { title: "Read verse number / قراءة رقم الآية", questionNumbers: [1] },
+        understanding: { title: "Understanding of the verse / فهم الآية", questionNumbers: [1] }
+      };
+    } else {
+      return {
+        memorization: { title: "Repeat and Continue / الإعادة والمتابعة", questionNumbers: [1, 2, 3, 4, 5] },
+        middle_verse: { title: "Middle of the verse / وسط الآية", questionNumbers: [1, 2] },
+        last_words: { title: "Last of the verse / آخر الآية", questionNumbers: [1, 2] },
+        reversal_reading: { title: "Reversal reading / القراءة بالعكس", questionNumbers: [1, 2, 3] },
+        verse_position: { title: "Position of the verse / موضع الآية", questionNumbers: [1, 2, 3] },
+        read_verse_no: { title: "Read verse number / قراءة رقم الآية", questionNumbers: [1, 2, 3] },
+        understanding: { title: "Understanding of the verse / فهم الآية", questionNumbers: [1, 2, 3] }
+      };
     }
   };
 
-  const getGradeBgColor = (grade: string | null) => {
-    if (!grade) return 'bg-gray-100';
-    switch (grade.toLowerCase()) {
-      case 'mumtaz': return 'bg-emerald-50';
-      case 'jayyid jiddan': return 'bg-blue-50';
-      case 'jayyid': return 'bg-amber-50';
-      default: return 'bg-gray-50';
-    }
-  };
+  // Function to render detailed scores
+  const renderDetailedScores = (test: JuzTestRecord) => {
+    if (!test.section2_scores) return null;
 
-  // Group reports by week
-  const reportsByWeek = useMemo(() => {
-    const grouped = filteredReports.reduce((acc, report) => {
-      const { monday, friday } = getWeekBoundaries(report.date);
-      const weekKey = monday;
-      
-      if (!acc[weekKey]) {
-        acc[weekKey] = {
-          weekStart: monday,
-          weekEnd: friday,
-          reports: []
-        };
-      }
-      acc[weekKey].reports.push(report);
-      return acc;
-    }, {} as Record<string, { weekStart: string; weekEnd: string; reports: Report[] }>);
+    const config = getQuestionConfig(test.test_hizb || false);
     
-    // Sort by week (most recent first)
-    return Object.values(grouped).sort((a, b) => 
-      new Date(b.weekStart).getTime() - new Date(a.weekStart).getTime()
+    return (
+      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+        {Object.entries(config).map(([categoryKey, categoryConfig]) => {
+          const categoryScores = test.section2_scores?.[categoryKey as keyof typeof test.section2_scores] || {};
+          const totalScore = Object.values(categoryScores).reduce((sum, score) => sum + (score || 0), 0);
+          const maxScore = categoryConfig.questionNumbers.length * 5;
+          const percentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
+          
+          return (
+            <div key={categoryKey} className="bg-white/70 rounded p-2 border border-gray-200">
+              <div className="font-medium text-gray-700 mb-1">{categoryConfig.title}</div>
+              <div className="flex justify-between items-center">
+                <div className="flex gap-1">
+                  {categoryConfig.questionNumbers.map(questionNum => {
+                    const score = categoryScores[String(questionNum)] || 0;
+                    return (
+                      <span key={questionNum} className={`inline-flex items-center justify-center w-5 h-5 rounded text-xs font-medium ${
+                        score >= 4 ? 'bg-green-100 text-green-700' :
+                        score >= 3 ? 'bg-yellow-100 text-yellow-700' :
+                        score >= 1 ? 'bg-orange-100 text-orange-700' :
+                        'bg-red-100 text-red-700'
+                      }`}>
+                        {score}
+                      </span>
+                    );
+                  })}
+                </div>
+                <div className={`font-semibold ${
+                  percentage >= 80 ? 'text-green-600' :
+                  percentage >= 60 ? 'text-yellow-600' :
+                  'text-red-600'
+                }`}>
+                  {percentage}%
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        
+        {/* Tajweed and Recitation scores */}
+        <div className="bg-white/70 rounded p-2 border border-gray-200">
+          <div className="font-medium text-gray-700 mb-1">Tajweed / التجويد</div>
+          <div className="flex justify-between items-center">
+            <span className={`inline-flex items-center justify-center w-5 h-5 rounded text-xs font-medium ${
+              (test.tajweed_score || 0) >= 4 ? 'bg-green-100 text-green-700' :
+              (test.tajweed_score || 0) >= 3 ? 'bg-yellow-100 text-yellow-700' :
+              (test.tajweed_score || 0) >= 1 ? 'bg-orange-100 text-orange-700' :
+              'bg-red-100 text-red-700'
+            }`}>
+              {test.tajweed_score || 0}
+            </span>
+            <div className="font-semibold text-gray-600">{test.tajweed_score || 0}/5</div>
+          </div>
+        </div>
+        
+        <div className="bg-white/70 rounded p-2 border border-gray-200">
+          <div className="font-medium text-gray-700 mb-1">Good recitation / حسن الأداء</div>
+          <div className="flex justify-between items-center">
+            <span className={`inline-flex items-center justify-center w-5 h-5 rounded text-xs font-medium ${
+              (test.recitation_score || 0) >= 4 ? 'bg-green-100 text-green-700' :
+              (test.recitation_score || 0) >= 3 ? 'bg-yellow-100 text-yellow-700' :
+              (test.recitation_score || 0) >= 1 ? 'bg-orange-100 text-orange-700' :
+              'bg-red-100 text-red-700'
+            }`}>
+              {test.recitation_score || 0}
+            </span>
+            <div className="font-semibold text-gray-600">{test.recitation_score || 0}/5</div>
+          </div>
+        </div>
+      </div>
     );
-  }, [filteredReports]);
+  };
+
 
   if (!student) return null;
 
@@ -158,14 +234,6 @@ export default function ParentFullRecordsModal({
     }
   };
 
-  const formatPageRange = (pageFrom: number | null, pageTo: number | null) => {
-    if (!pageFrom && !pageTo) return '';
-    if (pageFrom && pageTo) {
-      if (pageFrom === pageTo) return `Page ${pageFrom}`;
-      return `Pages ${Math.min(pageFrom, pageTo)}-${Math.max(pageFrom, pageTo)}`;
-    }
-    return `Page ${pageFrom || pageTo}`;
-  };
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -214,33 +282,51 @@ export default function ParentFullRecordsModal({
                   <p className="text-gray-500">No Juz test records available for {student.name}</p>
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-4">
                   {juzTests.map((test) => (
                     <div key={test.id} className={`p-4 rounded-lg border ${test.passed ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}>
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-3">
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${test.passed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                          <span className={`px-3 py-1 rounded-full text-sm font-semibold ${test.passed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                             {test.passed ? 'PASSED' : 'FAILED'}
                           </span>
-                          <span className="text-sm text-gray-700 font-medium">Juz {test.juz_number}</span>
+                          <div>
+                            <div className="text-lg font-bold text-gray-800">
+                              {test.test_hizb ? `Hizb ${(test.juz_number - 1) * 2 + 1}` : `Juz ${test.juz_number}`}
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              {test.examiner_name === 'Historical Entry' 
+                                ? (test.passed ? 'Historical Pass' : 'Historical Fail')
+                                : `Total Score: ${test.total_percentage}%`
+                              }
+                            </div>
+                          </div>
                         </div>
                         {test.examiner_name !== 'Historical Entry' && (
-                          <div className="text-sm text-gray-600">{new Date(test.test_date).toLocaleDateString()}</div>
+                          <div className="text-right">
+                            <div className="text-sm text-gray-600">{new Date(test.test_date).toLocaleDateString()}</div>
+                            {test.examiner_name && (
+                              <div className="text-xs text-gray-500">By: {test.examiner_name}</div>
+                            )}
+                          </div>
                         )}
                       </div>
-                      <div className="mt-2 text-sm text-gray-700">
-                        {test.examiner_name === 'Historical Entry' 
-                          ? (
-                            <span className="font-semibold">{test.passed ? 'Passed' : 'Failed'}</span>
-                          ) 
-                          : (
-                            <>Score: <span className="font-semibold">{test.total_percentage}%</span></>
-                          )}
-                      </div>
-                      {test.examiner_name !== 'Historical Entry' && (test.examiner_name || test.remarks) && (
-                        <div className="mt-1 text-xs text-gray-600">
-                          {test.examiner_name && <div>Examiner: {test.examiner_name}</div>}
-                          {test.remarks && <div>Remarks: {test.remarks}</div>}
+                      
+                      {/* Detailed Scores Section */}
+                      {test.section2_scores && (
+                        <div>
+                          <div className="text-sm font-semibold text-gray-700 mb-2 border-b border-gray-300 pb-1">
+                            Detailed Category Breakdown:
+                          </div>
+                          {renderDetailedScores(test)}
+                        </div>
+                      )}
+                      
+                      {test.remarks && (
+                        <div className="mt-3 pt-3 border-t border-gray-200">
+                          <div className="text-sm text-gray-700">
+                            <span className="font-medium">Remarks:</span> <em>&quot;{test.remarks}&quot;</em>
+                          </div>
                         </div>
                       )}
                     </div>

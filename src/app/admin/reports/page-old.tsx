@@ -728,7 +728,7 @@ export default function AdminReportsPage() {
             }}
             studentId={selectedStudentForTest}
             studentName="Student" 
-            juzNumber={selectedJuzNumber}
+            defaultJuzNumber={selectedJuzNumber}
             onSubmit={() => {
               // Refresh the data after successful submission
               // Force re-fetch by updating a dependency

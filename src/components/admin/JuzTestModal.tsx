@@ -8,7 +8,9 @@ interface JuzTestModalProps {
   onClose: () => void;
   studentId: string;
   studentName: string;
-  juzNumber: number;
+  defaultJuzNumber: number;
+  teacherName?: string;
+  availableTeachers?: string[];
   onSubmit: () => void;
 }
 
@@ -27,20 +29,34 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
   onClose,
   studentId,
   studentName,
-  juzNumber,
+  defaultJuzNumber,
+  teacherName,
+  availableTeachers = [],
   onSubmit
 }) => {
   const [loading, setLoading] = useState(false);
+  const [selectedJuz, setSelectedJuz] = useState(defaultJuzNumber);
   const [formData, setFormData] = useState({
-    halaqah_name: "",
+    halaqah_name: teacherName || "",
     page_from: 0,
     page_to: 0,
     test_juz: true, // Default to Juz test
     test_hizb: false,
+    hizb_number: 1, // Default to 1st hizb (1 or 2)
     examiner_name: "",
     remarks: ""
   });
 
+  // Use actual teachers from the system, ensuring assigned teacher is included
+  const teacherOptions = React.useMemo(() => {
+    const options = [...availableTeachers];
+    if (teacherName && !options.includes(teacherName)) {
+      options.unshift(teacherName); // Add assigned teacher at the beginning
+    }
+    return options;
+  }, [availableTeachers, teacherName]);
+
+  // Initialize with default juz test scores
   const [section2Scores, setSection2Scores] = useState<Section2Scores>({
     memorization: { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0 },
     middle_verse: { "1": 0, "2": 0 },
@@ -48,8 +64,57 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
     reversal_reading: { "1": 0, "2": 0, "3": 0 },
     verse_position: { "1": 0, "2": 0, "3": 0 },
     read_verse_no: { "1": 0, "2": 0, "3": 0 },
-    understanding: { "1": 0 }
+    understanding: { "1": 0, "2": 0, "3": 0 }
   });
+
+  // Get question configuration based on test type
+  const getQuestionConfig = React.useCallback(() => {
+    if (formData.test_hizb) {
+      // Reduced questions for hizb test (approximately half)
+      return {
+        memorization: { title: "Repeat and Continue / الإعادة والمتابعة", questionNumbers: [1, 2, 3] }, // 5→3
+        middle_verse: { title: "Middle of the verse / وسط الآية", questionNumbers: [1] },             // 2→1
+        last_words: { title: "Last of the verse / آخر الآية", questionNumbers: [1] },               // 2→1
+        reversal_reading: { title: "Reversal reading / القراءة بالعكس", questionNumbers: [1, 2] },   // 3→2
+        verse_position: { title: "Position of the verse / موضع الآية", questionNumbers: [1, 2] },   // 3→2
+        read_verse_no: { title: "Read verse number / قراءة رقم الآية", questionNumbers: [1] },       // 3→1
+        understanding: { title: "Understanding of the verse / فهم الآية", questionNumbers: [1] }     // 3→1
+      };
+    } else {
+      // Full questions for juz test
+      return {
+        memorization: { title: "Repeat and Continue / الإعادة والمتابعة", questionNumbers: [1, 2, 3, 4, 5] },
+        middle_verse: { title: "Middle of the verse / وسط الآية", questionNumbers: [1, 2] },
+        last_words: { title: "Last of the verse / آخر الآية", questionNumbers: [1, 2] },
+        reversal_reading: { title: "Reversal reading / القراءة بالعكس", questionNumbers: [1, 2, 3] },
+        verse_position: { title: "Position of the verse / موضع الآية", questionNumbers: [1, 2, 3] },
+        read_verse_no: { title: "Read verse number / قراءة رقم الآية", questionNumbers: [1, 2, 3] },
+        understanding: { title: "Understanding of the verse / فهم الآية", questionNumbers: [1, 2, 3] }
+      };
+    }
+  }, [formData.test_hizb]);
+
+  // Initialize section2Scores based on test type
+  const initializeScores = React.useCallback(() => {
+    const config = getQuestionConfig();
+    const scores: Section2Scores = {
+      memorization: {},
+      middle_verse: {},
+      last_words: {},
+      reversal_reading: {},
+      verse_position: {},
+      read_verse_no: {},
+      understanding: {}
+    };
+    
+    Object.entries(config).forEach(([category, categoryConfig]) => {
+      categoryConfig.questionNumbers.forEach(questionNum => {
+        scores[category as keyof Section2Scores][String(questionNum)] = 0;
+      });
+    });
+    
+    return scores;
+  }, [formData.test_hizb, getQuestionConfig]);
 
   const [tajweedScore, setTajweedScore] = useState(0);
   const [recitationScore, setRecitationScore] = useState(0);
@@ -57,9 +122,9 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
   const [shouldRepeat, setShouldRepeat] = useState(false);
 
 
-  // Calculate page range based on test category and juz number
-  const calculatePageRange = () => {
-    const range = getPageRangeFromJuz(juzNumber);
+  // Calculate page range based on test category and selected juz
+  const calculatePageRange = React.useCallback(() => {
+    const range = getPageRangeFromJuz(selectedJuz);
     if (!range) {
       return { from: 0, to: 0 };
     }
@@ -68,12 +133,19 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
       const totalPages = range.endPage - range.startPage + 1; // usually 21 except last Juz
       const firstHalfSize = Math.ceil(totalPages / 2);
       const hizb1End = range.startPage + firstHalfSize - 1;
-      return { from: range.startPage, to: hizb1End };
+      
+      if (formData.hizb_number === 1) {
+        // First hizb: start to middle
+        return { from: range.startPage, to: hizb1End };
+      } else {
+        // Second hizb: middle+1 to end
+        return { from: hizb1End + 1, to: range.endPage };
+      }
     }
     return { from: range.startPage, to: range.endPage };
-  };
+  }, [selectedJuz, formData.test_hizb, formData.hizb_number]);
 
-  // Update page range when test categories change
+  // Update page range and scores when test categories change
   useEffect(() => {
     if (isOpen) {
       const range = calculatePageRange();
@@ -82,24 +154,60 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
         page_from: range.from,
         page_to: range.to
       }));
+      // Reset scores when test type changes
+      setSection2Scores(initializeScores());
+      setTajweedScore(0);
+      setRecitationScore(0);
+      setPassed(false);
+      setShouldRepeat(false);
     }
-  }, [formData.test_juz, formData.test_hizb, juzNumber, isOpen]);
+  }, [formData.test_juz, formData.test_hizb, formData.hizb_number, selectedJuz, isOpen, calculatePageRange, initializeScores]);
 
+  // Reset selectedJuz when modal opens with new defaultJuzNumber
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedJuz(defaultJuzNumber);
+    }
+  }, [defaultJuzNumber, isOpen]);
+
+  // Update halaqah_name when teacherName prop changes
+  useEffect(() => {
+    if (isOpen && teacherName) {
+      console.log("Setting halaqah_name to teacher:", teacherName);
+      setFormData(prev => ({
+        ...prev,
+        halaqah_name: teacherName
+      }));
+    }
+  }, [teacherName, isOpen]);
 
   const calculateTotalPercentage = () => {
-    // Define the scoring weights for each category (to total 100 points exactly)
-    const categoryWeights = {
-      memorization: 25,     // 5 questions (Repeat and Continue) - Most important
-      middle_verse: 10,     // 2 questions × 5 points each  
-      last_words: 10,       // 2 questions × 5 points each
-      reversal_reading: 15, // 3 questions × 5 points each
-      verse_position: 15,   // 3 questions × 5 points each (Position of verse)
-      read_verse_no: 15,    // 3 questions × 5 points each (Read verse number)
-      understanding: 5,     // 1 question × 5 points (Understanding of verse)
-      tajweed: 2.5,         // 1 × 5 points
-      recitation: 2.5       // 1 × 5 points
+    // Define the scoring weights for each category based on test type
+    const isHizbTest = formData.test_hizb;
+    
+    const categoryWeights = isHizbTest ? {
+      // Hizb test weights (11 questions total + tajweed + recitation = 13 scoring items)
+      memorization: 23.1,   // 3 questions - Most important
+      middle_verse: 7.7,    // 1 question
+      last_words: 7.7,      // 1 question  
+      reversal_reading: 15.4, // 2 questions
+      verse_position: 15.4, // 2 questions
+      read_verse_no: 7.7,   // 1 question
+      understanding: 7.7,   // 1 question
+      tajweed: 7.7,         // 1 × 5 points
+      recitation: 7.7       // 1 × 5 points
+    } : {
+      // Juz test weights (21 questions total + tajweed + recitation = 23 scoring items)
+      memorization: 22.7,   // 5 questions - Most important
+      middle_verse: 9.1,    // 2 questions
+      last_words: 9.1,      // 2 questions
+      reversal_reading: 13.6, // 3 questions
+      verse_position: 13.6, // 3 questions
+      read_verse_no: 13.6,  // 3 questions
+      understanding: 13.6,  // 3 questions
+      tajweed: 2.3,         // 1 × 5 points
+      recitation: 2.3       // 1 × 5 points
     };
-    // Total: 25+10+10+15+15+15+5+2.5+2.5 = 100
 
     let totalPoints = 0;
 
@@ -147,7 +255,7 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
 
       const testData = {
         student_id: studentId,
-        juz_number: juzNumber,
+        juz_number: selectedJuz,
         test_date: new Date().toISOString().split('T')[0],
         examiner_id: null, // Will be set to null for now, can be improved later
         halaqah_name: formData.halaqah_name,
@@ -155,6 +263,7 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
         page_to: formData.page_to,
         test_juz: formData.test_juz,
         test_hizb: formData.test_hizb,
+        hizb_number: formData.test_hizb ? formData.hizb_number : null, // Only include if hizb test
         section2_scores: section2Scores,
         tajweed_score: tajweedScore,
         recitation_score: recitationScore,
@@ -214,8 +323,8 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
           <div className="flex justify-between items-center">
             <div>
               <h2 className="text-2xl font-bold">Akademi Al Khayr</h2>
-              <p className="text-sm opacity-90">Quranic Memorization Test Result for Academy Al Khayr - Juz {juzNumber}</p>
-              <p className="text-xs opacity-75 mt-1">كشف نتج اختبار حفظ القرآن الكريم لأكاديمية الخير - الجزء {juzNumber}</p>
+              <p className="text-sm opacity-90">Quranic Memorization Test Result for Academy Al Khayr - Juz {selectedJuz}</p>
+              <p className="text-xs opacity-75 mt-1">كشف نتج اختبار حفظ القرآن الكريم لأكاديمية الخير - الجزء {selectedJuz}</p>
             </div>
             <button
               onClick={onClose}
@@ -240,18 +349,23 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
                     {studentName}
                   </div>
                 </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Juz to test / الجزء المراد اختباره
+                  </label>
+                  <select
+                    value={selectedJuz}
+                    onChange={(e) => setSelectedJuz(parseInt(e.target.value))}
+                    className="w-full p-2 border rounded focus:ring-2 focus:ring-purple-400"
+                  >
+                    {Array.from({ length: 30 }, (_, i) => i + 1).map((juz) => (
+                      <option key={juz} value={juz}>
+                        Juz {juz} / الجزء {juz}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      To (إلى)
-                    </label>
-                    <input
-                      type="number"
-                      value={formData.page_to}
-                      onChange={(e) => setFormData(prev => ({ ...prev, page_to: parseInt(e.target.value) || 0 }))}
-                      className="w-full p-2 border rounded focus:ring-2 focus:ring-purple-400"
-                    />
-                  </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       From (من)
@@ -260,6 +374,17 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
                       type="number"
                       value={formData.page_from}
                       onChange={(e) => setFormData(prev => ({ ...prev, page_from: parseInt(e.target.value) || 0 }))}
+                      className="w-full p-2 border rounded focus:ring-2 focus:ring-purple-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      To (إلى)
+                    </label>
+                    <input
+                      type="number"
+                      value={formData.page_to}
+                      onChange={(e) => setFormData(prev => ({ ...prev, page_to: parseInt(e.target.value) || 0 }))}
                       className="w-full p-2 border rounded focus:ring-2 focus:ring-purple-400"
                     />
                   </div>
@@ -291,12 +416,44 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
                         onChange={(e) => setFormData(prev => ({ 
                           ...prev, 
                           test_hizb: e.target.checked,
-                          test_juz: e.target.checked ? false : prev.test_juz
+                          test_juz: e.target.checked ? false : prev.test_juz,
+                          hizb_number: e.target.checked ? 1 : prev.hizb_number // Reset to 1st hizb when enabling
                         }))}
                         className="mr-2"
                       />
                       <span className="text-sm">Hizb (1/2 juz) / حزب</span>
                     </label>
+                    
+                    {/* Hizb selection - only show when test_hizb is checked */}
+                    {formData.test_hizb && (
+                      <div className="ml-6 mt-2 space-y-1">
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Select Hizb / اختر الحزب
+                        </label>
+                        <div className="space-y-1">
+                          <label className="flex items-center">
+                            <input
+                              type="radio"
+                              name="hizb_selection"
+                              checked={formData.hizb_number === 1}
+                              onChange={() => setFormData(prev => ({ ...prev, hizb_number: 1 }))}
+                              className="mr-2"
+                            />
+                            <span className="text-xs">1st Hizb / الحزب الأول</span>
+                          </label>
+                          <label className="flex items-center">
+                            <input
+                              type="radio"
+                              name="hizb_selection"
+                              checked={formData.hizb_number === 2}
+                              onChange={() => setFormData(prev => ({ ...prev, hizb_number: 2 }))}
+                              className="mr-2"
+                            />
+                            <span className="text-xs">2nd Hizb / الحزب الثاني</span>
+                          </label>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -310,10 +467,10 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
               {/* Left side scoring */}
               <div className="space-y-4">
                 {Object.entries({
-                  memorization: { title: "Repeat and Continue / الإعادة والمتابعة", questions: 5, questionNumbers: [1, 2, 3, 4, 5] },
-                  middle_verse: { title: "Middle of the verse / وسط الآية", questions: 2, questionNumbers: [1, 2] },
-                  last_words: { title: "Last of the verse / آخر الآية", questions: 2, questionNumbers: [1, 2] },
-                  reversal_reading: { title: "Reversal reading / القراءة بالعكس", questions: 3, questionNumbers: [1, 2, 3] }
+                  memorization: getQuestionConfig().memorization,
+                  middle_verse: getQuestionConfig().middle_verse,
+                  last_words: getQuestionConfig().last_words,
+                  reversal_reading: getQuestionConfig().reversal_reading
                 }).map(([category, config]) => (
                   <div key={category} className="border rounded p-3">
                     <h4 className="font-medium text-sm mb-2">{config.title}</h4>
@@ -321,14 +478,18 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
                       {config.questionNumbers && config.questionNumbers.map((questionNum, i) => (
                         <div key={i} className="text-center">
                           <div className="text-xs mb-1">{questionNum}</div>
-                          <input
-                            type="number"
-                            min="0"
-                            max="5"
+                          <select
                             value={section2Scores[category as keyof Section2Scores]?.[String(questionNum)] || 0}
                             onChange={(e) => updateScore(category as keyof Section2Scores, String(questionNum), parseInt(e.target.value) || 0)}
                             className="w-full p-1 border rounded text-center text-xs"
-                          />
+                          >
+                            <option value={0}>0</option>
+                            <option value={1}>1</option>
+                            <option value={2}>2</option>
+                            <option value={3}>3</option>
+                            <option value={4}>4</option>
+                            <option value={5}>5</option>
+                          </select>
                         </div>
                       ))}
                     </div>
@@ -339,9 +500,9 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
               {/* Right side scoring */}
               <div className="space-y-4">
                 {Object.entries({
-                  verse_position: { title: "Position of the verse / موضع الآية", questions: 3, questionNumbers: [1, 2, 3] },
-                  read_verse_no: { title: "Read verse number / قراءة رقم الآية", questions: 3, questionNumbers: [1, 2, 3] },
-                  understanding: { title: "Understanding of the verse / فهم الآية", questions: 1, questionNumbers: [1] }
+                  verse_position: getQuestionConfig().verse_position,
+                  read_verse_no: getQuestionConfig().read_verse_no,
+                  understanding: getQuestionConfig().understanding
                 }).map(([category, config]) => (
                   <div key={category} className="border rounded p-3">
                     <h4 className="font-medium text-sm mb-2">{config.title}</h4>
@@ -349,14 +510,18 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
                       {config.questionNumbers && config.questionNumbers.map((questionNum, i) => (
                         <div key={i} className="text-center">
                           <div className="text-xs mb-1">{questionNum}</div>
-                          <input
-                            type="number"
-                            min="0"
-                            max="5"
+                          <select
                             value={section2Scores[category as keyof Section2Scores]?.[String(questionNum)] || 0}
                             onChange={(e) => updateScore(category as keyof Section2Scores, String(questionNum), parseInt(e.target.value) || 0)}
                             className="w-full p-1 border rounded text-center text-xs"
-                          />
+                          >
+                            <option value={0}>0</option>
+                            <option value={1}>1</option>
+                            <option value={2}>2</option>
+                            <option value={3}>3</option>
+                            <option value={4}>4</option>
+                            <option value={5}>5</option>
+                          </select>
                         </div>
                       ))}
                     </div>
@@ -369,25 +534,33 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
               <div className="border rounded p-3 text-center">
                 <h4 className="font-medium text-sm mb-2">Tajweed / التجويد</h4>
-                <input
-                  type="number"
-                  min="0"
-                  max="5"
+                <select
                   value={tajweedScore}
                   onChange={(e) => setTajweedScore(parseInt(e.target.value) || 0)}
                   className="w-16 p-1 border rounded text-center"
-                />
+                >
+                  <option value={0}>0</option>
+                  <option value={1}>1</option>
+                  <option value={2}>2</option>
+                  <option value={3}>3</option>
+                  <option value={4}>4</option>
+                  <option value={5}>5</option>
+                </select>
               </div>
               <div className="border rounded p-3 text-center">
                 <h4 className="font-medium text-sm mb-2">Good recitation / حسن الأداء</h4>
-                <input
-                  type="number"
-                  min="0"
-                  max="5"
+                <select
                   value={recitationScore}
                   onChange={(e) => setRecitationScore(parseInt(e.target.value) || 0)}
                   className="w-16 p-1 border rounded text-center"
-                />
+                >
+                  <option value={0}>0</option>
+                  <option value={1}>1</option>
+                  <option value={2}>2</option>
+                  <option value={3}>3</option>
+                  <option value={4}>4</option>
+                  <option value={5}>5</option>
+                </select>
               </div>
               <div className="border rounded p-3 text-center bg-purple-50">
                 <h4 className="font-medium text-sm mb-2">Grand total (100%) / المجموع الكامل</h4>
@@ -407,12 +580,18 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Halaqah&apos;s name / اسم الحلقة
                   </label>
-                  <input
-                    type="text"
+                  <select
                     value={formData.halaqah_name}
                     onChange={(e) => setFormData(prev => ({ ...prev, halaqah_name: e.target.value }))}
                     className="w-full p-2 border rounded focus:ring-2 focus:ring-purple-400"
-                  />
+                  >
+                    <option value="">Select teacher / اختر المعلم</option>
+                    {teacherOptions.map((teacher) => (
+                      <option key={teacher} value={teacher}>
+                        {teacher}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">

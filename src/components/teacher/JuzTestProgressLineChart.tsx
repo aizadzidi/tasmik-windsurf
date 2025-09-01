@@ -12,6 +12,8 @@ interface JuzTest {
   passed: boolean;
   examiner_name?: string;
   remarks?: string;
+  test_juz?: boolean;
+  test_hizb?: boolean;
 }
 
 interface JuzTestProgressLineChartProps {
@@ -27,6 +29,7 @@ interface ChartDataPoint {
   passed: boolean;
   examiner?: string;
   id: string;
+  test_hizb?: boolean;
 }
 
 interface ChartSeries {
@@ -103,7 +106,8 @@ export default function JuzTestProgressLineChart({
           date: test.test_date,
           passed: test.passed,
           examiner: test.examiner_name,
-          id: `juz-${test.juz_number}-${test.id}`
+          id: `juz-${test.juz_number}-${test.id}`,
+          test_hizb: test.test_hizb
         }))
     }
   ];
@@ -215,7 +219,7 @@ export default function JuzTestProgressLineChart({
             return (
               <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3">
                 <div className="text-sm font-medium text-gray-900">
-                  Juz {data.juz} Test
+                  {data.test_hizb ? `Hizb ${(data.juz - 1) * 2 + 1} Test` : `Juz ${data.juz} Test`}
                 </div>
                 {data.examiner !== 'Historical Entry' && (
                   <div className="text-sm text-gray-600">

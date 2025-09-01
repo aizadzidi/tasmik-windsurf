@@ -72,3 +72,68 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
+export async function PUT(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const testId = searchParams.get("id");
+    const updateData = await request.json();
+
+    if (!testId) {
+      return NextResponse.json(
+        { error: "Missing test ID parameter" },
+        { status: 400 }
+      );
+    }
+
+    // Update the juz test record using service-role client (bypasses RLS)
+    const data = await adminOperationSimple(async (client) => {
+      const { data, error } = await client
+        .from("juz_tests")
+        .update(updateData)
+        .eq("id", testId)
+        .select();
+      if (error) throw error;
+      return data;
+    });
+
+    return NextResponse.json(data[0]);
+  } catch (error) {
+    console.error("API error:", error);
+    return NextResponse.json(
+      { error: (error as any)?.message || "Internal server error" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const testId = searchParams.get("id");
+
+    if (!testId) {
+      return NextResponse.json(
+        { error: "Missing test ID parameter" },
+        { status: 400 }
+      );
+    }
+
+    // Delete the juz test record using service-role client (bypasses RLS)
+    await adminOperationSimple(async (client) => {
+      const { error } = await client
+        .from("juz_tests")
+        .delete()
+        .eq("id", testId);
+      if (error) throw error;
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("API error:", error);
+    return NextResponse.json(
+      { error: (error as any)?.message || "Internal server error" },
+      { status: 500 }
+    );
+  }
+}

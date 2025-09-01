@@ -113,7 +113,7 @@ export default function ParentPage() {
           // Get juz test data
           supabase
             .from("juz_tests")
-            .select("student_id, juz_number, test_date, passed, total_percentage, examiner_name")
+            .select("student_id, juz_number, test_date, passed, total_percentage, examiner_name, test_hizb")
             .in("student_id", studentIds)
             .order("test_date", { ascending: false })
             .then(result => {
@@ -171,6 +171,7 @@ export default function ParentPage() {
               passed: boolean;
               total_percentage: number;
               examiner_name?: string;
+              test_hizb?: boolean;
             };
           };
         });
@@ -678,6 +679,7 @@ export default function ParentPage() {
                           passed: boolean;
                           total_percentage: number;
                           examiner_name?: string;
+                          test_hizb?: boolean;
                         };
                       };
                       
@@ -743,16 +745,36 @@ export default function ParentPage() {
                             <>
                               <td className="px-4 py-3 text-gray-600">
                                 <div className="text-sm font-medium">
-                                  Juz {extendedChild.highest_memorized_juz || 0}
+                                  {(() => {
+                                    // Show Hizb if the latest passed test was a Hizb test
+                                    const latestTest = extendedChild.latest_test_result;
+                                    if (latestTest && latestTest.passed && latestTest.test_hizb) {
+                                      const hizbNumber = (latestTest.juz_number - 1) * 2 + 1;
+                                      return `Hizb ${hizbNumber}`;
+                                    }
+                                    // Otherwise show Juz from memorization
+                                    return `Juz ${extendedChild.highest_memorized_juz || 0}`;
+                                  })()}
                                 </div>
-                                <div className="text-xs text-gray-500">Memorized</div>
+                                <div className="text-xs text-gray-500">
+                                  {(() => {
+                                    const latestTest = extendedChild.latest_test_result;
+                                    if (latestTest && latestTest.passed && latestTest.test_hizb) {
+                                      return 'Passed Hizb Test';
+                                    }
+                                    return 'Memorized';
+                                  })()}
+                                </div>
                               </td>
                               <td className="px-4 py-3 text-center text-gray-600">
                                 <div className="text-sm">
                                   {extendedChild.latest_test_result ? (
                                     <>
                                       <div className="font-medium">
-                                        Juz {extendedChild.latest_test_result.juz_number}
+                                        {extendedChild.latest_test_result.test_hizb 
+                                          ? `Hizb ${(extendedChild.latest_test_result.juz_number - 1) * 2 + 1}`
+                                          : `Juz ${extendedChild.latest_test_result.juz_number}`
+                                        }
                                       </div>
                                       <div className={`text-xs font-medium ${
                                         extendedChild.latest_test_result.passed 
