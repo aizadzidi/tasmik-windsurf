@@ -1,270 +1,348 @@
 "use client";
-import React from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import AdminNavbar from "@/components/admin/AdminNavbar";
-import { Card } from "@/components/ui/Card";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'recharts';
+import HeaderToolbar from "@/components/admin/exam/HeaderToolbar";
+import ClassOverview from "@/components/admin/exam/ClassOverview";
+import StudentTable, { StudentData } from "@/components/admin/exam/StudentTable";
+import StudentDetailsPanel from "@/components/admin/exam/StudentDetailsPanel";
+import MobileStudentCard from "@/components/admin/exam/MobileStudentCard";
+import { supabase } from "@/lib/supabaseClient";
 
-// Mock data for initial state
-const mockExamsData = [
-  { id: "e1", name: "Midterm Exam", type: "Exam", subjects: ["Art", "B. Melayu"], classes: ["Bukhari", "Darimi"] },
-  { id: "e2", name: "Final Exam", type: "Exam", subjects: ["Chemistry", "Biology"], classes: ["Bukhari"] },
-  { id: "q1", name: "Quiz 1", type: "Quiz", subjects: ["English"], classes: ["Darimi"] },
-];
-const mockClasses = [
-  "Bukhari", "Muslim", "Darimi", "Tirmidhi", "Abu Dawood", "Tabrani", "Bayhaqi", "Nasaie", "Ibn Majah"
-];
-const mockSubjects = [
-  "Art", "B. Melayu", "Bahasa Arab SPM", "Biology", "Chemistry", "English", "Kitabah", "PAI", "PQS", "PSI", "Physic", "Qiraah", "Sejarah"
-];
-
-function simpleHash(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-  return Math.abs(hash);
+// Types
+interface ClassData {
+  id: string;
+  name: string;
 }
 
-const mockStudents = mockClasses.flatMap(cls => [
-  { name: `${cls} Student 1`, class: cls },
-  { name: `${cls} Student 2`, class: cls },
-]);
+interface FilterChip {
+  id: string;
+  label: string;
+  type: 'performance' | 'conduct';
+}
 
-const mockResults = mockStudents.flatMap(student =>
-  mockSubjects.slice(0, 5).map(subject => {
-    const seed = simpleHash(student.name + subject);
-    const mark = 60 + (seed % 40);
-    const grade = mark >= 85 ? "A" : mark >= 75 ? "A-" : mark >= 65 ? "B" : "C";
-    return {
-      student: student.name,
-      class: student.class,
-      subject,
-      mark,
-      grade,
-      conduct: subject === "Art" ? undefined : { 
-        leadership: 60 + ((seed + 1) % 40), 
-        social: 60 + ((seed + 2) % 40), 
-        akhlak: 60 + ((seed + 3) % 40) 
-      } as Conduct
-    };
-  })
-);
+// Mock data generation
+const subjects = ['Math', 'English', 'Science', 'BM', 'BI', 'Quran', 'Arabic', 'History'];
+const classNames = ['1 DLP', '2 Ibtidai', '3 Mutawasit', '4 Thanawi', '5 Aliyah', '6 Takhmili'];
 
-type Conduct = { [key: string]: number };
-const conductAxes = ["leadership", "social", "akhlak"];
+function generateMockData(): StudentData[] {
+  const students: StudentData[] = [];
+  
+  classNames.forEach((className, classIndex) => {
+    for (let i = 1; i <= 8; i++) {
+      const studentId = `STU${classIndex}${i.toString().padStart(3, '0')}`;
+      const studentName = `Student ${classIndex + 1}-${i}`;
+      
+      const subjectScores: { [subject: string]: { score: number; trend: number[]; grade: string } } = {};
+      
+      subjects.forEach(subject => {
+        const baseScore = 60 + Math.random() * 35;
+        const trend = Array.from({ length: 6 }, (_, idx) => 
+          Math.max(0, Math.min(100, baseScore + (Math.random() - 0.5) * 20 + idx * 2))
+        );
+        const score = Math.round(trend[trend.length - 1]);
+        const grade = score >= 85 ? 'A' : score >= 75 ? 'B' : score >= 65 ? 'C' : 'D';
+        
+        subjectScores[subject] = {
+          score,
+          trend: trend.map(t => Math.round(t)),
+          grade
+        };
+      });
+      
+      const conduct = {
+        discipline: Math.round((3 + Math.random() * 2) * 10) / 10,
+        effort: Math.round((3 + Math.random() * 2) * 10) / 10,
+        participation: Math.round((2.5 + Math.random() * 2.5) * 10) / 10,
+        motivationalLevel: Math.round((3 + Math.random() * 2) * 10) / 10,
+        character: Math.round((3 + Math.random() * 2) * 10) / 10,
+        leadership: Math.round((3 + Math.random() * 2) * 10) / 10,
+      };
+      
+      const average = Math.round(
+        Object.values(subjectScores).reduce((sum, s) => sum + s.score, 0) / subjects.length
+      );
+      
+      students.push({
+        id: studentId,
+        name: studentName,
+        class: className,
+        subjects: subjectScores,
+        conduct,
+        overall: {
+          average,
+          rank: 0, // Will be calculated after sorting
+          needsAttention: average < 60 || conduct.participation < 3,
+          attentionReason: average < 60 ? 'Academic performance below average' : 
+                          conduct.participation < 3 ? 'Low participation score needs attention' : undefined,
+        },
+      });
+    }
+  });
+  
+  // Calculate ranks
+  students.sort((a, b) => b.overall.average - a.overall.average);
+  students.forEach((student, index) => {
+    student.overall.rank = index + 1;
+  });
+  
+  return students;
+}
 
 export default function AdminExamPage() {
-  const [exams, setExams] = React.useState(mockExamsData);
-  const [isCreateModalOpen, setCreateModalOpen] = React.useState(false);
-  const [newExamName, setNewExamName] = React.useState("");
-  const [newExamType, setNewExamType] = React.useState<"Exam"|"Quiz">("Exam");
-  const [newExamClasses, setNewExamClasses] = React.useState<string[]>([]);
-  const [newExamSubjects, setNewExamSubjects] = React.useState<string[]>([]);
+  // State
+  const [classes, setClasses] = useState<ClassData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [mockStudents] = useState<StudentData[]>(() => generateMockData());
+  const [selectedStudent, setSelectedStudent] = useState<StudentData | null>(null);
   
-  const [selectedExamId, setSelectedExamId] = React.useState<string>("e1");
-  const [selectedClass, setSelectedClass] = React.useState<string>("");
-  const [selectedSubject, setSelectedSubject] = React.useState<string>("");
-  const [view, setView] = React.useState<"table"|"graph">("table");
+  // Filters
+  const [selectedClass, setSelectedClass] = useState('');
+  const [selectedSubject, setSelectedSubject] = useState('');
+  const [selectedExam, setSelectedExam] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterChips, setFilterChips] = useState<FilterChip[]>([]);
+  const [isMobile, setIsMobile] = useState(false);
 
-  const selectedExam = exams.find(e => e.id === selectedExamId);
-  const availableClasses = selectedExam ? selectedExam.classes : [];
-  const availableSubjects = selectedExam ? selectedExam.subjects : [];
-  
-  const filteredResults = mockResults.filter(r =>
-    (!selectedExamId || selectedExam?.subjects.includes(r.subject)) &&
-    (!selectedExamId || selectedExam?.classes.includes(r.class)) &&
-    (!selectedClass || r.class === selectedClass) &&
-    (!selectedSubject || r.subject === selectedSubject)
-  );
-
-  const conductAverages = React.useMemo(() => {
-    const results = filteredResults.filter(r => r.conduct);
-    const data = conductAxes.map(axis => {
-        const values = results.map(r => r.conduct![axis]);
-        const average = values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : 0;
-        return { subject: axis.charAt(0).toUpperCase() + axis.slice(1), A: average, fullMark: 100 };
-    });
-    return data;
-  }, [filteredResults]);
-
-  function handleCreateExam() {
-    if (!newExamName.trim() || newExamClasses.length === 0 || newExamSubjects.length === 0) {
-      alert("Please fill all fields");
-      return;
+  // Fetch real classes data
+  const fetchClasses = async () => {
+    try {
+      setLoading(true);
+      const { data: classesData, error } = await supabase
+        .from('classes')
+        .select('id, name')
+        .order('name');
+      
+      if (error) {
+        console.error('Error fetching classes:', error);
+        // Use mock classes as fallback
+        setClasses(classNames.map((name, index) => ({ id: `class-${index}`, name })));
+      } else {
+        setClasses(classesData || []);
+      }
+    } catch (error) {
+      console.error('Error:', error);
+      // Use mock classes as fallback
+      setClasses(classNames.map((name, index) => ({ id: `class-${index}`, name })));
+    } finally {
+      setLoading(false);
     }
-    const newExam = {
-      id: `e${exams.length + 1}`,
-      name: newExamName,
-      type: newExamType,
-      classes: newExamClasses,
-      subjects: newExamSubjects,
+  };
+
+  // Check if mobile
+  const checkMobile = () => {
+    setIsMobile(window.innerWidth < 1024);
+  };
+
+  useEffect(() => {
+    fetchClasses();
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // Filter students based on current filters
+  const filteredStudents = useMemo(() => {
+    return mockStudents.filter(student => {
+      if (selectedClass && student.class !== classes.find(c => c.id === selectedClass)?.name) {
+        return false;
+      }
+      if (searchQuery && !student.name.toLowerCase().includes(searchQuery.toLowerCase())) {
+        return false;
+      }
+      return true;
+    });
+  }, [mockStudents, selectedClass, searchQuery, classes]);
+
+  // Calculate class overview data
+  const classOverviewData = useMemo(() => {
+    const selectedClassName = selectedClass ? classes.find(c => c.id === selectedClass)?.name || '' : '';
+    
+    // Score distribution
+    const scoreRanges = [
+      { range: '90-100', count: 0, percentage: 0 },
+      { range: '80-89', count: 0, percentage: 0 },
+      { range: '70-79', count: 0, percentage: 0 },
+      { range: '60-69', count: 0, percentage: 0 },
+      { range: '0-59', count: 0, percentage: 0 },
+    ];
+    
+    filteredStudents.forEach(student => {
+      const avg = student.overall.average;
+      if (avg >= 90) scoreRanges[0].count++;
+      else if (avg >= 80) scoreRanges[1].count++;
+      else if (avg >= 70) scoreRanges[2].count++;
+      else if (avg >= 60) scoreRanges[3].count++;
+      else scoreRanges[4].count++;
+    });
+    
+    scoreRanges.forEach(range => {
+      range.percentage = filteredStudents.length > 0 
+        ? Math.round((range.count / filteredStudents.length) * 100) 
+        : 0;
+    });
+    
+    // Subject averages
+    const subjectAverages = subjects.map(subject => {
+      const scores = filteredStudents
+        .filter(s => s.subjects[subject])
+        .map(s => s.subjects[subject].score);
+      const average = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
+      const trend = Math.random() > 0.5 ? 'up' : Math.random() > 0.3 ? 'stable' : 'down';
+      
+      return {
+        subject,
+        average,
+        trend: trend as 'up' | 'down' | 'stable',
+        change: (Math.random() - 0.5) * 10
+      };
+    });
+    
+    // Conduct medians
+    const conductMedians = [
+      {
+        aspect: 'Discipline',
+        median: filteredStudents.reduce((sum, s) => sum + s.conduct.discipline, 0) / filteredStudents.length || 0,
+        target: 4.0
+      },
+      {
+        aspect: 'Effort',
+        median: filteredStudents.reduce((sum, s) => sum + s.conduct.effort, 0) / filteredStudents.length || 0,
+        target: 4.0
+      },
+      {
+        aspect: 'Participation',
+        median: filteredStudents.reduce((sum, s) => sum + s.conduct.participation, 0) / filteredStudents.length || 0,
+        target: 3.5
+      },
+      {
+        aspect: 'Motivational Level',
+        median: filteredStudents.reduce((sum, s) => sum + s.conduct.motivationalLevel, 0) / filteredStudents.length || 0,
+        target: 4.0
+      },
+      {
+        aspect: 'Character',
+        median: filteredStudents.reduce((sum, s) => sum + s.conduct.character, 0) / filteredStudents.length || 0,
+        target: 4.0
+      },
+      {
+        aspect: 'Leadership',
+        median: filteredStudents.reduce((sum, s) => sum + s.conduct.leadership, 0) / filteredStudents.length || 0,
+        target: 4.0
+      }
+    ];
+    
+    return {
+      selectedClassName,
+      studentsCount: filteredStudents.length,
+      scoreDistribution: scoreRanges,
+      subjectAverages,
+      conductMedians
     };
-    setExams([...exams, newExam]);
-    setCreateModalOpen(false);
-    setNewExamName("");
-    setNewExamType("Exam");
-    setNewExamClasses([]);
-    setNewExamSubjects([]);
+  }, [filteredStudents, selectedClass, classes]);
+
+  // Class averages for benchmarking
+  const classAverages = useMemo(() => {
+    const averages: { [subject: string]: number } = {};
+    subjects.forEach(subject => {
+      const scores = filteredStudents
+        .filter(s => s.subjects[subject])
+        .map(s => s.subjects[subject].score);
+      averages[subject] = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
+    });
+    return averages;
+  }, [filteredStudents]);
+
+  // Handler functions
+  const handleStudentClick = (student: StudentData) => {
+    setSelectedStudent(student);
+  };
+
+  const handleCloseDetailsPanel = () => {
+    setSelectedStudent(null);
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
+        <AdminNavbar />
+        <div className="p-6">
+          <div className="animate-pulse space-y-6">
+            <div className="h-16 bg-white/50 rounded-2xl"></div>
+            <div className="h-32 bg-white/50 rounded-2xl"></div>
+            <div className="h-96 bg-white/50 rounded-2xl"></div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
       <AdminNavbar />
-      <div className="relative p-4 sm:p-6">
+      
+      <div className={`relative p-4 sm:p-6 transition-opacity duration-300 ${selectedStudent ? 'opacity-30 pointer-events-none' : ''}`}>
+        {/* Page Header */}
         <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold text-gray-800">Exam Monitoring</h1>
-          <button onClick={() => setCreateModalOpen(true)} className="inline-flex items-center justify-center rounded-md text-sm font-medium h-10 px-4 py-2 bg-blue-600 text-white hover:bg-blue-700">
-            Create Exam/Quiz
-          </button>
-        </div>
-
-      {isCreateModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-40 flex justify-center items-center">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl m-4">
-            <h3 className="text-xl font-semibold mb-4">Create New Exam/Quiz</h3>
-            <div className="space-y-4">
-              <input type="text" placeholder="Exam/Quiz Name" value={newExamName} onChange={e => setNewExamName(e.target.value)} className="w-full border-gray-300 rounded-md" />
-              <select value={newExamType} onChange={e => setNewExamType(e.target.value as "Exam"|"Quiz")} className="w-full border-gray-300 rounded-md">
-                <option value="Exam">Exam</option>
-                <option value="Quiz">Quiz</option>
-              </select>
-              <div>
-                <h4 className="font-medium text-sm mb-2">Classes</h4>
-                <div className="grid grid-cols-3 md:grid-cols-4 gap-2 max-h-32 overflow-y-auto p-2 border rounded-md">
-                  {mockClasses.map(cls => (
-                    <label key={cls} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={newExamClasses.includes(cls)} onChange={() => setNewExamClasses(prev => prev.includes(cls) ? prev.filter(c => c !== cls) : [...prev, cls])} />{cls}</label>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <h4 className="font-medium text-sm mb-2">Subjects</h4>
-                <div className="grid grid-cols-3 md:grid-cols-4 gap-2 max-h-32 overflow-y-auto p-2 border rounded-md">
-                  {mockSubjects.map(subj => (
-                    <label key={subj} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={newExamSubjects.includes(subj)} onChange={() => setNewExamSubjects(prev => prev.includes(subj) ? prev.filter(s => s !== subj) : [...prev, subj])} />{subj}</label>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div className="flex justify-end gap-4 mt-6">
-              <button onClick={() => setCreateModalOpen(false)} className="text-gray-600">Cancel</button>
-              <button onClick={handleCreateExam} className="bg-blue-600 text-white px-4 py-2 rounded-md">Create</button>
-            </div>
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Student Performance Dashboard</h1>
+            <p className="text-gray-600 mt-1">
+              {filteredStudents.length} students • {classes.length} classes
+            </p>
           </div>
         </div>
-      )}
 
-      <Card className="p-4 mb-6">
-        <div className="flex flex-col sm:flex-row items-center gap-4">
-          <select value={selectedExamId} onChange={e => setSelectedExamId(e.target.value)} className="w-full sm:w-auto flex-grow border-gray-300 rounded-md">
-            <option value="">Select Exam to Monitor</option>
-            {exams.map(exam => <option key={exam.id} value={exam.id}>{exam.name} ({exam.type})</option>)}
-          </select>
-          {selectedExamId && (
-            <>
-              <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)} className="w-full sm:w-auto border-gray-300 rounded-md">
-                <option value="">All Classes</option>
-                {availableClasses.map(cls => <option key={cls} value={cls}>{cls}</option>)}
-              </select>
-              <select value={selectedSubject} onChange={e => setSelectedSubject(e.target.value)} className="w-full sm:w-auto border-gray-300 rounded-md">
-                <option value="">All Subjects</option>
-                {availableSubjects.map(subj => <option key={subj} value={subj}>{subj}</option>)}
-              </select>
-            </>
-          )}
-        </div>
-      </Card>
+        {/* Header Toolbar */}
+        <HeaderToolbar
+          selectedClass={selectedClass}
+          onClassChange={setSelectedClass}
+          selectedSubject={selectedSubject}
+          onSubjectChange={setSelectedSubject}
+          selectedExam={selectedExam}
+          onExamChange={setSelectedExam}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          classes={classes}
+        />
 
-      <div className="flex gap-2 items-center mb-4">
-        <button className={`px-3 py-1 text-sm rounded-md ${view === 'table' ? 'bg-blue-600 text-white' : 'bg-white'}`} onClick={() => setView('table')}>Table</button>
-        <button className={`px-3 py-1 text-sm rounded-md ${view === 'graph' ? 'bg-blue-600 text-white' : 'bg-white'}`} onClick={() => setView('graph')}>Graph</button>
+        {/* Class Overview Strip - Hide when detail panel is open */}
+        {!selectedStudent && (
+          <ClassOverview
+            selectedClassName={classOverviewData.selectedClassName}
+            studentsCount={classOverviewData.studentsCount}
+            scoreDistribution={classOverviewData.scoreDistribution}
+            subjectAverages={classOverviewData.subjectAverages}
+            conductMedians={classOverviewData.conductMedians}
+          />
+        )}
+
+        {/* Main Content */}
+        {isMobile ? (
+          /* Mobile Cards Layout */
+          <div className="space-y-4">
+            {filteredStudents.map((student) => (
+              <MobileStudentCard
+                key={student.id}
+                student={student}
+                onViewDetails={handleStudentClick}
+              />
+            ))}
+          </div>
+        ) : (
+          /* Desktop Table Layout */
+          <StudentTable
+            data={filteredStudents}
+            onRowClick={handleStudentClick}
+            loading={loading}
+          />
+        )}
       </div>
 
-      {view === 'table' && (
-        <Card className="p-0 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="min-w-full">
-              <thead className="bg-gray-100">
-                <tr>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-600 uppercase">Student</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-600 uppercase">Subject</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-600 uppercase">Mark</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-600 uppercase">Grade</th>
-                  {selectedExam?.type === "Exam" && <th className="px-4 py-2 text-left text-xs font-medium text-gray-600 uppercase">Conduct</th>}
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {Object.entries(filteredResults.reduce((acc, r) => { (acc[r.class] = acc[r.class] || []).push(r); return acc; }, {} as Record<string, typeof filteredResults>)).map(([className, results]) => {
-                  const studentGroups = results.reduce((acc, r) => { (acc[r.student] = acc[r.student] || []).push(r); return acc; }, {} as Record<string, typeof results>);
-                  return (
-                    <React.Fragment key={className}>
-                      <tr className="bg-gray-200"><td colSpan={selectedExam?.type === "Exam" ? 5 : 4} className="px-4 py-2 font-bold text-gray-800">{className}</td></tr>
-                      {Object.entries(studentGroups).map(([studentName, studentResults]) => (
-                        <tr key={studentName}>
-                          <td className="px-4 py-2 whitespace-nowrap font-medium">{studentName}</td>
-                          <td className="px-4 py-2">
-                            <div className="space-y-1">
-                              {studentResults.map((r, i) => (
-                                <div key={i} className="text-sm">
-                                  <span className="font-medium">{r.subject}:</span> {r.mark} ({r.grade})
-                                  {selectedExam?.type === "Exam" && r.conduct && (
-                                    <span className="text-xs text-gray-500 ml-2">
-                                      {conductAxes.map(ax => `${ax.charAt(0).toUpperCase()}: ${r.conduct?.[ax] ?? '-'}`).join(", ")}
-                                    </span>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          </td>
-                          <td className="px-4 py-2 text-center text-gray-400">-</td>
-                          <td className="px-4 py-2 text-center text-gray-400">-</td>
-                          {selectedExam?.type === "Exam" && <td className="px-4 py-2 text-center text-gray-400">-</td>}
-                        </tr>
-                      ))}
-                    </React.Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
-
-      {view === 'graph' && (
-        <Card className="p-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div>
-              <h4 className="font-semibold mb-4">Marks Overview</h4>
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={filteredResults} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="student" tick={{fontSize: 10}} />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Line type="monotone" dataKey="mark" stroke="#8884d8" />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-            {selectedExam?.type === "Exam" && (
-              <div>
-                <h4 className="font-semibold mb-4">Conduct Analysis</h4>
-                <ResponsiveContainer width="100%" height={300}>
-                    <RadarChart cx="50%" cy="50%" outerRadius="80%" data={conductAverages}>
-                        <PolarGrid />
-                        <PolarAngleAxis dataKey="subject" />
-                        <PolarRadiusAxis angle={30} domain={[0, 100]}/>
-                        <Radar name="Average" dataKey="A" stroke="#8884d8" fill="#8884d8" fillOpacity={0.6} />
-                        <Legend />
-                    </RadarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </div>
-        </Card>
-      )}
-      </div>
+      {/* Student Details Panel - Right Side Overlay */}
+      <StudentDetailsPanel
+        student={selectedStudent}
+        onClose={handleCloseDetailsPanel}
+        classAverages={classAverages}
+      />
     </div>
   );
 }
