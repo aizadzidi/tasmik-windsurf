@@ -2,11 +2,15 @@
 import React, { useState, useEffect, useMemo } from "react";
 import AdminNavbar from "@/components/admin/AdminNavbar";
 import HeaderToolbar from "@/components/admin/exam/HeaderToolbar";
-import ClassOverview from "@/components/admin/exam/ClassOverview";
 import StudentTable, { StudentData } from "@/components/admin/exam/StudentTable";
 import StudentDetailsPanel from "@/components/admin/exam/StudentDetailsPanel";
-import MobileStudentCard from "@/components/admin/exam/MobileStudentCard";
-import { supabase } from "@/lib/supabaseClient";
+import CreateExamModal from "@/components/admin/exam/CreateExamModal";
+import EditExamModal from "@/components/admin/exam/EditExamModal";
+import ManageExamsModal from "@/components/admin/exam/ManageExamsModal";
+import ManageSubjectsModal from "@/components/admin/exam/ManageSubjectsModal";
+import ManageConductCriteriasModal from "@/components/admin/exam/ManageConductCriteriasModal";
+import { Plus } from "lucide-react";
+import ManageActionsMenu from "@/components/admin/exam/ManageActionsMenu";
 
 // Types
 interface ClassData {
@@ -14,251 +18,339 @@ interface ClassData {
   name: string;
 }
 
-interface FilterChip {
-  id: string;
-  label: string;
-  type: 'performance' | 'conduct';
+
+// Types for exam metadata
+interface ExamMetadata {
+  exams: Array<{ id: string; name: string; type: string; created_at: string }>;
+  classes: Array<{ id: string; name: string }>;
+  subjects: Array<{ id: string; name: string }>;
+  success: boolean;
 }
 
-// Mock data generation
-const subjects = ['Math', 'English', 'Science', 'BM', 'BI', 'Quran', 'Arabic', 'History'];
-const classNames = ['1 DLP', '2 Ibtidai', '3 Mutawasit', '4 Thanawi', '5 Aliyah', '6 Takhmili'];
-
-function generateMockData(): StudentData[] {
-  const students: StudentData[] = [];
-  
-  classNames.forEach((className, classIndex) => {
-    for (let i = 1; i <= 8; i++) {
-      const studentId = `STU${classIndex}${i.toString().padStart(3, '0')}`;
-      const studentName = `Student ${classIndex + 1}-${i}`;
-      
-      const subjectScores: { [subject: string]: { score: number; trend: number[]; grade: string } } = {};
-      
-      subjects.forEach(subject => {
-        const baseScore = 60 + Math.random() * 35;
-        const trend = Array.from({ length: 6 }, (_, idx) => 
-          Math.max(0, Math.min(100, baseScore + (Math.random() - 0.5) * 20 + idx * 2))
-        );
-        const score = Math.round(trend[trend.length - 1]);
-        const grade = score >= 85 ? 'A' : score >= 75 ? 'B' : score >= 65 ? 'C' : 'D';
-        
-        subjectScores[subject] = {
-          score,
-          trend: trend.map(t => Math.round(t)),
-          grade
-        };
-      });
-      
-      const conduct = {
-        discipline: Math.round((3 + Math.random() * 2) * 10) / 10,
-        effort: Math.round((3 + Math.random() * 2) * 10) / 10,
-        participation: Math.round((2.5 + Math.random() * 2.5) * 10) / 10,
-        motivationalLevel: Math.round((3 + Math.random() * 2) * 10) / 10,
-        character: Math.round((3 + Math.random() * 2) * 10) / 10,
-        leadership: Math.round((3 + Math.random() * 2) * 10) / 10,
-      };
-      
-      const average = Math.round(
-        Object.values(subjectScores).reduce((sum, s) => sum + s.score, 0) / subjects.length
-      );
-      
-      students.push({
-        id: studentId,
-        name: studentName,
-        class: className,
-        subjects: subjectScores,
-        conduct,
-        overall: {
-          average,
-          rank: 0, // Will be calculated after sorting
-          needsAttention: average < 60 || conduct.participation < 3,
-          attentionReason: average < 60 ? 'Academic performance below average' : 
-                          conduct.participation < 3 ? 'Low participation score needs attention' : undefined,
-        },
-      });
-    }
-  });
-  
-  // Calculate ranks
-  students.sort((a, b) => b.overall.average - a.overall.average);
-  students.forEach((student, index) => {
-    student.overall.rank = index + 1;
-  });
-  
-  return students;
+interface ExamDataResponse {
+  students: StudentData[];
+  subjects: string[];
+  success: boolean;
 }
 
 export default function AdminExamPage() {
   // State
   const [classes, setClasses] = useState<ClassData[]>([]);
+  const [exams, setExams] = useState<Array<{ id: string; name: string; type: string }>>([]);
+  const [subjects, setSubjects] = useState<string[]>([]);
+  const [students, setStudents] = useState<StudentData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [mockStudents] = useState<StudentData[]>(() => generateMockData());
   const [selectedStudent, setSelectedStudent] = useState<StudentData | null>(null);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isManageModalOpen, setIsManageModalOpen] = useState(false);
+  const [isManageSubjectsModalOpen, setIsManageSubjectsModalOpen] = useState(false);
+  const [isManageCriteriasModalOpen, setIsManageCriteriasModalOpen] = useState(false);
+  const [selectedExamForEdit, setSelectedExamForEdit] = useState<any>(null);
   
   // Filters
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('');
   const [selectedExam, setSelectedExam] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterChips, setFilterChips] = useState<FilterChip[]>([]);
   const [isMobile, setIsMobile] = useState(false);
 
-  // Fetch real classes data
-  const fetchClasses = async () => {
+  // Fetch exam metadata (exams, classes, subjects) - with safety checks
+  const fetchExamMetadata = async () => {
     try {
-      setLoading(true);
-      const { data: classesData, error } = await supabase
-        .from('classes')
-        .select('id, name')
-        .order('name');
+      const response = await fetch('/api/admin/exam-metadata');
+      const data: ExamMetadata = await response.json();
       
-      if (error) {
-        console.error('Error fetching classes:', error);
-        // Use mock classes as fallback
-        setClasses(classNames.map((name, index) => ({ id: `class-${index}`, name })));
-      } else {
-        setClasses(classesData || []);
+      if (data.success) {
+        // Safety checks before setting state
+        setClasses(Array.isArray(data.classes) ? data.classes : []);
+        setExams(Array.isArray(data.exams) ? data.exams : []);
+        setSubjects(Array.isArray(data.subjects) ? data.subjects.map(s => s?.name || '') : []);
+        
+        // Auto-select the first exam if available
+        if (Array.isArray(data.exams) && data.exams.length > 0 && data.exams[0]?.id) {
+          setSelectedExam(data.exams[0].id);
+        }
       }
     } catch (error) {
-      console.error('Error:', error);
-      // Use mock classes as fallback
-      setClasses(classNames.map((name, index) => ({ id: `class-${index}`, name })));
+      console.error('Error fetching exam metadata:', error);
+      // Set empty arrays on error to prevent undefined issues
+      setClasses([]);
+      setExams([]);
+      setSubjects([]);
+    }
+  };
+  
+  // Fetch exam student data - memoized to prevent infinite re-renders
+  const fetchExamData = React.useCallback(async () => {
+    try {
+      setLoading(true);
+      
+      const params = new URLSearchParams();
+      if (selectedExam) params.append('examId', selectedExam);
+      if (selectedClass) params.append('classId', selectedClass);
+      
+      const response = await fetch(`/api/admin/exams?${params}`);
+      const data: ExamDataResponse = await response.json();
+      
+      if (data.success) {
+        // Safety check before setting students data
+        setStudents(Array.isArray(data.students) ? data.students : []);
+      } else {
+        console.error('Error fetching exam data:', data);
+        setStudents([]);
+      }
+    } catch (error) {
+      console.error('Error fetching exam data:', error);
+      setStudents([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedExam, selectedClass]);
 
   // Check if mobile
   const checkMobile = () => {
     setIsMobile(window.innerWidth < 1024);
   };
 
+  // No global outside-click handlers needed after simplifying actions UI
+
+  // Initial load - fetch metadata and setup mobile detection
   useEffect(() => {
-    fetchClasses();
+    fetchExamMetadata();
     checkMobile();
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
+  
+  // Fetch exam data when filters change - only after metadata is loaded
+  useEffect(() => {
+    if (exams.length > 0) {
+      fetchExamData();
+    } else if (Array.isArray(exams)) {
+      // If exams array is loaded but empty, stop loading state
+      setLoading(false);
+      setStudents([]);
+    }
+  }, [selectedExam, selectedClass, exams.length, fetchExamData]);
 
-  // Filter students based on current filters
+  // Optimized class name lookup with safety check
+  const selectedClassName = useMemo(() => {
+    if (!Array.isArray(classes) || !selectedClass) return undefined;
+    return classes.find(c => c && c.id === selectedClass)?.name;
+  }, [classes, selectedClass]);
+
+  // Selected exam name for display in details panel header
+  const selectedExamName = useMemo(() => {
+    if (!Array.isArray(exams) || !selectedExam) return undefined;
+    return exams.find(e => e && e.id === selectedExam)?.name;
+  }, [exams, selectedExam]);
+  
+  // Filter students based on current filters - optimized with safety checks
   const filteredStudents = useMemo(() => {
-    return mockStudents.filter(student => {
-      if (selectedClass && student.class !== classes.find(c => c.id === selectedClass)?.name) {
+    // Safety check to prevent undefined array errors
+    if (!Array.isArray(students) || students.length === 0) return [];
+    
+    return students.filter(student => {
+      // Skip invalid students
+      if (!student || typeof student.name !== 'string') return false;
+      
+      // Class filter - use pre-computed class name
+      if (selectedClass && student.class !== selectedClassName) {
         return false;
       }
-      if (searchQuery && !student.name.toLowerCase().includes(searchQuery.toLowerCase())) {
+      // Search filter - case insensitive, trimmed
+      const trimmedQuery = (searchQuery || '').trim().toLowerCase();
+      if (trimmedQuery && !student.name.toLowerCase().includes(trimmedQuery)) {
         return false;
       }
       return true;
     });
-  }, [mockStudents, selectedClass, searchQuery, classes]);
+  }, [students, selectedClass, selectedClassName, searchQuery]);
 
-  // Calculate class overview data
-  const classOverviewData = useMemo(() => {
-    const selectedClassName = selectedClass ? classes.find(c => c.id === selectedClass)?.name || '' : '';
-    
-    // Score distribution
-    const scoreRanges = [
-      { range: '90-100', count: 0, percentage: 0 },
-      { range: '80-89', count: 0, percentage: 0 },
-      { range: '70-79', count: 0, percentage: 0 },
-      { range: '60-69', count: 0, percentage: 0 },
-      { range: '0-59', count: 0, percentage: 0 },
-    ];
-    
-    filteredStudents.forEach(student => {
-      const avg = student.overall.average;
-      if (avg >= 90) scoreRanges[0].count++;
-      else if (avg >= 80) scoreRanges[1].count++;
-      else if (avg >= 70) scoreRanges[2].count++;
-      else if (avg >= 60) scoreRanges[3].count++;
-      else scoreRanges[4].count++;
-    });
-    
-    scoreRanges.forEach(range => {
-      range.percentage = filteredStudents.length > 0 
-        ? Math.round((range.count / filteredStudents.length) * 100) 
-        : 0;
-    });
-    
-    // Subject averages
-    const subjectAverages = subjects.map(subject => {
-      const scores = filteredStudents
-        .filter(s => s.subjects[subject])
-        .map(s => s.subjects[subject].score);
-      const average = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
-      const trend = Math.random() > 0.5 ? 'up' : Math.random() > 0.3 ? 'stable' : 'down';
-      
-      return {
-        subject,
-        average,
-        trend: trend as 'up' | 'down' | 'stable',
-        change: (Math.random() - 0.5) * 10
-      };
-    });
-    
-    // Conduct medians
-    const conductMedians = [
-      {
-        aspect: 'Discipline',
-        median: filteredStudents.reduce((sum, s) => sum + s.conduct.discipline, 0) / filteredStudents.length || 0,
-        target: 4.0
-      },
-      {
-        aspect: 'Effort',
-        median: filteredStudents.reduce((sum, s) => sum + s.conduct.effort, 0) / filteredStudents.length || 0,
-        target: 4.0
-      },
-      {
-        aspect: 'Participation',
-        median: filteredStudents.reduce((sum, s) => sum + s.conduct.participation, 0) / filteredStudents.length || 0,
-        target: 3.5
-      },
-      {
-        aspect: 'Motivational Level',
-        median: filteredStudents.reduce((sum, s) => sum + s.conduct.motivationalLevel, 0) / filteredStudents.length || 0,
-        target: 4.0
-      },
-      {
-        aspect: 'Character',
-        median: filteredStudents.reduce((sum, s) => sum + s.conduct.character, 0) / filteredStudents.length || 0,
-        target: 4.0
-      },
-      {
-        aspect: 'Leadership',
-        median: filteredStudents.reduce((sum, s) => sum + s.conduct.leadership, 0) / filteredStudents.length || 0,
-        target: 4.0
-      }
-    ];
-    
-    return {
-      selectedClassName,
-      studentsCount: filteredStudents.length,
-      scoreDistribution: scoreRanges,
-      subjectAverages,
-      conductMedians
-    };
-  }, [filteredStudents, selectedClass, classes]);
-
-  // Class averages for benchmarking
+  // Class averages used inside the details panel
+  // Compute using the student's class (or selected class), not the filtered list/search
   const classAverages = useMemo(() => {
+    if (!Array.isArray(students) || !Array.isArray(subjects) || students.length === 0 || subjects.length === 0) {
+      return {} as { [subject: string]: number };
+    }
+
+    // Determine which class to average over
+    const targetClassName = selectedStudent?.class || selectedClassName;
+
+    // Use all students in that class when available; otherwise all students for the exam
+    const baseStudents = targetClassName
+      ? students.filter((s) => s && s.class === targetClassName)
+      : students;
+
+    if (baseStudents.length === 0) return {} as { [subject: string]: number };
+
     const averages: { [subject: string]: number } = {};
-    subjects.forEach(subject => {
-      const scores = filteredStudents
-        .filter(s => s.subjects[subject])
-        .map(s => s.subjects[subject].score);
-      averages[subject] = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
+
+    subjects.forEach((subject) => {
+      if (!subject) return;
+      let total = 0;
+      let count = 0;
+      baseStudents.forEach((stu) => {
+        const s = stu?.subjects?.[subject];
+        if (s && typeof s.score === 'number') {
+          total += s.score;
+          count += 1;
+        }
+      });
+      averages[subject] = count > 0 ? Math.round(total / count) : 0;
     });
+
     return averages;
-  }, [filteredStudents]);
+  }, [students, subjects, selectedStudent, selectedClassName]);
 
   // Handler functions
+  const handleCreateExam = async (examData: any) => {
+    try {
+      // Convert DateRange to the format expected by the backend
+      const processedExamData = {
+        ...examData,
+        dateRange: {
+          from: examData.dateRange?.from ? examData.dateRange.from.toISOString().split('T')[0] : '',
+          to: examData.dateRange?.to ? examData.dateRange.to.toISOString().split('T')[0] : examData.dateRange?.from ? examData.dateRange.from.toISOString().split('T')[0] : ''
+        }
+      };
+
+      const response = await fetch('/api/admin/exam-metadata', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(processedExamData),
+      });
+
+      const result = await response.json();
+      
+      if (result.success) {
+        // Refresh the exam metadata to include the new exam
+        await fetchExamMetadata();
+        // Auto-select the newly created exam
+        setSelectedExam(result.examId);
+      } else {
+        console.error('Failed to create exam:', result.error);
+        alert('Failed to create exam. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error creating exam:', error);
+      alert('Error creating exam. Please try again.');
+    }
+  };
+
   const handleStudentClick = (student: StudentData) => {
     setSelectedStudent(student);
   };
 
   const handleCloseDetailsPanel = () => {
     setSelectedStudent(null);
+  };
+
+  const handleEditExam = async (examId: string, examData: any) => {
+    try {
+      // Convert DateRange to the format expected by the backend
+      const processedExamData = {
+        ...examData,
+        dateRange: {
+          from: examData.dateRange?.from ? examData.dateRange.from.toISOString().split('T')[0] : '',
+          to: examData.dateRange?.to ? examData.dateRange.to.toISOString().split('T')[0] : examData.dateRange?.from ? examData.dateRange.from.toISOString().split('T')[0] : ''
+        }
+      };
+
+      const response = await fetch(`/api/admin/exam-metadata?id=${examId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(processedExamData),
+      });
+
+      const result = await response.json();
+      
+      if (result.success) {
+        // Refresh the exam metadata to show updated exam
+        await fetchExamMetadata();
+        // Keep the same exam selected if it was the one being edited
+        if (selectedExam === examId) {
+          // Trigger a refresh of exam data
+          await fetchExamData();
+        }
+        alert('Exam updated successfully!');
+      } else {
+        console.error('Failed to update exam:', result.error);
+        alert(`Failed to update exam: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Error updating exam:', error);
+      alert('Error updating exam. Please try again.');
+    }
+  };
+
+  const handleDeleteExam = async (examId: string, examName: string) => {
+    if (confirm(`Are you sure you want to delete the exam "${examName}"? This action cannot be undone.`)) {
+      try {
+        // First attempt: try to delete without cascade
+        let response = await fetch(`/api/admin/exam-metadata?id=${examId}`, {
+          method: 'DELETE',
+        });
+        let result = await response.json();
+        
+        if (result.success) {
+          // Refresh the exam metadata to remove deleted exam
+          await fetchExamMetadata();
+          // Clear selected exam if it was the deleted one
+          if (selectedExam === examId) {
+            setSelectedExam('');
+          }
+          alert('Exam deleted successfully!');
+        } else if (result.hasResults) {
+          // Exam has results, ask for cascade deletion
+          const cascadeConfirm = confirm(
+            `The exam "${examName}" has ${result.resultsCount || 'existing'} student result(s). ` +
+            `Deleting the exam will also permanently remove all associated student results. ` +
+            `Do you want to proceed with deletion?`
+          );
+          
+          if (cascadeConfirm) {
+            // Attempt cascade deletion
+            response = await fetch(`/api/admin/exam-metadata?id=${examId}&cascade=true`, {
+              method: 'DELETE',
+            });
+            result = await response.json();
+            
+            if (result.success) {
+              await fetchExamMetadata();
+              if (selectedExam === examId) {
+                setSelectedExam('');
+              }
+              alert('Exam and all associated results deleted successfully!');
+            } else {
+              console.error('Failed to delete exam with cascade:', result.error);
+              alert(`Failed to delete exam: ${result.error}`);
+            }
+          }
+        } else {
+          console.error('Failed to delete exam:', result.error);
+          alert(`Failed to delete exam: ${result.error}`);
+        }
+      } catch (error) {
+        console.error('Error deleting exam:', error);
+        alert('Error deleting exam. Please try again.');
+      }
+    }
+  };
+
+  const openEditModal = (exam: any) => {
+    setSelectedExamForEdit(exam);
+    setIsEditModalOpen(true);
+  };
+
+  const closeEditModal = () => {
+    setIsEditModalOpen(false);
+    setSelectedExamForEdit(null);
   };
 
   if (loading) {
@@ -280,7 +372,7 @@ export default function AdminExamPage() {
     <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
       <AdminNavbar />
       
-      <div className={`relative p-4 sm:p-6 transition-opacity duration-300 ${selectedStudent ? 'opacity-30 pointer-events-none' : ''}`}>
+      <div className="relative p-4 sm:p-6 transition-opacity duration-300">
         {/* Page Header */}
         <div className="flex justify-between items-center mb-6">
           <div>
@@ -289,7 +381,22 @@ export default function AdminExamPage() {
               {filteredStudents.length} students • {classes.length} classes
             </p>
           </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => setIsCreateModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors shadow-sm"
+            >
+              <Plus className="w-4 h-4" />
+              <span className="hidden sm:inline">Create Exam</span>
+            </button>
+            <ManageActionsMenu
+              onOpenSubjects={() => setIsManageSubjectsModalOpen(true)}
+              onOpenConduct={() => setIsManageCriteriasModalOpen(true)}
+              onOpenExams={() => setIsManageModalOpen(true)}
+            />
+          </div>
         </div>
+
 
         {/* Header Toolbar */}
         <HeaderToolbar
@@ -302,46 +409,90 @@ export default function AdminExamPage() {
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           classes={classes}
+          exams={exams}
+          subjects={subjects}
         />
 
-        {/* Class Overview Strip - Hide when detail panel is open */}
-        {!selectedStudent && (
-          <ClassOverview
-            selectedClassName={classOverviewData.selectedClassName}
-            studentsCount={classOverviewData.studentsCount}
-            scoreDistribution={classOverviewData.scoreDistribution}
-            subjectAverages={classOverviewData.subjectAverages}
-            conductMedians={classOverviewData.conductMedians}
-          />
-        )}
 
-        {/* Main Content */}
-        {isMobile ? (
-          /* Mobile Cards Layout */
-          <div className="space-y-4">
-            {filteredStudents.map((student) => (
-              <MobileStudentCard
-                key={student.id}
-                student={student}
-                onViewDetails={handleStudentClick}
-              />
-            ))}
-          </div>
-        ) : (
-          /* Desktop Table Layout */
-          <StudentTable
-            data={filteredStudents}
-            onRowClick={handleStudentClick}
-            loading={loading}
-          />
-        )}
+        {/* Main Content - Always show table format */}
+        <div className={selectedStudent ? 'opacity-30 pointer-events-none' : ''}>
+          {exams.length === 0 && !loading ? (
+            <div className="bg-white/90 backdrop-blur-sm border border-gray-100 rounded-2xl p-12 text-center shadow-sm">
+              <div className="text-gray-400 mb-4">
+                <svg className="w-16 h-16 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+              <h3 className="text-xl font-semibold text-gray-700 mb-2">No Exams Found</h3>
+              <p className="text-gray-500 mb-6">No exam data is available yet. Create some exams and add student results to see the dashboard.</p>
+            </div>
+          ) : (
+            <StudentTable
+              data={filteredStudents}
+              onRowClick={handleStudentClick}
+              loading={loading}
+              selectedSubject={selectedSubject}
+            />
+          )}
+        </div>
       </div>
 
-      {/* Student Details Panel - Right Side Overlay */}
+      {/* Student Details Panel - Responsive Overlay */}
       <StudentDetailsPanel
         student={selectedStudent}
         onClose={handleCloseDetailsPanel}
         classAverages={classAverages}
+        isMobile={isMobile}
+        selectedExamName={selectedExamName || ''}
+      />
+
+      {/* Manage Exams Modal */}
+      <ManageExamsModal
+        isOpen={isManageModalOpen}
+        onClose={() => setIsManageModalOpen(false)}
+        exams={exams}
+        selectedExam={selectedExam}
+        onSelectExam={setSelectedExam}
+        onEdit={(exam) => {
+          setIsManageModalOpen(false);
+          openEditModal(exam);
+        }}
+        onDelete={(id, name) => {
+          // Close modal to prevent stacked confirmations behind overlay
+          setIsManageModalOpen(false);
+          handleDeleteExam(id, name);
+        }}
+      />
+
+      {/* Create Exam Modal */}
+      <CreateExamModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        onSubmit={handleCreateExam}
+        classes={classes}
+      />
+
+      {/* Edit Exam Modal */}
+      <EditExamModal
+        isOpen={isEditModalOpen}
+        onClose={closeEditModal}
+        onSubmit={handleEditExam}
+        classes={classes}
+        exam={selectedExamForEdit}
+      />
+
+      {/* Manage Subjects Modal */}
+      <ManageSubjectsModal
+        isOpen={isManageSubjectsModalOpen}
+        onClose={() => setIsManageSubjectsModalOpen(false)}
+        onRefresh={fetchExamMetadata}
+      />
+
+      {/* Manage Conduct Criterias Modal */}
+      <ManageConductCriteriasModal
+        isOpen={isManageCriteriasModalOpen}
+        onClose={() => setIsManageCriteriasModalOpen(false)}
+        onRefresh={() => {}} // Conduct criteria refresh if needed
       />
     </div>
   );

@@ -5,11 +5,27 @@ import { X, FileText, Users, CheckSquare, ChevronDown, Calendar } from 'lucide-r
 import { DateRangePicker } from "@/components/ui/date-picker";
 import { DateRange } from "react-day-picker";
 
-interface CreateExamModalProps {
+interface ExamData {
+  id: string;
+  name: string;
+  type: string;
+  exam_start_date: string;
+  exam_end_date?: string;
+  exam_classes?: Array<{
+    classes: { id: string; name: string };
+    conduct_weightage: number;
+  }>;
+  exam_subjects?: Array<{
+    subjects: { id: string; name: string };
+  }>;
+}
+
+interface EditExamModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (examData: ExamFormData) => void;
+  onSubmit: (examId: string, examData: ExamFormData) => void;
   classes: Array<{ id: string; name: string }>;
+  exam: ExamData | null;
 }
 
 interface ExamFormData {
@@ -30,7 +46,7 @@ interface ExamFormErrors {
 
 const subjects = ['Math', 'English', 'Science', 'BM', 'BI', 'Quran', 'Arabic', 'History'];
 
-export default function CreateExamModal({ isOpen, onClose, onSubmit, classes }: CreateExamModalProps) {
+export default function EditExamModal({ isOpen, onClose, onSubmit, classes, exam }: EditExamModalProps) {
   const [formData, setFormData] = useState<ExamFormData>({
     title: '',
     subjects: [],
@@ -45,6 +61,32 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes }: 
   
   const subjectDropdownRef = useRef<HTMLDivElement>(null);
   const classDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Initialize form data when exam changes
+  useEffect(() => {
+    if (exam && isOpen) {
+      const examClassIds = exam.exam_classes?.map(ec => ec.classes.id) || [];
+      const examSubjects = exam.exam_subjects?.map(es => es.subjects.name) || [];
+      const conductWeightages: { [classId: string]: number } = {};
+      
+      exam.exam_classes?.forEach(ec => {
+        conductWeightages[ec.classes.id] = ec.conduct_weightage || 0;
+      });
+
+      const dateRange: DateRange | undefined = exam.exam_start_date ? {
+        from: new Date(exam.exam_start_date),
+        to: exam.exam_end_date ? new Date(exam.exam_end_date) : new Date(exam.exam_start_date)
+      } : undefined;
+
+      setFormData({
+        title: exam.name,
+        subjects: examSubjects,
+        classIds: examClassIds,
+        dateRange,
+        conductWeightages,
+      });
+    }
+  }, [exam, isOpen]);
 
   const handleInputChange = (field: keyof ExamFormData, value: string | number | string[] | Date | DateRange | { [key: string]: number } | undefined) => {
     setFormData(prev => ({
@@ -212,8 +254,8 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes }: 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (validateForm()) {
-      onSubmit(formData);
+    if (validateForm() && exam) {
+      onSubmit(exam.id, formData);
       handleClose();
     }
   };
@@ -232,7 +274,7 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes }: 
     onClose();
   };
 
-  if (!isOpen) return null;
+  if (!isOpen || !exam) return null;
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[10001] flex items-start justify-center p-4 overflow-y-auto">
@@ -244,8 +286,8 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes }: 
               <FileText className="w-5 h-5 text-blue-600" />
             </div>
             <div>
-              <h2 className="text-xl font-semibold text-gray-900">Create New Exam</h2>
-              <p className="text-sm text-gray-600">Set up a new exam or quiz for your students</p>
+              <h2 className="text-xl font-semibold text-gray-900">Edit Exam</h2>
+              <p className="text-sm text-gray-600">Update exam details and settings</p>
             </div>
           </div>
           <button
@@ -421,7 +463,6 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes }: 
             </div>
           </div>
 
-
           {/* Conduct Mark Weightages */}
           {formData.classIds.length > 0 && (
             <div className="space-y-4">
@@ -498,7 +539,7 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes }: 
               type="submit"
               className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
             >
-              Create Exam
+              Update Exam
             </button>
           </div>
         </form>

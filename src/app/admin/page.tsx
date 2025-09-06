@@ -44,6 +44,7 @@ export default function AdminPage() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [classes, setClasses] = useState<Class[]>([]);
   const [loading, setLoading] = useState(false);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -67,62 +68,73 @@ export default function AdminPage() {
   const [editError, setEditError] = useState("");
   const [editParentOpen, setEditParentOpen] = useState(false);
 
+  // Dev log helper
+  const isDev = process.env.NODE_ENV !== 'production';
+
+  // Safe error parsing helper
+  async function parseError(res: Response) {
+    try {
+      const ct = res.headers.get('content-type') || '';
+      if (ct.includes('application/json')) {
+        const j = await res.json();
+        return j?.error || res.statusText || 'Request failed';
+      }
+      const t = await res.text();
+      return t || res.statusText || 'Request failed';
+    } catch {
+      return res.statusText || 'Unknown error';
+    }
+  }
+
   useEffect(() => {
     async function fetchData() {
-      console.log('Admin page: Starting data fetch...');
       try {
-        // Fetch students via secure API
-        const studentsResponse = await fetch('/api/admin/students');
-        console.log('Students response:', studentsResponse.status, studentsResponse.ok);
-        if (studentsResponse.ok) {
-          const studentsData = await studentsResponse.json();
-          console.log('Students data received:', studentsData.length);
+        if (isDev) console.log('Admin page: Starting parallel data fetch...');
+        const [studentsRes, parentsRes, teachersRes, classesRes] = await Promise.all([
+          fetch('/api/admin/students'),
+          fetch('/api/admin/users?role=parent'),
+          fetch('/api/admin/users?role=teacher'),
+          fetch('/api/admin/classes'),
+        ]);
+
+        if (studentsRes.ok) {
+          const studentsData = await studentsRes.json();
+          if (isDev) console.log('Students data received:', studentsData.length);
           setStudents(studentsData);
         } else {
-          const errorData = await studentsResponse.text();
-          console.error('Students fetch failed:', studentsResponse.status, errorData);
-          setError(`Failed to load students: ${studentsResponse.status}`);
+          const err = await parseError(studentsRes);
+          if (isDev) console.error('Students fetch failed:', studentsRes.status, err);
+          setError(`Failed to load students: ${err}`);
         }
 
-        // Fetch parents via secure API
-        const parentsResponse = await fetch('/api/admin/users?role=parent');
-        console.log('Parents response:', parentsResponse.status, parentsResponse.ok);
-        if (parentsResponse.ok) {
-          const parentsData = await parentsResponse.json();
-          console.log('Parents data received:', parentsData.length);
+        if (parentsRes.ok) {
+          const parentsData = await parentsRes.json();
+          if (isDev) console.log('Parents data received:', parentsData.length);
           setParents(parentsData);
-        } else {
-          const errorData = await parentsResponse.text();
-          console.error('Parents fetch failed:', parentsResponse.status, errorData);
+        } else if (isDev) {
+          console.error('Parents fetch failed:', parentsRes.status, await parseError(parentsRes));
         }
 
-        // Fetch teachers via secure API
-        const teachersResponse = await fetch('/api/admin/users?role=teacher');
-        console.log('Teachers response:', teachersResponse.status, teachersResponse.ok);
-        if (teachersResponse.ok) {
-          const teachersData = await teachersResponse.json();
-          console.log('Teachers data received:', teachersData.length);
+        if (teachersRes.ok) {
+          const teachersData = await teachersRes.json();
+          if (isDev) console.log('Teachers data received:', teachersData.length);
           setTeachers(teachersData);
-        } else {
-          const errorData = await teachersResponse.text();
-          console.error('Teachers fetch failed:', teachersResponse.status, errorData);
+        } else if (isDev) {
+          console.error('Teachers fetch failed:', teachersRes.status, await parseError(teachersRes));
         }
 
-        // Fetch classes via secure API
-        const classesResponse = await fetch('/api/admin/classes');
-        console.log('Classes response:', classesResponse.status, classesResponse.ok);
-        if (classesResponse.ok) {
-          const classesData = await classesResponse.json();
-          console.log('Classes data received:', classesData.length);
+        if (classesRes.ok) {
+          const classesData = await classesRes.json();
+          if (isDev) console.log('Classes data received:', classesData.length);
           setClasses(classesData);
-        } else {
-          const errorData = await classesResponse.text();
-          console.error('Classes fetch failed:', classesResponse.status, errorData);
+        } else if (isDev) {
+          console.error('Classes fetch failed:', classesRes.status, await parseError(classesRes));
         }
-
       } catch (error) {
         console.error('Failed to fetch admin data:', error);
         setError('Failed to load admin data. Please refresh the page.');
+      } finally {
+        setIsInitialLoading(false);
       }
     }
     fetchData();
@@ -156,8 +168,8 @@ export default function AdminPage() {
         setSuccess("Student added successfully!");
         setTimeout(() => setSuccess(""), 3000);
       } else {
-        const errorData = await response.json();
-        setError("Failed to add student: " + (errorData.error || 'Unknown error'));
+        const err = await parseError(response);
+        setError("Failed to add student: " + err);
       }
     } catch (error) {
       setError("Failed to add student: Network error");
@@ -195,11 +207,15 @@ export default function AdminPage() {
 
       if (response.ok) {
         const updatedStudent = await response.json();
-        setStudents(students.map(s => s.id === studentId ? updatedStudent : s));
+        setStudents(
+          students
+            .map(s => s.id === studentId ? updatedStudent : s)
+            .sort((a, b) => a.name.localeCompare(b.name))
+        );
         setEditStudentId(null);
       } else {
-        const errorData = await response.json();
-        setEditError("Failed to update student: " + (errorData.error || 'Unknown error'));
+        const err = await parseError(response);
+        setEditError("Failed to update student: " + err);
       }
     } catch (error) {
       setEditError("Failed to update student: Network error");
@@ -220,8 +236,8 @@ export default function AdminPage() {
         setSuccess("Student deleted successfully!");
         setTimeout(() => setSuccess(""), 3000);
       } else {
-        const errorData = await response.json();
-        setError("Failed to delete student: " + (errorData.error || 'Unknown error'));
+        const err = await parseError(response);
+        setError("Failed to delete student: " + err);
       }
     } catch (error) {
       setError("Failed to delete student: Network error");
@@ -251,8 +267,8 @@ export default function AdminPage() {
         setSuccess(`Student ${completed ? 'marked as completed' : 'marked as incomplete'} successfully!`);
         setTimeout(() => setSuccess(""), 3000);
       } else {
-        const errorData = await response.json();
-        setError("Failed to update completion status: " + (errorData.error || 'Unknown error'));
+        const err = await parseError(response);
+        setError("Failed to update completion status: " + err);
       }
     } catch (err) {
       setError("Failed to update completion status: Network error");
@@ -270,6 +286,11 @@ export default function AdminPage() {
      (filterTeacher === "unassigned" && !s.assigned_teacher_id) || 
      s.assigned_teacher_id === filterTeacher)
   ).sort((a, b) => a.name.localeCompare(b.name)), [students, searchTerm, filterClass, filterTeacher]);
+
+  // Precompute quick lookups
+  const parentById = useMemo(() => new Map(parents.map((p) => [p.id, p])), [parents]);
+  const teacherById = useMemo(() => new Map(teachers.map((t) => [t.id, t])), [teachers]);
+  const classById = useMemo(() => new Map(classes.map((c) => [c.id, c])), [classes]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
@@ -367,7 +388,7 @@ export default function AdminPage() {
                       className="w-full justify-between"
                    >
                       {newStudentParentId
-                        ? `${parents.find(p => p.id === newStudentParentId)?.name || ""} (${parents.find(p => p.id === newStudentParentId)?.email || ""})`
+                        ? `${parentById.get(newStudentParentId)?.name || ""} (${parentById.get(newStudentParentId)?.email || ""})`
                         : "Select parent (optional)"}
                       <ChevronsUpDown className="opacity-50" />
                     </Button>
@@ -528,7 +549,7 @@ export default function AdminPage() {
                                 className="w-full justify-between"
                               >
                                 {editStudentForm.parent_id
-                                  ? `${parents.find(p => p.id === editStudentForm.parent_id)?.name || ""} (${parents.find(p => p.id === editStudentForm.parent_id)?.email || ""})`
+                                  ? `${parentById.get(editStudentForm.parent_id)?.name || ""} (${parentById.get(editStudentForm.parent_id)?.email || ""})`
                                   : "No parent assigned"}
                                 <ChevronsUpDown className="opacity-50" />
                               </Button>
@@ -616,13 +637,13 @@ export default function AdminPage() {
                     <>
                       <td className="px-4 py-3 font-medium text-gray-900">{s.name}</td>
                       <td className="px-4 py-3 text-gray-600">
-                        {parents.find(p => p.id === s.parent_id)?.name || '-'}
+                        {parentById.get((s as any).parent_id)?.name || '-'}
                       </td>
                       <td className="px-4 py-3 text-gray-600">
-                        {teachers.find(t => t.id === s.assigned_teacher_id)?.name || '-'}
+                        {teacherById.get((s as any).assigned_teacher_id)?.name || '-'}
                       </td>
                       <td className="px-4 py-3 text-gray-600">
-                        {classes.find(c => c.id === s.class_id)?.name || '-'}
+                        {classById.get((s as any).class_id)?.name || '-'}
                       </td>
                       <td className="px-4 py-3 text-center">
                         <div className="flex flex-col items-center gap-2">
@@ -671,7 +692,14 @@ export default function AdminPage() {
                   )}
                 </tr>
               ))}
-              {filteredStudents.length === 0 && (
+              {isInitialLoading && (
+                <tr>
+                  <td colSpan={6} className="text-center py-8 text-gray-500">
+                    Loading students...
+                  </td>
+                </tr>
+              )}
+              {!isInitialLoading && filteredStudents.length === 0 && (
                 <tr>
                   <td colSpan={6} className="text-center py-8 text-gray-500">
                     No students match the current filters.

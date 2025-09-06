@@ -1,104 +1,36 @@
 "use client";
 import React from "react";
 import { Card, CardContent } from "@/components/ui/Card";
-
-import { RadioGroup } from "@/components/ui/RadioGroup";
-import { Select } from "@/components/ui/Select";
-import { Switch } from "@/components/ui/Switch";
 import { Button } from "@/components/ui/Button";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import dynamic from "next/dynamic";
-
-// Helper components for shadcn/ui minimal scaffolds
-const RadioGroupItem = (props: { value: string; children: React.ReactNode; className?: string }) => (
-  <label className={props.className}>
-    <input
-      type="radio"
-      value={props.value}
-      style={{ marginRight: 4 }}
-      name="radio-group"
-      onChange={() => {}}
-    />
-    {props.children}
-  </label>
-);
-const SelectTrigger = (props: React.PropsWithChildren<{ className?: string }>) => (
-  <div className={props.className}>{props.children}</div>
-);
-const SelectValue = (props: { placeholder?: string }) => <span>{props.placeholder}</span>;
-const SelectContent = (props: React.PropsWithChildren<{}>) => <div>{props.children}</div>;
-const SelectItem = (props: { value: string; children: React.ReactNode }) => (
-  <div style={{ padding: '4px 8px', cursor: 'pointer' }}>{props.children}</div>
-);
+import { supabase } from "@/lib/supabaseClient";
 
 // Dynamically import charts to avoid SSR issues
 const LineChart = dynamic(() => import("@/components/teacher/ExamLineChart"), { ssr: false });
 const RadarChart = dynamic(() => import("@/components/teacher/ExamRadarChart"), { ssr: false });
 
-// Mocked admin assignments for teacher
-const teacherAssignments = [
-  {
-    className: "Bukhari",
-    subjects: ["Math", "Science"],
-    students: [
-      { name: "Ahmad Zaki" },
-      { name: "Fatimah Noor" },
-      { name: "Siti Aminah" },
-    ],
-  },
-  {
-    className: "Darimi",
-    subjects: ["English", "History"],
-    students: [
-      { name: "Ali Hassan" },
-      { name: "Nur Iman" },
-    ],
-  },
-];
-
-// Mocked exam/quiz lists
-const mockExams: Record<string, Record<string, string[]>> = {
-  Bukhari: {
-    Math: ["Midterm Exam", "Final Exam"],
-    Science: ["Midterm Exam"],
-  },
-  Darimi: {
-    English: ["Final Exam"],
-    History: ["Midterm Exam"],
-  },
-};
-const mockQuizzes: Record<string, Record<string, string[]>> = {
-  Bukhari: {
-    Math: ["Quiz 1", "Quiz 2"],
-    Science: ["Quiz 1"],
-  },
-  Darimi: {
-    English: ["Quiz 1"],
-    History: ["Quiz 1"],
-  },
-};
-
-const conductCategories = [
-  "Discipline",
-  "Effort",
-  "Participation",
-  "Motivational Level",
-  "Character",
-  "Leadership",
-];
-
-function getInitialStudentRows(className: string, subject: string) {
-  const classInfo = teacherAssignments.find((c) => c.className === className);
-  if (!classInfo) return [];
-  return classInfo.students.map((stu) => ({
-    name: stu.name,
-    mark: "",
-    grade: "",
-    conduct: Object.fromEntries(conductCategories.map((cat) => [cat, ""])),
-  }));
+// Dynamic conduct criteria from database
+interface ConductCriteria {
+  id: string;
+  name: string;
+  description?: string;
+  max_score: number;
 }
 
-function calculateGrade(mark: number|string): string {
+type ConductKey = 'discipline' | 'effort' | 'participation' | 'motivational_level' | 'character' | 'leadership';
+
+// Default conduct categories (fallback)
+const defaultConductCategories: { key: ConductKey; label: string }[] = [
+  { key: 'discipline', label: 'Discipline' },
+  { key: 'effort', label: 'Effort' },
+  { key: 'participation', label: 'Participation' },
+  { key: 'motivational_level', label: 'Motivational Level' },
+  { key: 'character', label: 'Character' },
+  { key: 'leadership', label: 'Leadership' },
+];
+
+function calculateGrade(mark: number | string): string {
   if (mark === "TH" || mark === "th" || mark === "Absent" || mark === "absent") return "TH";
   const m = typeof mark === "string" ? parseFloat(mark) : mark;
   if (isNaN(m)) return "";
@@ -115,43 +47,192 @@ function calculateGrade(mark: number|string): string {
   return "";
 }
 
+interface ClassItem { id: string; name: string }
+interface SubjectItem { id: string; name: string }
+interface ExamItem {
+  id: string;
+  name: string;
+  type: string;
+  exam_classes?: { conduct_weightage: number; classes: { id: string; name: string } }[];
+  exam_subjects?: { subjects: { id: string; name: string } }[];
+}
+
+type StudentRow = {
+  id: string;
+  name: string;
+  mark: string;
+  grade: string;
+  conduct: Record<ConductKey, string>;
+};
+
 export default function TeacherExamDashboard() {
-  // Section 1: Picker States
-  const classOptions = teacherAssignments.map((c) => c.className);
-  const [selectedClass, setSelectedClass] = React.useState(classOptions[0]);
-  const subjectOptions = React.useMemo(() => {
-    return teacherAssignments.find((c) => c.className === selectedClass)?.subjects || [];
-  }, [selectedClass]);
-  const [selectedSubject, setSelectedSubject] = React.useState("");
+  const [userId, setUserId] = React.useState<string>("");
+  const [classes, setClasses] = React.useState<ClassItem[]>([]);
+  const [subjects, setSubjects] = React.useState<SubjectItem[]>([]);
+  const [exams, setExams] = React.useState<ExamItem[]>([]);
+  const [conductCriterias, setConductCriterias] = React.useState<ConductCriteria[]>([]);
+
+  const [selectedClassId, setSelectedClassId] = React.useState<string>("");
+  const [selectedSubjectId, setSelectedSubjectId] = React.useState<string>("");
   const [assessmentType, setAssessmentType] = React.useState<"Exam" | "Quiz">("Exam");
-  const assessmentList = React.useMemo(() => {
-    if (!selectedSubject) return [];
-    if (assessmentType === "Exam") {
-      return mockExams[selectedClass]?.[selectedSubject] || [];
-    } else {
-      return mockQuizzes[selectedClass]?.[selectedSubject] || [];
-    }
-  }, [assessmentType, selectedClass, selectedSubject]);
-  const [selectedAssessment, setSelectedAssessment] = React.useState("");
-  // Section 2: Student Table State
-  const [studentRows, setStudentRows] = React.useState(() => getInitialStudentRows(classOptions[0], subjectOptions[0] || ""));
+  const [selectedExamId, setSelectedExamId] = React.useState<string>("");
+
+  const [studentRows, setStudentRows] = React.useState<StudentRow[]>([]);
   const [expandedRows, setExpandedRows] = React.useState<number[]>([]);
+  const [saving, setSaving] = React.useState(false);
+  const [statusMsg, setStatusMsg] = React.useState<string>("");
 
-  // When class changes, reset subject and assessment to first valid
+  // Fetch auth and base metadata
   React.useEffect(() => {
-    const firstSubject = subjectOptions[0] || "";
-    setSelectedSubject(firstSubject);
-  }, [selectedClass, subjectOptions]);
+    (async () => {
+      const { data: userData, error } = await supabase.auth.getUser();
+      if (!error && userData.user) setUserId(userData.user.id);
 
-  // When subject or assessment type changes, reset assessment
+      const [{ data: classesData }, { data: subjectsData }] = await Promise.all([
+        supabase.from('classes').select('id, name').order('name'),
+        supabase.from('subjects').select('id, name').order('name'),
+      ]);
+      setClasses(classesData || []);
+      setSubjects(subjectsData || []);
+
+      // Fetch conduct criteria
+      try {
+        const criteriaRes = await fetch('/api/teacher/conduct-criterias');
+        const criteriaJson = await criteriaRes.json();
+        if (criteriaJson.success) {
+          setConductCriterias(criteriaJson.criterias || []);
+        }
+      } catch (e) {
+        console.error('Failed to load conduct criteria', e);
+      }
+
+      // Fetch exams metadata via local API (uses service role internally)
+      try {
+        const res = await fetch('/api/admin/exam-metadata');
+        const json = await res.json();
+        setExams(json.exams || []);
+      } catch (e) {
+        console.error('Failed to load exam metadata', e);
+      }
+    })();
+  }, []);
+
+  // Defaults when metadata loaded
   React.useEffect(() => {
-    setSelectedAssessment(assessmentList[0] || "");
+    if (classes.length && !selectedClassId) setSelectedClassId(classes[0].id);
+  }, [classes]);
+  React.useEffect(() => {
+    if (subjects.length && !selectedSubjectId) setSelectedSubjectId(subjects[0].id);
+  }, [subjects]);
+
+  // Compute assessment list from metadata
+  const assessmentList = React.useMemo(() => {
+    if (!selectedClassId || !selectedSubjectId) return [] as { id: string; name: string }[];
+    const isQuiz = assessmentType === 'Quiz';
+    const list: { id: string; name: string }[] = [];
+    for (const ex of exams) {
+      const typeIsQuiz = typeof ex?.type === 'string' && ex.type.toLowerCase() === 'quiz';
+      if (isQuiz !== typeIsQuiz) continue;
+      const hasClass = (ex.exam_classes || []).some(ec => ec?.classes?.id === selectedClassId);
+      const hasSubject = (ex.exam_subjects || []).some(es => es?.subjects?.id === selectedSubjectId);
+      if (hasClass && hasSubject) list.push({ id: ex.id, name: ex.name });
+    }
+    return list;
+  }, [assessmentType, exams, selectedClassId, selectedSubjectId]);
+
+  // Keep selected exam consistent
+  React.useEffect(() => {
+    setSelectedExamId(assessmentList[0]?.id || "");
   }, [assessmentList]);
 
-  // When class or subject changes, update students
+  // Compute conduct categories from dynamic criteria or use defaults
+  const conductCategories = React.useMemo(() => {
+    if (conductCriterias.length > 0) {
+      // Map dynamic criteria to legacy format for backward compatibility
+      return conductCriterias
+        .slice(0, 6) // Limit to 6 criteria to match current UI
+        .map((criteria, index) => {
+          // Map to existing keys for backward compatibility
+          const keyMap: ConductKey[] = [
+            'discipline', 'effort', 'participation', 
+            'motivational_level', 'character', 'leadership'
+          ];
+          return {
+            key: keyMap[index] || 'discipline',
+            label: criteria.name,
+            maxScore: criteria.max_score
+          };
+        });
+    }
+    return defaultConductCategories.map(cat => ({ ...cat, maxScore: 100 }));
+  }, [conductCriterias]);
+
+  // Load students, marks and current teacher conduct for selections
   React.useEffect(() => {
-    setStudentRows(getInitialStudentRows(selectedClass, selectedSubject));
-  }, [selectedClass, selectedSubject]);
+    if (!selectedClassId || !selectedSubjectId) return;
+    (async () => {
+      // Students in class
+      const { data: studentsData } = await supabase
+        .from('students')
+        .select('id, name')
+        .eq('class_id', selectedClassId);
+      const roster = studentsData || [];
+
+      // Existing marks for exam+subject
+      const marksByStudent = new Map<string, { mark: number | null; grade: string | null }>();
+      if (selectedExamId) {
+        const { data: results } = await supabase
+          .from('exam_results')
+          .select('student_id, mark, grade')
+          .eq('exam_id', selectedExamId)
+          .eq('subject_id', selectedSubjectId);
+        (results || []).forEach((r: any) => {
+          marksByStudent.set(String(r.student_id), { mark: r.mark, grade: r.grade });
+        });
+      }
+
+      // Current teacher's conduct entries for this exam
+      const conductByStudent = new Map<string, Record<ConductKey, number>>();
+      if (selectedExamId && userId) {
+        const { data: conductEntries } = await supabase
+          .from('conduct_entries')
+          .select('student_id, discipline, effort, participation, motivational_level, character, leadership')
+          .eq('exam_id', selectedExamId)
+          .eq('teacher_id', userId);
+        (conductEntries || []).forEach((e: any) => {
+          conductByStudent.set(String(e.student_id), {
+            discipline: Number(e.discipline) || 0,
+            effort: Number(e.effort) || 0,
+            participation: Number(e.participation) || 0,
+            motivational_level: Number(e.motivational_level) || 0,
+            character: Number(e.character) || 0,
+            leadership: Number(e.leadership) || 0,
+          });
+        });
+      }
+
+      // Build rows
+      const rows: StudentRow[] = roster.map((s: any) => {
+        const m = marksByStudent.get(String(s.id));
+        const c = conductByStudent.get(String(s.id));
+        const emptyConduct = conductCategories.reduce((acc, cat) => {
+          acc[cat.key] = '' as string;
+          return acc;
+        }, {} as Record<ConductKey, string>);
+        return {
+          id: String(s.id),
+          name: s.name,
+          mark: typeof m?.mark === 'number' ? String(m?.mark ?? '') : '',
+          grade: m?.grade || '',
+          conduct: c
+            ? (Object.fromEntries(Object.entries(c).map(([k, v]) => [k, String(v)])) as Record<ConductKey, string>)
+            : emptyConduct,
+        };
+      });
+      setStudentRows(rows);
+      setExpandedRows([]);
+    })();
+  }, [selectedClassId, selectedSubjectId, selectedExamId, userId]);
 
   // Editable cell handlers
   const handleMarkChange = (idx: number, value: string) => {
@@ -165,28 +246,106 @@ export default function TeacherExamDashboard() {
       return updated;
     });
   };
-  const handleConductChange = (idx: number, cat: string, value: string) => {
+  const handleConductChange = (idx: number, key: ConductKey, value: string) => {
     setStudentRows((prev) => {
       const updated = [...prev];
       updated[idx] = {
         ...updated[idx],
-        conduct: { ...updated[idx].conduct, [cat]: value },
+        conduct: { ...updated[idx].conduct, [key]: value },
       };
       return updated;
     });
   };
   const handleExpand = (idx: number) => {
-    setExpandedRows((prev) =>
-      prev.includes(idx) ? prev.filter((i) => i !== idx) : [...prev, idx]
-    );
+    setExpandedRows((prev) => (prev.includes(idx) ? prev.filter((i) => i !== idx) : [...prev, idx]));
+  };
+
+  // Save all rows
+  const handleSaveAll = async () => {
+    setSaving(true);
+    setStatusMsg('');
+    try {
+      if (!selectedExamId || !selectedSubjectId) {
+        setStatusMsg('Select class, subject, and exam first');
+        setSaving(false);
+        return;
+      }
+
+      // Upsert exam_results
+      const examRows = studentRows
+        .map((r) => {
+          const mark = parseFloat(r.mark);
+          if (isNaN(mark)) return null;
+          return {
+            exam_id: selectedExamId,
+            student_id: r.id,
+            subject_id: selectedSubjectId,
+            mark,
+            grade: calculateGrade(mark) || null,
+          };
+        })
+        .filter(Boolean) as any[];
+
+      if (examRows.length > 0) {
+        const { error: er } = await supabase.from('exam_results').upsert(examRows);
+        if (er) throw er;
+      }
+
+      // Upsert conduct_entries for current teacher
+      if (!userId) throw new Error('No user');
+      const conductRows = studentRows
+        .map((r) => {
+          const parsed: Record<ConductKey, number> = {
+            discipline: 0,
+            effort: 0,
+            participation: 0,
+            motivational_level: 0,
+            character: 0,
+            leadership: 0,
+          };
+          // Use dynamic max scores from conduct categories
+          conductCategories.forEach((cat) => {
+            const value = parseFloat(r.conduct[cat.key]) || 0;
+            parsed[cat.key] = Math.min(cat.maxScore, Math.max(0, value));
+          });
+          // Only submit if at least one field was provided
+          const anyProvided = Object.values(parsed).some((v) => v > 0);
+          if (!anyProvided) return null;
+          return {
+            exam_id: selectedExamId,
+            student_id: r.id,
+            teacher_id: userId,
+            ...parsed,
+          };
+        })
+        .filter(Boolean) as any[];
+
+      if (conductRows.length > 0) {
+        const { error: cr } = await supabase
+          .from('conduct_entries')
+          .upsert(conductRows);
+        if (cr) throw cr;
+      }
+
+      setStatusMsg('Saved');
+    } catch (e: any) {
+      console.error(e);
+      setStatusMsg(e?.message || 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
   };
 
   // Section 3: Graph Data
   const marksData = studentRows.map((s) => ({ name: s.name, mark: parseFloat(s.mark) || 0 }));
   const avgConduct: Record<string, number> = {};
   conductCategories.forEach((cat) => {
-    const vals = studentRows.map((s) => parseFloat(s.conduct[cat]) || 0);
-    avgConduct[cat] = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+    const vals = studentRows.map((s) => {
+      const score = parseFloat(s.conduct[cat.key]) || 0;
+      // Normalize to percentage based on max score
+      return cat.maxScore > 0 ? (score / cat.maxScore) * 100 : 0;
+    });
+    avgConduct[cat.label] = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
   });
 
   return (
@@ -221,12 +380,12 @@ export default function TeacherExamDashboard() {
                 <label className="text-xs font-medium mb-1" htmlFor="class-picker">Class</label>
                 <select
                   id="class-picker"
-                  value={selectedClass}
-                  onChange={e => setSelectedClass(e.target.value)}
+                  value={selectedClassId}
+                  onChange={e => setSelectedClassId(e.target.value)}
                   className="border rounded px-3 py-2 text-sm focus:outline-primary"
                 >
-                  {classOptions.map(cls => (
-                    <option key={cls} value={cls}>{cls}</option>
+                  {classes.map(cls => (
+                    <option key={cls.id} value={cls.id}>{cls.name}</option>
                   ))}
                 </select>
               </div>
@@ -235,13 +394,13 @@ export default function TeacherExamDashboard() {
                 <label className="text-xs font-medium mb-1" htmlFor="subject-picker">Subject</label>
                 <select
                   id="subject-picker"
-                  value={selectedSubject}
-                  onChange={e => setSelectedSubject(e.target.value)}
+                  value={selectedSubjectId}
+                  onChange={e => setSelectedSubjectId(e.target.value)}
                   className="border rounded px-3 py-2 text-sm focus:outline-primary"
-                  disabled={!selectedClass}
+                  disabled={!selectedClassId}
                 >
-                  {subjectOptions.map(subj => (
-                    <option key={subj} value={subj}>{subj}</option>
+                  {subjects.map(subj => (
+                    <option key={subj.id} value={subj.id}>{subj.name}</option>
                   ))}
                 </select>
               </div>
@@ -273,13 +432,13 @@ export default function TeacherExamDashboard() {
                 <div className="flex gap-2 items-center">
                   <select
                     id="assessment-picker"
-                    value={selectedAssessment}
-                    onChange={e => setSelectedAssessment(e.target.value)}
+                    value={selectedExamId}
+                    onChange={e => setSelectedExamId(e.target.value)}
                     className="border rounded px-3 py-2 text-sm focus:outline-primary"
-                    disabled={!selectedSubject}
+                    disabled={!selectedSubjectId}
                   >
                     {assessmentList.map(assess => (
-                      <option key={assess} value={assess}>{assess}</option>
+                      <option key={assess.id} value={assess.id}>{assess.name}</option>
                     ))}
                   </select>
                   {assessmentType === 'Quiz' && (
@@ -293,7 +452,17 @@ export default function TeacherExamDashboard() {
                   )}
                 </div>
               </div>
+
+              {/* Save Button */}
+              <div className="flex-1 flex justify-end items-end">
+                <Button onClick={handleSaveAll} disabled={saving || !selectedExamId || !selectedSubjectId}>
+                  {saving ? 'Saving...' : 'Save All'}
+                </Button>
+              </div>
             </div>
+            {statusMsg && (
+              <div className="text-sm text-gray-600">{statusMsg}</div>
+            )}
             {/* Section 2: Editable Table */}
             <div className="overflow-x-auto">
               <table className="min-w-full border mt-4 bg-white rounded-md">
@@ -310,9 +479,12 @@ export default function TeacherExamDashboard() {
                 <tbody>
                   {studentRows.map((student, idx) => {
                     const expanded = expandedRows.includes(idx);
-                    const avgConduct = conductCategories.reduce((sum, cat) => sum + (parseFloat(student.conduct[cat]) || 0), 0) / conductCategories.length;
+                    // Calculate weighted average conduct score
+                    const totalScore = conductCategories.reduce((sum, cat) => sum + (parseFloat(student.conduct[cat.key]) || 0), 0);
+                    const totalMaxScore = conductCategories.reduce((sum, cat) => sum + cat.maxScore, 0);
+                    const avgConduct = totalMaxScore > 0 ? (totalScore / totalMaxScore) * 100 : 0;
                     return (
-                      <React.Fragment key={student.name}>
+                      <React.Fragment key={student.id}>
                         <tr className="border-b">
                           <td className="px-3 py-2">{idx + 1}</td>
                           <td className="px-3 py-2">{student.name}</td>
@@ -347,22 +519,24 @@ export default function TeacherExamDashboard() {
                                   <h4 className="font-semibold mb-2">Conduct Breakdown</h4>
                                   <ul className="grid grid-cols-2 gap-x-8 gap-y-1 text-sm">
                                     {conductCategories.map((cat) => (
-                                      <li key={cat} className="flex items-center gap-2">
-                                        <span className="font-medium w-32">{cat}:</span>
+                                      <li key={cat.key} className="flex items-center gap-2">
+                                        <span className="font-medium w-32">{cat.label}:</span>
                                         <input
                                           type="text"
                                           className="w-16 border rounded px-2 py-1 text-right"
-                                          value={student.conduct[cat]}
-                                          onChange={(e) => handleConductChange(idx, cat, e.target.value)}
-                                          placeholder="%"
+                                          value={student.conduct[cat.key]}
+                                          onChange={(e) => handleConductChange(idx, cat.key, e.target.value)}
+                                          placeholder={`/${cat.maxScore}`}
+                                          max={cat.maxScore}
                                         />
+                                        <span className="text-xs text-gray-500">/{cat.maxScore}</span>
                                       </li>
                                     ))}
                                   </ul>
                                 </div>
                                 <div className="flex-1 min-w-[200px]">
                                   <RadarChart data={Object.fromEntries(
-                                    Object.entries(student.conduct).map(([k, v]) => [k, parseFloat(v) || 0])
+                                    Object.entries(student.conduct).map(([k, v]) => [k, parseFloat(v as string) || 0])
                                   )} />
                                 </div>
                               </div>

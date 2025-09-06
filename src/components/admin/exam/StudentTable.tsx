@@ -22,6 +22,7 @@ export interface StudentData {
       score: number;
       trend: number[];
       grade: string;
+      exams?: { name: string; score: number }[]; // optional exam history for charts
     };
   };
   conduct: {
@@ -84,7 +85,13 @@ export default function StudentTable({ data, onRowClick, loading, selectedSubjec
         </div>
       ),
     }),
-    columnHelper.accessor('overall.average', {
+    columnHelper.accessor((row) => {
+      // Return the appropriate score for sorting
+      return selectedSubject && row.subjects[selectedSubject] 
+        ? row.subjects[selectedSubject].score 
+        : row.overall.average;
+    }, {
+      id: 'marks',
       header: selectedSubject ? `${selectedSubject} Mark` : 'Final Mark',
       size: 200,
       cell: ({ row }) => {

@@ -1,8 +1,8 @@
 "use client";
 
-import React from 'react';
+import React, { useState } from 'react';
 import { X, TrendingUp, TrendingDown, Award, AlertCircle, MessageCircle, FileText } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, BarChart, Bar } from 'recharts';
 import { ResponsiveRadar } from '@nivo/radar';
 import { motion, AnimatePresence } from 'framer-motion';
 import { StudentData } from './StudentTable';
@@ -13,41 +13,56 @@ interface StudentDetailsPanelProps {
   classAverages?: {
     [subject: string]: number;
   };
+  isMobile?: boolean;
+  selectedExamName?: string;
 }
 
 export default function StudentDetailsPanel({ 
   student, 
   onClose, 
-  classAverages = {} 
+  classAverages = {},
+  isMobile = false,
+  selectedExamName = ''
 }: StudentDetailsPanelProps) {
+  const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
+  
   if (!student) return null;
 
-  // Generate mock historical data for charts
-  const generateHistoricalData = (currentScore: number, trend: number[]) => {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
-    return months.map((month, index) => ({
-      month,
-      score: trend[index] || currentScore + (Math.random() - 0.5) * 10,
-      classAvg: 70 + (Math.random() - 0.5) * 15,
-    }));
+  // Build chart points from either real exam history or fallback trend
+  const buildChartData = (
+    subject: { score: number; trend: number[]; grade: string; exams?: { name: string; score: number }[] },
+    fixedClassAvg?: number
+  ) => {
+    // Prefer real exam history if available
+    if (Array.isArray(subject.exams) && subject.exams.length > 0) {
+      return subject.exams
+        .filter(e => typeof e.score === 'number')
+        .map(e => ({
+          label: e.name,
+          score: e.score,
+          classAvg: typeof fixedClassAvg === 'number' ? fixedClassAvg : 0,
+        }));
+    }
+
+    // No history available
+    return [] as { label: string; score: number; classAvg: number }[];
   };
 
   const conductData = [
-    { aspect: 'Discipline', score: student.conduct.discipline, target: 4 },
-    { aspect: 'Effort', score: student.conduct.effort, target: 4 },
-    { aspect: 'Participation', score: student.conduct.participation, target: 4 },
-    { aspect: 'Motivational Level', score: student.conduct.motivationalLevel, target: 4 },
-    { aspect: 'Character', score: student.conduct.character, target: 4 },
-    { aspect: 'Leadership', score: student.conduct.leadership, target: 4 },
+    { aspect: 'Discipline', score: student.conduct.discipline },
+    { aspect: 'Effort', score: student.conduct.effort },
+    { aspect: 'Participation', score: student.conduct.participation },
+    { aspect: 'Motivational Level', score: student.conduct.motivationalLevel },
+    { aspect: 'Character', score: student.conduct.character },
+    { aspect: 'Leadership', score: student.conduct.leadership },
   ];
 
-  // Transform data for radar chart - use direct percentage values
+  // Transform data for radar chart - use percentage values with 100% as perfect
   const radarData = conductData
-    .filter(item => item && item.aspect && !isNaN(item.score) && !isNaN(item.target))
+    .filter(item => item && item.aspect && !isNaN(item.score))
     .map(item => ({
       aspect: item.aspect,
-      score: Math.max(0, Math.min(100, item.score * 20)), // Convert 1-5 scale to percentage (5.0 = 100%), clamped 0-100
-      target: Math.max(0, Math.min(100, item.target * 20)) // Convert 1-5 scale to percentage (4.0 = 80%), clamped 0-100
+      score: Math.max(0, Math.min(100, item.score * 20)), // Convert 1-5 scale to percentage (5.0 = 100%)
     }));
 
   const overallTrend = student.overall.average >= 75 ? 'positive' : 
@@ -60,15 +75,18 @@ export default function StudentDetailsPanel({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40"
+          className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50"
           onClick={onClose}
         >
           <motion.div
-            initial={{ x: '100%' }}
-            animate={{ x: 0 }}
-            exit={{ x: '100%' }}
+            initial={isMobile ? { y: '100%' } : { x: '100%' }}
+            animate={isMobile ? { y: 0 } : { x: 0 }}
+            exit={isMobile ? { y: '100%' } : { x: '100%' }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed right-0 top-0 bottom-0 w-full max-w-2xl bg-white shadow-2xl overflow-y-auto"
+            className={isMobile 
+              ? "fixed inset-4 bg-white shadow-2xl overflow-y-auto rounded-2xl"
+              : "fixed right-0 top-0 bottom-0 w-full max-w-2xl bg-white shadow-2xl overflow-y-auto"
+            }
             onClick={(e) => e.stopPropagation()}
           >
           {/* Header */}
@@ -80,7 +98,7 @@ export default function StudentDetailsPanel({
                 </div>
                 <div>
                   <h2 className="text-2xl font-semibold text-gray-900">{student.name}</h2>
-                  <p className="text-gray-600">{student.class} • ID: {student.id}</p>
+                  <p className="text-gray-600">{student.class}{selectedExamName ? ` • ${selectedExamName}` : ''}</p>
                   <div className="flex items-center gap-4 mt-2">
                     <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-semibold ${
                       overallTrend === 'positive' ? 'bg-blue-100 text-blue-700' :
@@ -141,70 +159,188 @@ export default function StudentDetailsPanel({
               </div>
             )}
 
-            {/* Subject Performance Over Time */}
+            {/* Subject Performance for Selected Exam */}
             <div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Subject Performance Trends</h3>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {Object.entries(student.subjects).map(([subject, data]) => {
-                  const historicalData = generateHistoricalData(data.score, data.trend);
-                  const classAvg = classAverages[subject] || 70;
-                  
-                  return (
-                    <div key={subject} className="bg-gray-50 rounded-xl p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <h4 className="font-semibold text-gray-900">{subject}</h4>
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold text-lg">{data.score}%</span>
-                          <span className={`text-xs px-2 py-1 rounded ${
-                            data.grade === 'A' ? 'bg-blue-100 text-blue-800' :
-                            data.grade === 'B' ? 'bg-blue-50 text-blue-700' :
-                            data.grade === 'C' ? 'bg-blue-50 text-blue-600' :
-                            'bg-blue-50 text-blue-500'
-                          }`}>
-                            {data.grade}
-                          </span>
-                        </div>
-                      </div>
-                      
-                      <div className="h-32">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={historicalData} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
-                            <XAxis dataKey="month" tick={{ fontSize: 10 }} />
-                            <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
-                            <Tooltip />
-                            <Line
-                              type="monotone"
-                              dataKey="score"
-                              stroke="#3b82f6"
-                              strokeWidth={2}
-                              name="Student"
-                            />
-                            <Line
-                              type="monotone"
-                              dataKey="classAvg"
-                              stroke="#9ca3af"
-                              strokeWidth={1}
-                              strokeDasharray="5 5"
-                              name="Class Avg"
-                            />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      </div>
-                      
-                      <div className="flex justify-between items-center mt-2 text-xs text-gray-600">
-                        <span>vs Class Avg: {classAvg.toFixed(1)}%</span>
-                        <span className={
-                          data.score > classAvg ? 'text-green-600' : 
-                          data.score === classAvg ? 'text-gray-600' : 'text-red-600'
-                        }>
-                          {data.score > classAvg ? '+' : ''}
-                          {(data.score - classAvg).toFixed(1)}%
-                        </span>
-                      </div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                {selectedExamName ? `${selectedExamName} - Subject Marks` : 'Subject Performance Overview'}
+              </h3>
+              
+              {/* Chart Area: replaces bar chart with trend when a subject is selected */}
+              <div className="bg-gray-50 rounded-xl p-6 mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="font-semibold text-gray-900">
+                    {selectedSubject ? `${selectedSubject} - Performance Trend` : 'All Subject Marks'}
+                  </h4>
+                  {selectedSubject && (
+                    <button
+                      onClick={() => setSelectedSubject(null)}
+                      className="px-3 py-1.5 text-sm rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-100"
+                      aria-label="Back to all subjects"
+                    >
+                      Back
+                    </button>
+                  )}
+                </div>
+
+                {!selectedSubject ? (
+                  <>
+                    <div className="h-64">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart 
+                          data={Object.entries(student.subjects).map(([subject, data]) => ({
+                            subject,
+                            score: data.score,
+                            classAvg: (classAverages[subject] ?? 0),
+                            grade: data.grade
+                          }))}
+                          margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                          onClick={(data) => {
+                            if (data && data.activeLabel) {
+                              setSelectedSubject(data.activeLabel as string);
+                            }
+                          }}
+                        >
+                          <XAxis 
+                            dataKey="subject" 
+                            tick={{ fontSize: 12 }}
+                            angle={-45}
+                            textAnchor="end"
+                            height={80}
+                          />
+                          <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
+                          <Tooltip 
+                            formatter={(value, name) => {
+                              if (name === 'score') {
+                                return [`${value}%`, 'Student Mark'];
+                              } else if (name === 'classAvg') {
+                                return [`${value}%`, 'Class Average'];
+                              }
+                              return [`${value}%`, name];
+                            }}
+                            labelFormatter={(label) => `Subject: ${label}`}
+                            contentStyle={{
+                              backgroundColor: '#f8fafc',
+                              border: '1px solid #e2e8f0',
+                              borderRadius: '8px'
+                            }}
+                          />
+                          <Bar 
+                            dataKey="score" 
+                            fill="#3b82f6" 
+                            name="Student Mark"
+                            style={{ cursor: 'pointer' }}
+                            radius={[4, 4, 0, 0]}
+                          />
+                          <Bar 
+                            dataKey="classAvg" 
+                            fill="#9ca3af" 
+                            name="Class Average"
+                            radius={[4, 4, 0, 0]}
+                          />
+                        </BarChart>
+                      </ResponsiveContainer>
                     </div>
-                  );
-                })}
+                    <p className="text-sm text-gray-600 mt-2">
+                      Click a bar or subject name to view the trend
+                    </p>
+                  </>
+                ) : (
+                  (() => {
+                    const subjectData = student.subjects[selectedSubject];
+                    const classAvg = (classAverages[selectedSubject] ?? 0);
+                    const historicalData = buildChartData(subjectData, classAvg);
+                    
+                    return (
+                      <>
+                        {historicalData.length > 0 ? (
+                          <div className="h-64">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <LineChart data={historicalData} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
+                                <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                                <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
+                                <Tooltip />
+                                <Line
+                                  type="monotone"
+                                  dataKey="score"
+                                  stroke="#3b82f6"
+                                  strokeWidth={3}
+                                  name="Student"
+                                  dot={{ fill: '#3b82f6', strokeWidth: 2, r: 4 }}
+                                />
+                                <Line
+                                  type="monotone"
+                                  dataKey="classAvg"
+                                  stroke="#9ca3af"
+                                  strokeWidth={2}
+                                  strokeDasharray="5 5"
+                                  name="Class Avg"
+                                  dot={{ fill: '#9ca3af', strokeWidth: 2, r: 3 }}
+                                />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </div>
+                        ) : (
+                          <div className="h-64 flex items-center justify-center text-gray-400 text-sm">
+                            No exam data yet for this subject
+                          </div>
+                        )}
+                        
+                        <div className="flex items-center justify-between mt-4">
+                          <div className="flex items-center gap-4">
+                            <span className="text-lg font-semibold">{subjectData.score}%</span>
+                            <span className={`text-sm px-3 py-1 rounded-full ${
+                              subjectData.grade === 'A' ? 'bg-blue-100 text-blue-800' :
+                              subjectData.grade === 'B' ? 'bg-blue-50 text-blue-700' :
+                              subjectData.grade === 'C' ? 'bg-blue-50 text-blue-600' :
+                              'bg-blue-50 text-blue-500'
+                            }`}>
+                              Grade {subjectData.grade}
+                            </span>
+                          </div>
+                          <div className="text-sm text-gray-600">
+                            vs Class Avg: {classAvg.toFixed(1)}%
+                            <span className={`ml-2 ${
+                              subjectData.score > classAvg ? 'text-green-600' : 
+                              subjectData.score === classAvg ? 'text-gray-600' : 'text-red-600'
+                            }`}>
+                              ({subjectData.score > classAvg ? '+' : ''}{(subjectData.score - classAvg).toFixed(1)}%)
+                            </span>
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()
+                )}
+
+                {/* Minimalist Subjects and Marks Summary */}
+                <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                  {Object.entries(student.subjects).map(([subject, data]) => {
+                    const isSelected = subject === selectedSubject;
+                    return (
+                      <button
+                        key={subject}
+                        type="button"
+                        onClick={() => setSelectedSubject(prev => (prev === subject ? null : subject))}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setSelectedSubject(prev => (prev === subject ? null : subject));
+                          }
+                        }}
+                        className={`flex justify-between items-center px-3 py-2 rounded-lg shadow-sm border transition-colors ${
+                          isSelected ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-100 hover:bg-gray-50'
+                        }`}
+                        title="View trend"
+                        aria-pressed={isSelected}
+                      >
+                        <span className="text-gray-600 font-medium text-left">{subject}</span>
+                        <span className="text-gray-900 font-semibold">{data.score}%</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
+
             </div>
 
             {/* Conduct Profile */}
@@ -216,7 +352,7 @@ export default function StudentDetailsPanel({
                     <ResponsiveRadar
                       key={`student-radar-${student.id}-${radarData.length}`}
                       data={radarData}
-                      keys={['score', 'target']}
+                      keys={['score']}
                       indexBy="aspect"
                       maxValue={100}
                       margin={{ top: 30, right: 40, bottom: 30, left: 40 }}
@@ -232,7 +368,7 @@ export default function StudentDetailsPanel({
                       dotBorderWidth={2}
                       dotBorderColor={{ from: 'color' }}
                       enableDotLabel={false}
-                      colors={['#3b82f6', '#9ca3af']}
+                      colors={['#3b82f6']}
                       fillOpacity={0.25}
                       blendMode="multiply"
                       animate={false}
@@ -252,39 +388,16 @@ export default function StudentDetailsPanel({
                     <div className="w-3 h-3 rounded-full bg-blue-500"></div>
                     <span className="text-gray-600">Current Score</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-gray-400"></div>
-                    <span className="text-gray-600">Target Score</span>
-                  </div>
                 </div>
                 
-                <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <h4 className="font-semibold text-gray-900 mb-2">Strengths</h4>
-                    <ul className="space-y-1 text-gray-600">
-                      {conductData
-                        .filter(item => item.score >= item.target)
-                        .map(item => (
-                          <li key={item.aspect} className="flex items-center gap-2">
-                            <div className="w-2 h-2 bg-blue-600 rounded-full"></div>
-                            {item.aspect} ({item.score.toFixed(1)}/5.0)
-                          </li>
-                        ))}
-                    </ul>
-                  </div>
-                  <div>
-                    <h4 className="font-semibold text-gray-900 mb-2">Areas for Improvement</h4>
-                    <ul className="space-y-1 text-gray-600">
-                      {conductData
-                        .filter(item => item.score < item.target)
-                        .map(item => (
-                          <li key={item.aspect} className="flex items-center gap-2">
-                            <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
-                            {item.aspect} ({item.score.toFixed(1)}/5.0)
-                          </li>
-                        ))}
-                    </ul>
-                  </div>
+                {/* Minimalist Conduct Summary */}
+                <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                  {conductData.map(item => (
+                    <div key={item.aspect} className="flex justify-between items-center px-3 py-2 bg-white rounded-lg shadow-sm">
+                      <span className="text-gray-600 font-medium">{item.aspect}</span>
+                      <span className="text-gray-900 font-semibold">{(item.score * 20).toFixed(0)}%</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -301,7 +414,7 @@ export default function StudentDetailsPanel({
                   <div className="text-2xl font-semibold text-gray-900">
                     {Object.values(classAverages).length > 0 
                       ? (Object.values(classAverages).reduce((a, b) => a + b, 0) / Object.values(classAverages).length).toFixed(1)
-                      : '70.0'}%
+                      : '0.0'}%
                   </div>
                   <div className="text-sm text-gray-700">Class Average</div>
                 </div>
