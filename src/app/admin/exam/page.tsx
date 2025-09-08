@@ -470,6 +470,7 @@ export default function AdminExamPage() {
         onClose={() => setIsCreateModalOpen(false)}
         onSubmit={handleCreateExam}
         classes={classes}
+        subjects={subjects}
       />
 
       {/* Edit Exam Modal */}
@@ -478,6 +479,7 @@ export default function AdminExamPage() {
         onClose={closeEditModal}
         onSubmit={handleEditExam}
         classes={classes}
+        subjects={subjects}
         exam={selectedExamForEdit}
       />
 

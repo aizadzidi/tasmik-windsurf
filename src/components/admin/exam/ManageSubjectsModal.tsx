@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect } from "react";
-import { X, Plus, Edit, Trash2 } from "lucide-react";
+import { X, Plus, Edit, Trash2, Check, Square } from "lucide-react";
 
 interface Subject {
   id: string;
@@ -23,6 +23,9 @@ export default function ManageSubjectsModal({
   const [loading, setLoading] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [editingSubject, setEditingSubject] = useState<Subject | null>(null);
+  
+  // Multi-select states
+  const [selectedSubjects, setSelectedSubjects] = useState<Set<string>>(new Set());
 
   // Form states
   const [formName, setFormName] = useState("");
@@ -95,6 +98,89 @@ export default function ManageSubjectsModal({
     }
   };
 
+  // Multi-select handlers
+  const handleSelectSubject = (subjectId: string) => {
+    const newSelection = new Set(selectedSubjects);
+    if (newSelection.has(subjectId)) {
+      newSelection.delete(subjectId);
+    } else {
+      newSelection.add(subjectId);
+    }
+    setSelectedSubjects(newSelection);
+  };
+
+  const handleSelectAll = () => {
+    if (selectedSubjects.size === subjects.length) {
+      setSelectedSubjects(new Set());
+    } else {
+      setSelectedSubjects(new Set(subjects.map(s => s.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedSubjects.size === 0) return;
+    
+    const selectedNames = subjects
+      .filter(s => selectedSubjects.has(s.id))
+      .map(s => s.name)
+      .join(', ');
+    
+    if (!confirm(`Are you sure you want to delete ${selectedSubjects.size} subject(s): ${selectedNames}?`)) return;
+
+    try {
+      setFormLoading(true);
+      const subjectArray = Array.from(selectedSubjects);
+      const deletePromises = subjectArray.map(subjectId =>
+        fetch(`/api/admin/subjects?id=${subjectId}`, { method: 'DELETE' })
+      );
+
+      const responses = await Promise.all(deletePromises);
+      const results = await Promise.all(responses.map(r => r.json()));
+
+      const successfulDeletes = results.filter(r => r.success).length;
+      const failedDeletes = results.filter(r => !r.success);
+      
+      if (failedDeletes.length === 0) {
+        await fetchSubjects();
+        onRefresh?.();
+        setSelectedSubjects(new Set());
+        alert(`Successfully deleted all ${selectedSubjects.size} subject(s)!`);
+      } else {
+        // Get specific error details
+        const errorDetails = failedDeletes.map((result, index) => {
+          const subjectId = subjectArray[results.indexOf(result)];
+          const subjectName = subjects.find(s => s.id === subjectId)?.name || 'Unknown';
+          return `• ${subjectName}: ${result.error}`;
+        }).join('\n');
+
+        const message = successfulDeletes > 0 
+          ? `Successfully deleted ${successfulDeletes} subject(s), but ${failedDeletes.length} failed:\n\n${errorDetails}\n\nThe failed subjects are likely being used in exams or have exam results.`
+          : `Failed to delete ${failedDeletes.length} subject(s):\n\n${errorDetails}\n\nThese subjects are likely being used in exams or have exam results.`;
+        
+        alert(message);
+        
+        // Refresh to update the list
+        await fetchSubjects();
+        onRefresh?.();
+        
+        // Clear only successfully deleted subjects from selection
+        if (successfulDeletes > 0) {
+          const remainingSelected = new Set<string>();
+          failedDeletes.forEach((result, index) => {
+            const subjectId = subjectArray[results.indexOf(result)];
+            remainingSelected.add(subjectId);
+          });
+          setSelectedSubjects(remainingSelected);
+        }
+      }
+    } catch (error) {
+      console.error('Error bulk deleting subjects:', error);
+      alert('Network error occurred while deleting subjects. Please try again.');
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
   // Handle delete
   const handleDelete = async (subject: Subject) => {
     if (!confirm(`Are you sure you want to delete "${subject.name}"?`)) return;
@@ -135,6 +221,7 @@ export default function ManageSubjectsModal({
 
   const handleClose = () => {
     handleCloseForm();
+    setSelectedSubjects(new Set());
     onClose();
   };
 
@@ -156,16 +243,64 @@ export default function ManageSubjectsModal({
 
         {/* Content */}
         <div className="p-6 flex-1 overflow-y-auto min-h-0">
-          {/* Add Subject Button */}
-          <div className="mb-6">
-            <button
-              onClick={() => setIsCreateModalOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              Add Subject
-            </button>
+          {/* Action Buttons */}
+          <div className="mb-6 flex justify-between items-center">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setIsCreateModalOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                Add Subject
+              </button>
+              
+              {subjects.length > 0 && selectedSubjects.size === 0 && (
+                <p className="text-sm text-gray-500">Click subjects to select multiple for bulk delete</p>
+              )}
+            </div>
+
+            {/* Bulk Actions */}
+            {selectedSubjects.size > 0 && (
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-gray-600">
+                  {selectedSubjects.size} selected
+                </span>
+                <button
+                  onClick={() => setSelectedSubjects(new Set())}
+                  className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800 transition-colors"
+                >
+                  Clear
+                </button>
+                <button
+                  onClick={handleBulkDelete}
+                  disabled={formLoading}
+                  className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete Selected
+                </button>
+              </div>
+            )}
           </div>
+
+          {/* Select All Option */}
+          {selectedSubjects.size > 0 && subjects.length > 0 && (
+            <div className="mb-4 flex items-center gap-2 p-3 bg-gray-50 rounded-lg">
+              <button
+                onClick={handleSelectAll}
+                className="flex items-center justify-center w-5 h-5 border-2 border-gray-300 rounded hover:border-blue-500 transition-colors"
+              >
+                {selectedSubjects.size === subjects.length ? (
+                  <Check className="w-3 h-3 text-blue-600" />
+                ) : (
+                  <div className="w-3 h-3"></div>
+                )}
+              </button>
+              <label className="text-sm font-medium text-gray-700 cursor-pointer" onClick={handleSelectAll}>
+                Select All ({selectedSubjects.size}/{subjects.length})
+              </label>
+            </div>
+          )}
 
           {/* Subjects List */}
           {loading ? (
@@ -182,32 +317,65 @@ export default function ManageSubjectsModal({
                 </div>
               ) : (
                 subjects.map((subject) => (
-                  <div
-                    key={subject.id}
-                    className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
-                  >
-                    <div className="flex justify-between items-start">
-                      <div className="flex-1">
-                        <h3 className="font-semibold text-gray-900">{subject.name}</h3>
-                        {subject.description && (
-                          <p className="text-sm text-gray-600 mt-1">{subject.description}</p>
+                  <div key={subject.id} className="relative">
+                    <div
+                      className={`border border-gray-200 rounded-lg p-4 hover:shadow-md transition-all cursor-pointer ${
+                        selectedSubjects.has(subject.id) 
+                          ? 'bg-blue-50 border-blue-300 shadow-sm' 
+                          : 'hover:border-gray-300'
+                      }`}
+                      onClick={() => handleSelectSubject(subject.id)}
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="flex items-start gap-3 flex-1">
+                          {/* Selection Checkbox - Only visible when subject is selected or when any subjects are selected */}
+                          <div
+                            className={`flex items-center justify-center w-5 h-5 border-2 rounded transition-all mt-0.5 ${
+                              selectedSubjects.has(subject.id) || selectedSubjects.size > 0
+                                ? 'border-gray-300 hover:border-blue-500 opacity-100'
+                                : 'border-transparent opacity-0'
+                            }`}
+                          >
+                            {selectedSubjects.has(subject.id) ? (
+                              <Check className="w-3 h-3 text-blue-600" />
+                            ) : (
+                              <div className="w-3 h-3"></div>
+                            )}
+                          </div>
+                          
+                          <div className="flex-1">
+                            <h3 className="font-semibold text-gray-900">{subject.name}</h3>
+                            {subject.description && (
+                              <p className="text-sm text-gray-600 mt-1">{subject.description}</p>
+                            )}
+                          </div>
+                        </div>
+                        
+                        {/* Action Buttons - Show when not selected */}
+                        {!selectedSubjects.has(subject.id) && (
+                          <div className="flex gap-2 ml-4">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleEdit(subject);
+                              }}
+                              className="p-2 text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                              title="Edit subject"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDelete(subject);
+                              }}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                              title="Delete subject"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         )}
-                      </div>
-                      <div className="flex gap-2 ml-4">
-                        <button
-                          onClick={() => handleEdit(subject)}
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
-                          title="Edit subject"
-                        >
-                          <Edit className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(subject)}
-                          className="p-2 text-red-600 hover:bg-red-50 rounded-full transition-colors"
-                          title="Delete subject"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
                       </div>
                     </div>
                   </div>

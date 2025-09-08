@@ -10,6 +10,7 @@ interface CreateExamModalProps {
   onClose: () => void;
   onSubmit: (examData: ExamFormData) => void;
   classes: Array<{ id: string; name: string }>;
+  subjects: string[];
 }
 
 interface ExamFormData {
@@ -28,9 +29,7 @@ interface ExamFormErrors {
   conductWeightages?: string;
 }
 
-const subjects = ['Math', 'English', 'Science', 'BM', 'BI', 'Quran', 'Arabic', 'History'];
-
-export default function CreateExamModal({ isOpen, onClose, onSubmit, classes }: CreateExamModalProps) {
+export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, subjects }: CreateExamModalProps) {
   const [formData, setFormData] = useState<ExamFormData>({
     title: '',
     subjects: [],

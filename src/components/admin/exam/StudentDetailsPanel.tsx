@@ -168,8 +168,11 @@ export default function StudentDetailsPanel({
               {/* Chart Area: replaces bar chart with trend when a subject is selected */}
               <div className="bg-gray-50 rounded-xl p-6 mb-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h4 className="font-semibold text-gray-900">
+                  <h4 className="font-semibold text-gray-900 flex items-center gap-2">
                     {selectedSubject ? `${selectedSubject} - Performance Trend` : 'All Subject Marks'}
+                    {selectedSubject && student.subjects[selectedSubject]?.grade === 'TH' && (
+                      <span className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-700 border border-gray-200">Absent</span>
+                    )}
                   </h4>
                   {selectedSubject && (
                     <button
@@ -209,7 +212,11 @@ export default function StudentDetailsPanel({
                           />
                           <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
                           <Tooltip 
-                            formatter={(value, name) => {
+                            formatter={(value, name, item: any) => {
+                              const grade = item && item.payload ? item.payload.grade : undefined;
+                              if (grade === 'TH' && name === 'score') {
+                                return ['Absent', 'Student'];
+                              }
                               if (name === 'score') {
                                 return [`${value}%`, 'Student Mark'];
                               } else if (name === 'classAvg') {

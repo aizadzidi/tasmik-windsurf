@@ -96,9 +96,13 @@ export default function StudentTable({ data, onRowClick, loading, selectedSubjec
       size: 200,
       cell: ({ row }) => {
         // If subject is selected, show subject score, otherwise show overall average
-        const score = selectedSubject && row.original.subjects[selectedSubject] 
-          ? row.original.subjects[selectedSubject].score 
+        const subjectData = selectedSubject && row.original.subjects[selectedSubject]
+          ? row.original.subjects[selectedSubject]
+          : undefined;
+        const score = subjectData 
+          ? subjectData.score 
           : row.original.overall.average;
+        const grade = subjectData?.grade;
           
         const getScoreColor = (score: number) => {
           if (score >= 90) return 'text-green-700';
@@ -109,9 +113,16 @@ export default function StudentTable({ data, onRowClick, loading, selectedSubjec
         
         return (
           <div className="text-center">
-            <div className={`text-base font-semibold ${getScoreColor(score)}`}>
-              {score}%
-            </div>
+            {grade === 'TH' ? (
+              <div className="flex items-center justify-center gap-2">
+                <span className="text-base font-semibold text-gray-600">TH</span>
+                <span className="px-2 py-0.5 text-[10px] rounded-full bg-gray-100 text-gray-700 border border-gray-200">Absent</span>
+              </div>
+            ) : (
+              <div className={`text-base font-semibold ${getScoreColor(score)}`}>
+                {score}%
+              </div>
+            )}
           </div>
         );
       },

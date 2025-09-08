@@ -25,6 +25,7 @@ interface EditExamModalProps {
   onClose: () => void;
   onSubmit: (examId: string, examData: ExamFormData) => void;
   classes: Array<{ id: string; name: string }>;
+  subjects: string[];
   exam: ExamData | null;
 }
 
@@ -44,9 +45,7 @@ interface ExamFormErrors {
   conductWeightages?: string;
 }
 
-const subjects = ['Math', 'English', 'Science', 'BM', 'BI', 'Quran', 'Arabic', 'History'];
-
-export default function EditExamModal({ isOpen, onClose, onSubmit, classes, exam }: EditExamModalProps) {
+export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subjects, exam }: EditExamModalProps) {
   const [formData, setFormData] = useState<ExamFormData>({
     title: '',
     subjects: [],

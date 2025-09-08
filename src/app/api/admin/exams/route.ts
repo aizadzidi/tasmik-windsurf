@@ -109,7 +109,7 @@ export async function GET(request: Request) {
 
       // Exam results (read via anon is fine if RLS allows; otherwise admin)
       (async () => {
-        const res = await supabase
+        const _res = await supabase
           .from('exam_results')
           .select(`
             student_id,
