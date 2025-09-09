@@ -31,22 +31,7 @@ const defaultConductCategories: { key: ConductKey; label: string }[] = [
   { key: 'leadership', label: 'Leadership' },
 ];
 
-function calculateGrade(mark: number | string): string {
-  if (mark === "TH" || mark === "th" || mark === "Absent" || mark === "absent") return "TH";
-  const m = typeof mark === "string" ? parseFloat(mark) : mark;
-  if (isNaN(m)) return "";
-  if (m >= 90) return "A+";
-  if (m >= 80) return "A";
-  if (m >= 70) return "A-";
-  if (m >= 65) return "B+";
-  if (m >= 60) return "B";
-  if (m >= 55) return "C+";
-  if (m >= 50) return "C";
-  if (m >= 45) return "D";
-  if (m >= 40) return "E";
-  if (m < 40) return "G";
-  return "";
-}
+// Note: grade is computed by the DB trigger using the selected grading system
 
 interface ClassItem { id: string; name: string }
 interface SubjectItem { id: string; name: string }
@@ -333,7 +318,8 @@ export default function TeacherExamDashboard() {
         ...updated[idx],
         mark: value,
         isAbsent: false,
-        grade: calculateGrade(value),
+        // Do not compute grade client-side; DB will compute after save
+        grade: '',
       };
       return updated;
     });
@@ -490,7 +476,7 @@ export default function TeacherExamDashboard() {
             student_id: r.id,
             subject_id: selectedSubjectId,
             mark,
-            grade: calculateGrade(mark) || null,
+            // grade is computed in DB; omit here
           } as any;
         })
         .filter(Boolean) as any[];
@@ -854,7 +840,17 @@ export default function TeacherExamDashboard() {
                               />
                             </div>
                           </td>
-                          <td className="px-3 py-2">{student.grade}</td>
+                          <td className="px-3 py-2">
+                            {student.isAbsent ? (
+                              <span className="text-gray-700">TH</span>
+                            ) : student.grade ? (
+                              <span>{student.grade}</span>
+                            ) : (Number.isFinite(parseFloat(student.mark)) ? (
+                              <span className="text-gray-500" title="Grade will be computed after save or is not defined for this score in the selected grading system.">N/A</span>
+                            ) : (
+                              <span className="text-gray-400">—</span>
+                            ))}
+                          </td>
                           <td className="px-3 py-2">
                             <Button
                               size="sm"

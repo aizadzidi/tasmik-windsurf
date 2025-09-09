@@ -11,6 +11,7 @@ interface CreateExamData {
     to: string;
   };
   conductWeightages: { [classId: string]: number };
+  gradingSystemId?: string;
 }
 
 // GET - Fetch exam metadata (exams, classes, subjects for dropdowns)
@@ -26,6 +27,7 @@ export async function GET() {
         exam_start_date,
         exam_end_date,
         created_at,
+        grading_system_id,
         exam_classes(
           conduct_weightage,
           classes(id, name)
@@ -80,7 +82,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body: CreateExamData = await request.json();
-    const { title, subjects, classIds, dateRange, conductWeightages } = body;
+    const { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId } = body;
 
     if (!title || !subjects.length || !classIds.length || !dateRange.from) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -106,6 +108,7 @@ export async function POST(request: Request) {
         type: 'formal',
         exam_start_date: dateRange.from,
         exam_end_date: dateRange.to || dateRange.from,
+        grading_system_id: gradingSystemId || null,
         created_at: new Date().toISOString()
       })
       .select()
@@ -181,7 +184,7 @@ export async function PUT(request: Request) {
     }
 
     const body: CreateExamData = await request.json();
-    const { title, subjects, classIds, dateRange, conductWeightages } = body;
+    const { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId } = body;
 
     if (!title || !subjects.length || !classIds.length || !dateRange.from) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -206,6 +209,7 @@ export async function PUT(request: Request) {
         name: title,
         exam_start_date: dateRange.from,
         exam_end_date: dateRange.to || dateRange.from,
+        grading_system_id: gradingSystemId || null,
         updated_at: new Date().toISOString()
       })
       .eq('id', examId)

@@ -1,18 +1,20 @@
 "use client";
 import React from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { BookOpen, UserCheck, Edit, Database, Settings } from "lucide-react";
+import { BookOpen, UserCheck, Edit, Database, Settings, Award } from "lucide-react";
 
 interface ManageActionsMenuProps {
   onOpenSubjects: () => void;
   onOpenConduct: () => void;
   onOpenExams: () => void;
+  onOpenGrading: () => void;
 }
 
 export default function ManageActionsMenu({
   onOpenSubjects,
   onOpenConduct,
   onOpenExams,
+  onOpenGrading,
 }: ManageActionsMenuProps) {
   return (
     <DropdownMenu.Root>
@@ -35,6 +37,7 @@ export default function ManageActionsMenu({
           <MenuItem onSelect={onOpenExams} icon={<Edit className="w-4 h-4" />}>Manage Exams</MenuItem>
           <MenuItem onSelect={onOpenSubjects} icon={<BookOpen className="w-4 h-4" />}>Manage Subjects</MenuItem>
           <MenuItem onSelect={onOpenConduct} icon={<UserCheck className="w-4 h-4" />}>Manage Conduct</MenuItem>
+          <MenuItem onSelect={onOpenGrading} icon={<Award className="w-4 h-4" />}>Manage Grading</MenuItem>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>

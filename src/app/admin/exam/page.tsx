@@ -9,6 +9,7 @@ import EditExamModal from "@/components/admin/exam/EditExamModal";
 import ManageExamsModal from "@/components/admin/exam/ManageExamsModal";
 import ManageSubjectsModal from "@/components/admin/exam/ManageSubjectsModal";
 import ManageConductCriteriasModal from "@/components/admin/exam/ManageConductCriteriasModal";
+import ManageGradingModal from "@/components/admin/exam/ManageGradingModal";
 import { Plus } from "lucide-react";
 import ManageActionsMenu from "@/components/admin/exam/ManageActionsMenu";
 
@@ -46,6 +47,7 @@ export default function AdminExamPage() {
   const [isManageModalOpen, setIsManageModalOpen] = useState(false);
   const [isManageSubjectsModalOpen, setIsManageSubjectsModalOpen] = useState(false);
   const [isManageCriteriasModalOpen, setIsManageCriteriasModalOpen] = useState(false);
+  const [isManageGradingModalOpen, setIsManageGradingModalOpen] = useState(false);
   const [selectedExamForEdit, setSelectedExamForEdit] = useState<any>(null);
   
   // Filters
@@ -393,6 +395,7 @@ export default function AdminExamPage() {
               onOpenSubjects={() => setIsManageSubjectsModalOpen(true)}
               onOpenConduct={() => setIsManageCriteriasModalOpen(true)}
               onOpenExams={() => setIsManageModalOpen(true)}
+              onOpenGrading={() => setIsManageGradingModalOpen(true)}
             />
           </div>
         </div>
@@ -495,6 +498,13 @@ export default function AdminExamPage() {
         isOpen={isManageCriteriasModalOpen}
         onClose={() => setIsManageCriteriasModalOpen(false)}
         onRefresh={() => {}} // Conduct criteria refresh if needed
+      />
+
+      {/* Manage Grading Systems Modal */}
+      <ManageGradingModal
+        isOpen={isManageGradingModalOpen}
+        onClose={() => setIsManageGradingModalOpen(false)}
+        onRefresh={() => {}} // Grading system refresh if needed
       />
     </div>
   );

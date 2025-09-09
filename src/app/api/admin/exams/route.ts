@@ -306,7 +306,8 @@ export async function GET(request: Request) {
         }
 
         const score = currentResult?.mark ?? 0;
-        const grade = currentResult?.grade ?? calculateGrade(score);
+        // Rely on DB-calculated grade only; no JS fallback
+        const grade = currentResult?.grade ?? '';
 
         // Build exam-based history for charts
         const examsHistory = subjectResults
@@ -426,14 +427,7 @@ export async function GET(request: Request) {
   }
 }
 
-// Helper function to calculate grade from mark
-function calculateGrade(mark: number): string {
-  if (mark >= 85) return 'A';
-  if (mark >= 75) return 'B';
-  if (mark >= 65) return 'C';
-  if (mark >= 55) return 'D';
-  return 'F';
-}
+// Note: grade calculation is performed by DB trigger based on the selected grading system
 
 // Helper function to generate trend data (mock for now)
 function generateTrend(currentScore: number): number[] {
@@ -463,8 +457,7 @@ export async function POST(request: Request) {
         exam_id: examId,
         student_id: studentId,
         subject_id: subjectId,
-        mark: mark,
-        grade: calculateGrade(mark)
+        mark: mark
       }, {
         onConflict: 'exam_id,student_id,subject_id'
       })

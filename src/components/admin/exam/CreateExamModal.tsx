@@ -1,9 +1,17 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
-import { X, FileText, Users, CheckSquare, ChevronDown, Calendar } from 'lucide-react';
+import { X, FileText, Users, CheckSquare, ChevronDown, Calendar, Award } from 'lucide-react';
 import { DateRangePicker } from "@/components/ui/date-picker";
 import { DateRange } from "react-day-picker";
+import { supabase } from '@/lib/supabaseClient';
+
+interface GradingSystem {
+  id: string;
+  name: string;
+  description: string | null;
+  is_default: boolean;
+}
 
 interface CreateExamModalProps {
   isOpen: boolean;
@@ -19,6 +27,7 @@ interface ExamFormData {
   classIds: string[];
   dateRange: DateRange | undefined;
   conductWeightages: { [classId: string]: number };
+  gradingSystemId: string;
 }
 
 interface ExamFormErrors {
@@ -27,6 +36,7 @@ interface ExamFormErrors {
   classIds?: string;
   dateRange?: string;
   conductWeightages?: string;
+  gradingSystemId?: string;
 }
 
 export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, subjects }: CreateExamModalProps) {
@@ -36,7 +46,10 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
     classIds: [],
     dateRange: undefined,
     conductWeightages: {},
+    gradingSystemId: '',
   });
+
+  const [gradingSystems, setGradingSystems] = useState<GradingSystem[]>([]);
 
   const [errors, setErrors] = useState<ExamFormErrors>({});
   const [isSubjectDropdownOpen, setIsSubjectDropdownOpen] = useState(false);
@@ -44,6 +57,35 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
   
   const subjectDropdownRef = useRef<HTMLDivElement>(null);
   const classDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Fetch grading systems when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      fetchGradingSystems();
+    }
+  }, [isOpen]);
+
+  const fetchGradingSystems = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('grading_systems')
+        .select('id, name, description, is_default')
+        .order('is_default', { ascending: false })
+        .order('name');
+
+      if (error) throw error;
+      
+      setGradingSystems(data || []);
+      
+      // Auto-select default grading system if available
+      const defaultSystem = data?.find(system => system.is_default);
+      if (defaultSystem && !formData.gradingSystemId) {
+        setFormData(prev => ({ ...prev, gradingSystemId: defaultSystem.id }));
+      }
+    } catch (error) {
+      console.error('Error fetching grading systems:', error);
+    }
+  };
 
   const handleInputChange = (field: keyof ExamFormData, value: string | number | string[] | Date | DateRange | { [key: string]: number } | undefined) => {
     setFormData(prev => ({
@@ -193,6 +235,7 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
     if (formData.dateRange?.from && formData.dateRange?.to && formData.dateRange.from > formData.dateRange.to) {
       newErrors.dateRange = 'End date must be after start date';
     }
+    if (!formData.gradingSystemId) newErrors.gradingSystemId = 'Please select a grading system';
     
     // Validate conduct weightages for selected classes
     const invalidWeightages = formData.classIds.filter(classId => {
@@ -224,6 +267,7 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
       classIds: [],
       dateRange: undefined,
       conductWeightages: {},
+      gradingSystemId: '',
     });
     setErrors({});
     setIsSubjectDropdownOpen(false);
@@ -274,7 +318,7 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
                 value={formData.title}
                 onChange={(e) => handleInputChange('title', e.target.value)}
                 className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                  errors.title ? 'border-blue-300 bg-blue-50' : 'border-gray-300'
+                  errors.title ? 'border-red-300 bg-red-50' : 'border-gray-300'
                 }`}
                 placeholder="e.g., Mathematics Mid Term Exam"
               />
@@ -297,7 +341,7 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
                 type="button"
                 onClick={() => setIsSubjectDropdownOpen(!isSubjectDropdownOpen)}
                 className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-left flex items-center justify-between ${
-                  errors.subjects ? 'border-blue-300 bg-blue-50' : 'border-gray-300'
+                  errors.subjects ? 'border-red-300 bg-red-50' : 'border-gray-300'
                 }`}
               >
                 <span className="text-sm text-gray-700">
@@ -355,7 +399,7 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
                 type="button"
                 onClick={() => setIsClassDropdownOpen(!isClassDropdownOpen)}
                 className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-left flex items-center justify-between ${
-                  errors.classIds ? 'border-blue-300 bg-blue-50' : 'border-gray-300'
+                  errors.classIds ? 'border-red-300 bg-red-50' : 'border-gray-300'
                 }`}
               >
                 <span className="text-sm text-gray-700">
@@ -417,6 +461,48 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
                 numberOfMonths={2}
               />
               {errors.dateRange && <p className="text-red-500 text-xs mt-1">{errors.dateRange}</p>}
+            </div>
+          </div>
+
+          {/* Grading System Selection */}
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              <Award className="w-5 h-5" />
+              Grading System
+            </h3>
+            
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1">
+                Select Grading System *
+              </label>
+              <select
+                value={formData.gradingSystemId}
+                onChange={(e) => handleInputChange('gradingSystemId', e.target.value)}
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                  errors.gradingSystemId ? 'border-red-300 bg-red-50' : 'border-gray-300'
+                }`}
+              >
+                <option value="">Choose a grading system...</option>
+                {gradingSystems.map((system) => (
+                  <option key={system.id} value={system.id}>
+                    {system.name} {system.is_default ? '(Default)' : ''}
+                  </option>
+                ))}
+              </select>
+              {errors.gradingSystemId && <p className="text-red-500 text-xs mt-1">{errors.gradingSystemId}</p>}
+              
+              {formData.gradingSystemId && (
+                <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  {(() => {
+                    const selectedSystem = gradingSystems.find(s => s.id === formData.gradingSystemId);
+                    return selectedSystem?.description ? (
+                      <p className="text-xs text-blue-700">{selectedSystem.description}</p>
+                    ) : (
+                      <p className="text-xs text-blue-700">Selected grading system: {selectedSystem?.name}</p>
+                    );
+                  })()}
+                </div>
+              )}
             </div>
           </div>
 
