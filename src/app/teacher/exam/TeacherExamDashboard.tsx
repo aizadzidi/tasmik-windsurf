@@ -332,7 +332,7 @@ export default function TeacherExamDashboard() {
         isAbsent: checked,
         // Clear mark when absent; set grade to TH
         mark: checked ? '' : updated[idx].mark,
-        grade: checked ? 'TH' : calculateGrade(updated[idx].mark),
+        grade: checked ? 'TH' : '',
       };
       return updated;
     });
