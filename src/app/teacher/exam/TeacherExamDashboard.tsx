@@ -310,16 +310,34 @@ export default function TeacherExamDashboard() {
     })();
   }, [selectedClassId, selectedSubjectId, selectedExamId, userId]);
 
+  // Client-side grade computation for instant feedback
+  const computeGradeClientSide = (mark: number): string => {
+    // SPM 2023 grading scale - matches database exactly
+    if (mark >= 90) return 'A+';
+    if (mark >= 80) return 'A';
+    if (mark >= 70) return 'A-';
+    if (mark >= 65) return 'B+';
+    if (mark >= 60) return 'B';
+    if (mark >= 55) return 'C+';
+    if (mark >= 50) return 'C';
+    if (mark >= 45) return 'D';
+    if (mark >= 40) return 'E';
+    return 'G';
+  };
+
   // Editable cell handlers
   const handleMarkChange = (idx: number, value: string) => {
     setStudentRows((prev) => {
       const updated = [...prev];
+      const numericMark = parseFloat(value);
       updated[idx] = {
         ...updated[idx],
         mark: value,
         isAbsent: false,
-        // Do not compute grade client-side; DB will compute after save
-        grade: '',
+        // INSTANT FEEDBACK: Compute grade client-side for immediate response
+        grade: !isNaN(numericMark) && numericMark >= 0 && numericMark <= 100 
+          ? computeGradeClientSide(numericMark) 
+          : '',
       };
       return updated;
     });
@@ -454,6 +472,7 @@ export default function TeacherExamDashboard() {
               student_id: r.id,
               subject_id: selectedSubjectId,
               mark: null,
+              final_score: null, // Absent students have null final_score
               grade: 'TH',
             } as any;
           }
@@ -466,6 +485,7 @@ export default function TeacherExamDashboard() {
                 student_id: r.id,
                 subject_id: selectedSubjectId,
                 mark: null,
+                final_score: null, // Clear final_score when clearing TH status
                 grade: '',
               } as any;
             }
@@ -476,6 +496,7 @@ export default function TeacherExamDashboard() {
             student_id: r.id,
             subject_id: selectedSubjectId,
             mark,
+            final_score: mark, // Use mark as final_score for compatibility
             // grade is computed in DB; omit here
           } as any;
         })
@@ -484,6 +505,7 @@ export default function TeacherExamDashboard() {
       if (examRows.length > 0) {
         // Ensure we target the correct composite unique key when upserting
         // so we update existing rows instead of violating a unique constraint.
+        const idsJustSaved = (examRows as any[]).map(r => String(r.student_id));
         const { error: er } = await supabase
           .from('exam_results')
           .upsert(examRows, { onConflict: 'exam_id,student_id,subject_id' });
@@ -503,6 +525,48 @@ export default function TeacherExamDashboard() {
           } else {
             throw er;
           }
+        }
+
+        // RADICAL FIX: Add small delay and force refresh with DB truth
+        await new Promise(resolve => setTimeout(resolve, 100)); // Ensure DB operations complete
+        
+        const { data: refreshed } = await supabase
+          .from('exam_results')
+          .select('student_id, mark, grade, final_score')
+          .eq('exam_id', selectedExamId)
+          .eq('subject_id', selectedSubjectId)
+          .in('student_id', idsJustSaved);
+
+        if (Array.isArray(refreshed) && refreshed.length > 0) {
+          const byId = new Map<string, { mark: number | null; grade: string | null }>(
+            refreshed.map(r => [String((r as any).student_id), { mark: (r as any).mark, grade: (r as any).grade }])
+          );
+          
+          // RADICAL FIX: Force update both state and baseline atomically
+          const updatedRows = studentRows.map(row => {
+            const v = byId.get(row.id);
+            if (!v) return row;
+            return {
+              ...row,
+              // Use DB truth for both mark and grade to eliminate inconsistencies
+              mark: String(v.mark ?? ''),
+              grade: String(v.grade ?? ''),
+            };
+          });
+          
+          const updatedBaseline = initialRowsRef.current.map(base => {
+            const v = byId.get(base.id);
+            if (!v) return base;
+            return { 
+              ...base, 
+              mark: String(v.mark ?? ''),
+              grade: String(v.grade ?? '') 
+            };
+          });
+          
+          // Atomic update of both state and baseline
+          setStudentRows(updatedRows);
+          initialRowsRef.current = updatedBaseline;
         }
       }
 

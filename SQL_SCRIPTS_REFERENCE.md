@@ -127,3 +127,14 @@ debug-classes.sql (verification)
 **Last Updated:** 2025-01-21  
 **Version:** 2.0 (Cleaned up and consolidated)  
 **Quick Reference:** Always run `debug-classes.sql` after any changes to verify everything is working correctly!
+## Exam System — Hotfix Scripts
+
+### `2025-09-09_exam_results_add_final_score.sql`
+Purpose: Fix runtime error “record "new" has no field "final_score"” when saving marks.  
+What it does:
+- Adds `final_score` to `public.exam_results` if missing
+- Backfills `final_score = mark` for existing rows
+- Adds a BEFORE INSERT/UPDATE trigger to default `final_score` to `mark` when not provided
+- Ensures a unique constraint on `(exam_id, student_id, subject_id)` (for upserts)
+
+When to run: If saving exam marks shows the above error. Run once in Supabase SQL Editor.

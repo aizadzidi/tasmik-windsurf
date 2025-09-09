@@ -12,6 +12,7 @@ import ManageConductCriteriasModal from "@/components/admin/exam/ManageConductCr
 import ManageGradingModal from "@/components/admin/exam/ManageGradingModal";
 import { Plus } from "lucide-react";
 import ManageActionsMenu from "@/components/admin/exam/ManageActionsMenu";
+import { parseJsonSafe } from "@/lib/fetchUtils";
 
 // Types
 interface ClassData {
@@ -61,7 +62,7 @@ export default function AdminExamPage() {
   const fetchExamMetadata = async () => {
     try {
       const response = await fetch('/api/admin/exam-metadata');
-      const data: ExamMetadata = await response.json();
+      const data: ExamMetadata = await parseJsonSafe(response);
       
       if (data.success) {
         // Safety checks before setting state
@@ -93,7 +94,7 @@ export default function AdminExamPage() {
       if (selectedClass) params.append('classId', selectedClass);
       
       const response = await fetch(`/api/admin/exams?${params}`);
-      const data: ExamDataResponse = await response.json();
+      const data: ExamDataResponse = await parseJsonSafe(response);
       
       if (data.success) {
         // Safety check before setting students data
@@ -226,7 +227,7 @@ export default function AdminExamPage() {
         body: JSON.stringify(processedExamData),
       });
 
-      const result = await response.json();
+      const result = await parseJsonSafe(response);
       
       if (result.success) {
         // Refresh the exam metadata to include the new exam
@@ -270,7 +271,7 @@ export default function AdminExamPage() {
         body: JSON.stringify(processedExamData),
       });
 
-      const result = await response.json();
+      const result = await parseJsonSafe(response);
       
       if (result.success) {
         // Refresh the exam metadata to show updated exam
@@ -298,7 +299,7 @@ export default function AdminExamPage() {
         let response = await fetch(`/api/admin/exam-metadata?id=${examId}`, {
           method: 'DELETE',
         });
-        let result = await response.json();
+        let result = await parseJsonSafe(response);
         
         if (result.success) {
           // Refresh the exam metadata to remove deleted exam
@@ -321,7 +322,7 @@ export default function AdminExamPage() {
             response = await fetch(`/api/admin/exam-metadata?id=${examId}&cascade=true`, {
               method: 'DELETE',
             });
-            result = await response.json();
+            result = await parseJsonSafe(response);
             
             if (result.success) {
               await fetchExamMetadata();

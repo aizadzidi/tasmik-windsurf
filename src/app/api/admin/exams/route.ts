@@ -457,7 +457,8 @@ export async function POST(request: Request) {
         exam_id: examId,
         student_id: studentId,
         subject_id: subjectId,
-        mark: mark
+        mark: mark,
+        final_score: mark // Use mark as final_score for compatibility
       }, {
         onConflict: 'exam_id,student_id,subject_id'
       })

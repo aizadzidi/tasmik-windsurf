@@ -14,6 +14,9 @@ interface CreateExamData {
   gradingSystemId?: string;
 }
 
+const isValidUuid = (s: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+
 // GET - Fetch exam metadata (exams, classes, subjects for dropdowns)
 export async function GET() {
   try {
@@ -81,11 +84,31 @@ export async function GET() {
 // POST - Create new exam
 export async function POST(request: Request) {
   try {
-    const body: CreateExamData = await request.json();
+    // Parse raw text first to ensure we can gracefully handle invalid JSON
+    const raw = await request.text();
+    let body: CreateExamData;
+    try {
+      body = JSON.parse(raw);
+    } catch (e) {
+      console.error('Invalid JSON in exam creation request:', raw?.slice(0, 500));
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+
     const { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId } = body;
 
+    console.log('Received exam creation request:', { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId });
+
     if (!title || !subjects.length || !classIds.length || !dateRange.from) {
+      console.log('Missing required fields validation failed');
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    }
+
+    // Early validation for UUID formats
+    if (!Array.isArray(classIds) || classIds.some((id) => !isValidUuid(id))) {
+      return NextResponse.json({ error: 'Invalid class ID format' }, { status: 400 });
+    }
+    if (gradingSystemId && !isValidUuid(gradingSystemId)) {
+      return NextResponse.json({ error: 'Invalid grading system ID format' }, { status: 400 });
     }
 
     // Create a service role client to bypass RLS issues
@@ -101,6 +124,15 @@ export async function POST(request: Request) {
     );
 
     // Start a transaction to create exam and related records
+    console.log('Creating exam with data:', {
+      name: title,
+      type: 'formal',
+      exam_start_date: dateRange.from,
+      exam_end_date: dateRange.to || dateRange.from,
+      grading_system_id: gradingSystemId || null,
+      created_at: new Date().toISOString()
+    });
+    
     const { data: exam, error: examError } = await supabaseAdmin
       .from('exams')
       .insert({
@@ -116,7 +148,12 @@ export async function POST(request: Request) {
 
     if (examError) {
       console.error('Error creating exam:', examError);
-      return NextResponse.json({ error: 'Failed to create exam' }, { status: 500 });
+      console.error('Exam error details:', JSON.stringify(examError, null, 2));
+      return NextResponse.json({ 
+        error: 'Failed to create exam', 
+        details: examError.message || 'Unknown error',
+        code: examError.code || 'NO_CODE'
+      }, { status: 500 });
     }
 
     // Get subject IDs from subject names
@@ -182,12 +219,31 @@ export async function PUT(request: Request) {
     if (!examId) {
       return NextResponse.json({ error: 'Exam ID is required' }, { status: 400 });
     }
+    if (!isValidUuid(examId)) {
+      return NextResponse.json({ error: 'Invalid exam ID format' }, { status: 400 });
+    }
 
-    const body: CreateExamData = await request.json();
+    // Parse raw text first to ensure we can gracefully handle invalid JSON
+    const raw = await request.text();
+    let body: CreateExamData;
+    try {
+      body = JSON.parse(raw);
+    } catch (e) {
+      console.error('Invalid JSON in exam update request:', raw?.slice(0, 500));
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
     const { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId } = body;
 
     if (!title || !subjects.length || !classIds.length || !dateRange.from) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    }
+
+    // Early validation for UUID formats
+    if (!Array.isArray(classIds) || classIds.some((id) => !isValidUuid(id))) {
+      return NextResponse.json({ error: 'Invalid class ID format' }, { status: 400 });
+    }
+    if (gradingSystemId && !isValidUuid(gradingSystemId)) {
+      return NextResponse.json({ error: 'Invalid grading system ID format' }, { status: 400 });
     }
 
     // Create a service role client to bypass RLS issues
