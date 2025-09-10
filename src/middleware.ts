@@ -35,7 +35,8 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
+  // Exclude API routes, Next internal assets, and any files with extensions
   matcher: [
-    '/((?!api|_next/static|_next/image|favicon.ico|.*\\.png$|.*\\.jpg$|.*\\.jpeg$|.*\\.svg$).*)',
+    '/((?!api|_next/|favicon.ico|.*\\.(?:png|jpg|jpeg|svg|gif|ico|webp|avif|css|js|map)$).*)',
   ],
 }

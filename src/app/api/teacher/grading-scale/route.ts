@@ -50,9 +50,16 @@ export async function GET(request: Request) {
     }
 
     // If no grading system assigned, try to get default
-    let gradingScale = null;
-    if (examData.grading_systems) {
-      gradingScale = examData.grading_systems.grading_scale;
+    let gradingScale: any = null;
+    let systemName: string | undefined;
+
+    // Supabase relation nesting may return an array or an object depending on join
+    const related = (examData as any).grading_systems as any;
+    const gsObj = Array.isArray(related) ? related[0] : related;
+
+    if (gsObj) {
+      gradingScale = gsObj?.grading_scale ?? null;
+      systemName = gsObj?.name;
     } else {
       // Fallback to default grading system
       const { data: defaultSystem } = await adminOperationSimple(async (client) => {
@@ -89,7 +96,7 @@ export async function GET(request: Request) {
       success: true,
       gradingScale,
       examName: examData.name,
-      systemName: examData.grading_systems?.name || 'Default SPM 2023'
+      systemName: systemName || 'Default SPM 2023'
     });
 
   } catch (error: any) {
