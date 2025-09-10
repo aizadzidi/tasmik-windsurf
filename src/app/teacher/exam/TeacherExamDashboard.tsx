@@ -6,6 +6,7 @@ import { ChevronDown, ChevronUp, AlertTriangle, Info, Users, FileText, Loader2 }
 import dynamic from "next/dynamic";
 import { supabase } from "@/lib/supabaseClient";
 import Navbar from "@/components/Navbar";
+import { getGradingScale, computeGrade, type GradingScale } from "@/lib/gradingUtils";
 
 // Dynamically import charts to avoid SSR issues
 const LineChart = dynamic(() => import("@/components/teacher/ExamLineChart"), { ssr: false });
@@ -58,6 +59,7 @@ export default function TeacherExamDashboard() {
   const [subjects, setSubjects] = React.useState<SubjectItem[]>([]);
   const [exams, setExams] = React.useState<ExamItem[]>([]);
   const [conductCriterias, setConductCriterias] = React.useState<ConductCriteria[]>([]);
+  const [gradingScale, setGradingScale] = React.useState<GradingScale | null>(null);
 
   const [selectedClassId, setSelectedClassId] = React.useState<string>("");
   const [selectedSubjectId, setSelectedSubjectId] = React.useState<string>("");
@@ -164,6 +166,22 @@ export default function TeacherExamDashboard() {
       }
     }
   }, [assessmentList, selectedExamId]);
+
+  // Load grading scale when exam changes
+  React.useEffect(() => {
+    if (selectedExamId) {
+      getGradingScale(selectedExamId)
+        .then(scale => {
+          setGradingScale(scale);
+        })
+        .catch(error => {
+          console.error('Failed to load grading scale:', error);
+          setGradingScale(null); // Fall back to default
+        });
+    } else {
+      setGradingScale(null);
+    }
+  }, [selectedExamId]);
 
   // Compute conduct categories from dynamic criteria or use defaults
   const conductCategories = React.useMemo(() => {
@@ -310,19 +328,23 @@ export default function TeacherExamDashboard() {
     })();
   }, [selectedClassId, selectedSubjectId, selectedExamId, userId]);
 
-  // Client-side grade computation for instant feedback
+  // Dynamic grade computation using exam's actual grading scale
   const computeGradeClientSide = (mark: number): string => {
-    // SPM 2023 grading scale - matches database exactly
-    if (mark >= 90) return 'A+';
-    if (mark >= 80) return 'A';
-    if (mark >= 70) return 'A-';
-    if (mark >= 65) return 'B+';
-    if (mark >= 60) return 'B';
-    if (mark >= 55) return 'C+';
-    if (mark >= 50) return 'C';
-    if (mark >= 45) return 'D';
-    if (mark >= 40) return 'E';
-    return 'G';
+    if (!gradingScale) {
+      // Fallback to SPM 2023 if grading scale not loaded yet
+      if (mark >= 90) return 'A+';
+      if (mark >= 80) return 'A';
+      if (mark >= 70) return 'A-';
+      if (mark >= 65) return 'B+';
+      if (mark >= 60) return 'B';
+      if (mark >= 55) return 'C+';
+      if (mark >= 50) return 'C';
+      if (mark >= 45) return 'D';
+      if (mark >= 40) return 'E';
+      return 'G';
+    }
+    
+    return computeGrade(mark, gradingScale);
   };
 
   // Editable cell handlers
@@ -435,7 +457,7 @@ export default function TeacherExamDashboard() {
     };
   }, [studentRows, selectedExamId, selectedSubjectId, selectedClassId, saving]);
 
-  // Save all rows
+  // Save all rows using new single-endpoint API
   const handleSaveAll = async () => {
     setSaving(true);
     setStatusMsg('');
@@ -458,97 +480,85 @@ export default function TeacherExamDashboard() {
         return markChanged || statusChanged || conductChanged;
       });
 
-      // Upsert exam_results only for rows with mark/status changes
-      const examRows = changedRows
+      // Prepare exam results for the new single-endpoint API
+      const examResults = changedRows
         .map((r) => {
           const init = initialMap.get(r.id);
           const markChanged = String(r.mark ?? '').trim() !== String(init?.mark ?? '').trim();
           const statusChanged = Boolean(r.isAbsent) !== Boolean(init?.isAbsent);
           if (!markChanged && !statusChanged) return null;
+          
           if (r.isAbsent) {
-            // Persist TH/Absent: null mark + grade 'TH'
             return {
-              exam_id: selectedExamId,
-              student_id: r.id,
-              subject_id: selectedSubjectId,
+              studentId: r.id,
               mark: null,
-              final_score: null, // Absent students have null final_score
-              grade: 'TH',
-            } as any;
+              finalScore: null,
+              isAbsent: true
+            };
           }
+          
           const mark = parseFloat(r.mark);
-          // If user unticked Absent but hasn't entered a mark yet, clear any TH row
           if (isNaN(mark)) {
             if (statusChanged && init?.isAbsent) {
               return {
-                exam_id: selectedExamId,
-                student_id: r.id,
-                subject_id: selectedSubjectId,
+                studentId: r.id,
                 mark: null,
-                final_score: null, // Clear final_score when clearing TH status
-                grade: '',
-              } as any;
+                finalScore: null,
+                isAbsent: false
+              };
             }
-            return null; // otherwise keep legacy behavior
+            return null;
           }
+          
           return {
-            exam_id: selectedExamId,
-            student_id: r.id,
-            subject_id: selectedSubjectId,
+            studentId: r.id,
             mark,
-            final_score: mark, // Use mark as final_score for compatibility
-            // grade is computed in DB; omit here
-          } as any;
+            finalScore: mark,
+            isAbsent: false
+          };
         })
-        .filter(Boolean) as any[];
+        .filter(Boolean);
 
-      if (examRows.length > 0) {
-        // Ensure we target the correct composite unique key when upserting
-        // so we update existing rows instead of violating a unique constraint.
-        const idsJustSaved = (examRows as any[]).map(r => String(r.student_id));
-        const { error: er } = await supabase
-          .from('exam_results')
-          .upsert(examRows, { onConflict: 'exam_id,student_id,subject_id' });
-        if (er) {
-          // Fallback for older schemas that only have (exam_id, student_id) unique
-          // to avoid a hard failure while migrations catch up.
-          const msg = String(er.message || '');
-          if (msg.includes('there is no unique or exclusion constraint matching the ON CONFLICT specification')) {
-            const { error: fallbackErr } = await supabase
-              .from('exam_results')
-              .upsert(examRows, { onConflict: 'exam_id,student_id' });
-            if (fallbackErr) {
-              // Final fallback: attempt insert (may create duplicates, but avoids hard failure)
-              const { error: insertErr } = await supabase.from('exam_results').insert(examRows);
-              if (insertErr) throw insertErr;
-            }
-          } else {
-            throw er;
-          }
+      if (examResults.length > 0) {
+        // Use new single-endpoint API for atomic upsert-and-return
+        const response = await fetch('/api/teacher/exam-results', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            examId: selectedExamId,
+            subjectId: selectedSubjectId,
+            results: examResults
+          })
+        });
+
+        const data = await response.json();
+        
+        if (!response.ok) {
+          // Improved error reporting
+          const errorMessage = data.details?.message || data.error || 'Failed to save exam results';
+          const errorDetails = data.details ? 
+            `Code: ${data.details.code || 'Unknown'}\nHint: ${data.details.hint || 'No additional info'}` :
+            'No additional details available';
+          
+          setStatusMsg(`Error: ${errorMessage}`);
+          showToast(`Save failed: ${errorMessage}`, 'error');
+          console.error('Save error details:', data.details);
+          throw new Error(`${errorMessage}\n${errorDetails}`);
         }
 
-        // RADICAL FIX: Add small delay and force refresh with DB truth
-        await new Promise(resolve => setTimeout(resolve, 100)); // Ensure DB operations complete
-        
-        const { data: refreshed } = await supabase
-          .from('exam_results')
-          .select('student_id, mark, grade, final_score')
-          .eq('exam_id', selectedExamId)
-          .eq('subject_id', selectedSubjectId)
-          .in('student_id', idsJustSaved);
-
-        if (Array.isArray(refreshed) && refreshed.length > 0) {
+        // SUCCESS: Use returned data immediately (no delay needed!)
+        const savedResults = data.results || [];
+        if (savedResults.length > 0) {
           const byId = new Map<string, { mark: number | null; grade: string | null }>(
-            refreshed.map(r => [String((r as any).student_id), { mark: (r as any).mark, grade: (r as any).grade }])
+            savedResults.map((r: any) => [String(r.student_id), { mark: r.mark, grade: r.grade }])
           );
           
-          // RADICAL FIX: Force update both state and baseline atomically
+          // Atomic update with DB truth
           const updatedRows = studentRows.map(row => {
             const v = byId.get(row.id);
             if (!v) return row;
             return {
               ...row,
-              // Use DB truth for both mark and grade to eliminate inconsistencies
               mark: String(v.mark ?? ''),
               grade: String(v.grade ?? ''),
             };
@@ -564,7 +574,6 @@ export default function TeacherExamDashboard() {
             };
           });
           
-          // Atomic update of both state and baseline
           setStudentRows(updatedRows);
           initialRowsRef.current = updatedBaseline;
         }
@@ -629,9 +638,9 @@ export default function TeacherExamDashboard() {
       showToast('Saved', 'success');
       
       // Update baseline with successfully saved changes
-      if (examRows.length > 0 || conductRows.length > 0) {
+      if (examResults.length > 0 || conductRows.length > 0) {
         const baseMap = new Map(initialRowsRef.current.map(r => [r.id, { ...r }]));
-        const markIds = new Set((examRows as any[]).map((r) => String(r.student_id)));
+        const markIds = new Set((examResults as any[]).map((r) => String(r.studentId)));
         const conductIds = new Set((conductRows as any[]).map((r) => String(r.student_id)));
         studentRows.forEach((r) => {
           const base = baseMap.get(r.id);
@@ -657,22 +666,32 @@ export default function TeacherExamDashboard() {
       });
     } catch (e: any) {
       console.error('Save error:', e);
-      const raw = e?.message || e?.hint || (typeof e === 'string' ? e : JSON.stringify(e || {}));
-      const isDuplicateExamResults = raw.includes('exam_results_exam_id_student_id_key');
-      const isNoConstraint = raw.includes('no unique or exclusion constraint matching');
-      if (isDuplicateExamResults) {
-        const msg = 'Duplicate exam result detected. DB unique constraint may be outdated.';
-        setStatusMsg(msg);
-        showToast(msg, 'error');
-      } else if (isNoConstraint) {
-        const msg = 'Upsert failed: missing UNIQUE constraint on exam_results or conduct_entries.';
-        setStatusMsg(msg);
-        showToast(msg, 'error');
-      } else {
-        const msg = (typeof raw === 'string' && raw) ? raw : 'Failed to save';
-        setStatusMsg(msg);
-        showToast(msg, 'error');
+      
+      // Improved error reporting
+      const errorMessage = e?.message || 'Failed to save';
+      let displayMessage = errorMessage;
+      
+      // Handle specific error types with user-friendly messages
+      if (errorMessage.includes('duplicate key')) {
+        displayMessage = 'Duplicate record detected. Please refresh and try again.';
+      } else if (errorMessage.includes('constraint')) {
+        displayMessage = 'Database constraint violation. Please check your data.';
+      } else if (errorMessage.includes('network') || errorMessage.includes('fetch')) {
+        displayMessage = 'Network error. Please check your connection and try again.';
+      } else if (errorMessage.includes('unauthorized') || errorMessage.includes('forbidden')) {
+        displayMessage = 'You do not have permission to perform this action.';
       }
+      
+      setStatusMsg(`Error: ${displayMessage}`);
+      showToast(`Save failed: ${displayMessage}`, 'error');
+      
+      // Log detailed error for debugging
+      console.error('Detailed error info:', {
+        message: e?.message,
+        stack: e?.stack,
+        name: e?.name,
+        code: e?.code
+      });
     } finally {
       setSaving(false);
     }
