@@ -226,6 +226,30 @@ CREATE POLICY "admin_users_can_modify_classes" ON classes
     );
 ```
 
+### 5. Exam Excluded Students (New)
+```sql
+-- Per-exam exclusions so specific students are not included in an exam
+-- Created: 2025-09-15
+CREATE TABLE exam_excluded_students (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  exam_id UUID NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
+  student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  class_id UUID REFERENCES classes(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(exam_id, student_id)
+);
+
+ALTER TABLE exam_excluded_students ENABLE ROW LEVEL SECURITY;
+
+-- Policies
+CREATE POLICY "admin_can_manage_exam_excluded_students" ON exam_excluded_students
+  FOR ALL USING (
+    EXISTS (SELECT 1 FROM users WHERE users.id = auth.uid() AND users.role = 'admin')
+  );
+CREATE POLICY "authenticated_can_read_exam_excluded_students" ON exam_excluded_students
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+```
+
 ### Students Table Policies (Existing)
 ```sql
 -- Students are managed based on user roles:

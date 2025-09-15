@@ -45,6 +45,7 @@ interface ExamFormData {
   dateRange: DateRange | undefined;
   conductWeightages: { [classId: string]: number };
   gradingSystemId: string;
+  excludedStudentIdsByClass: { [classId: string]: string[] };
 }
 
 interface ExamFormErrors {
@@ -64,6 +65,7 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
     dateRange: undefined,
     conductWeightages: {},
     gradingSystemId: '',
+    excludedStudentIdsByClass: {},
   });
 
   const [gradingSystems, setGradingSystems] = useState<GradingSystem[]>([]);
@@ -71,6 +73,8 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
   const [errors, setErrors] = useState<ExamFormErrors>({});
   const [isSubjectDropdownOpen, setIsSubjectDropdownOpen] = useState(false);
   const [isClassDropdownOpen, setIsClassDropdownOpen] = useState(false);
+  const [studentsByClass, setStudentsByClass] = useState<Record<string, Array<{ id: string; name: string }>>>({});
+  const [loadingStudents, setLoadingStudents] = useState(false);
   
   const subjectDropdownRef = useRef<HTMLDivElement>(null);
   const classDropdownRef = useRef<HTMLDivElement>(null);
@@ -120,9 +124,86 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
         dateRange,
         conductWeightages,
         gradingSystemId: exam.grading_system_id || '',
+        excludedStudentIdsByClass: {},
       });
     }
   }, [exam, isOpen]);
+
+  // Load existing exclusions for this exam (grouped by class)
+  useEffect(() => {
+    const loadExclusions = async () => {
+      if (!exam || !isOpen) return;
+      try {
+        const { data, error } = await supabase
+          .from('exam_excluded_students')
+          .select('student_id, class_id')
+          .eq('exam_id', exam.id);
+        if (error) {
+          // Gracefully ignore if table doesn't exist yet (migration not run)
+          const msg = String((error as any)?.message || '')
+            .toLowerCase();
+          const code = (error as any)?.code;
+          if (code === '42P01' || msg.includes('relation') && msg.includes('does not exist')) {
+            return;
+          }
+          throw error;
+        }
+        const grouped: Record<string, string[]> = {};
+        (data || []).forEach((row: any) => {
+          const cid = String(row.class_id);
+          const sid = String(row.student_id);
+          if (!grouped[cid]) grouped[cid] = [];
+          grouped[cid].push(sid);
+        });
+        setFormData(prev => ({ ...prev, excludedStudentIdsByClass: grouped }));
+      } catch (e) {
+        console.error('Failed to load exam exclusions', e || '');
+      }
+    };
+    loadExclusions();
+  }, [exam, isOpen]);
+
+  // Load students for the selected classes
+  useEffect(() => {
+    const loadStudents = async () => {
+      const classIds = formData.classIds;
+      if (!exam || !isOpen || !classIds || classIds.length === 0) {
+        setStudentsByClass({});
+        return;
+      }
+      setLoadingStudents(true);
+      try {
+        const { data, error } = await supabase
+          .from('students')
+          .select('id, name, class_id')
+          .in('class_id', classIds)
+          .order('name');
+        if (error) throw error;
+        const byClass: Record<string, Array<{ id: string; name: string }>> = {};
+        (data || []).forEach((s: any) => {
+          const cid = String(s.class_id);
+          if (!byClass[cid]) byClass[cid] = [];
+          byClass[cid].push({ id: String(s.id), name: s.name });
+        });
+        setStudentsByClass(byClass);
+        // Ensure exclusion keys exist for newly selected classes
+        setFormData(prev => {
+          const next = { ...prev.excludedStudentIdsByClass };
+          classIds.forEach(cid => { if (!next[cid]) next[cid] = []; });
+          // prune removed classes
+          Object.keys(next).forEach(cid => { if (!classIds.includes(cid)) delete next[cid]; });
+          return { ...prev, excludedStudentIdsByClass: next };
+        });
+      } catch (e) {
+        console.error('Failed to load class students', e);
+        setStudentsByClass({});
+      } finally {
+        setLoadingStudents(false);
+      }
+    };
+    loadStudents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.classIds.join(','), isOpen, exam?.id]);
 
   const handleInputChange = (field: keyof ExamFormData, value: string | number | string[] | Date | DateRange | { [key: string]: number } | undefined) => {
     setFormData(prev => ({
@@ -168,21 +249,27 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
       // If we're updating classIds, also update conduct weightages
       if (field === 'classIds') {
         const updatedWeightages = { ...prev.conductWeightages };
+        const updatedExclusions = { ...prev.excludedStudentIdsByClass };
         
         if (isChecked) {
           // Set default weightage for newly selected class (default to 20%)
           if (!updatedWeightages[value]) {
             updatedWeightages[value] = 20;
           }
+          if (!updatedExclusions[value]) {
+            updatedExclusions[value] = [];
+          }
         } else {
           // Remove weightage for deselected class
           delete updatedWeightages[value];
+          delete updatedExclusions[value];
         }
         
         return {
           ...prev,
           [field]: updatedField,
-          conductWeightages: updatedWeightages
+          conductWeightages: updatedWeightages,
+          excludedStudentIdsByClass: updatedExclusions
         };
       }
       
@@ -210,15 +297,20 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
       // If we're updating classIds, also update conduct weightages
       if (field === 'classIds') {
         const updatedWeightages = { ...prev.conductWeightages };
+        const updatedExclusions = { ...prev.excludedStudentIdsByClass };
         
         if (isAllSelected) {
           // Remove all weightages when deselecting all
           items.forEach(classId => delete updatedWeightages[classId]);
+          items.forEach(classId => delete updatedExclusions[classId]);
         } else {
           // Set default weightage for all selected classes
           items.forEach(classId => {
             if (!updatedWeightages[classId]) {
               updatedWeightages[classId] = 20;
+            }
+            if (!updatedExclusions[classId]) {
+              updatedExclusions[classId] = [];
             }
           });
         }
@@ -226,7 +318,8 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
         return {
           ...prev,
           [field]: updatedField,
-          conductWeightages: updatedWeightages
+          conductWeightages: updatedWeightages,
+          excludedStudentIdsByClass: updatedExclusions
         };
       }
       
@@ -243,6 +336,32 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
         [field]: undefined
       }));
     }
+  };
+
+  const handleExcludeToggle = (classId: string, studentId: string, isChecked: boolean) => {
+    setFormData(prev => {
+      const current = prev.excludedStudentIdsByClass[classId] || [];
+      const next = isChecked ? Array.from(new Set([...current, studentId])) : current.filter(id => id !== studentId);
+      return {
+        ...prev,
+        excludedStudentIdsByClass: {
+          ...prev.excludedStudentIdsByClass,
+          [classId]: next,
+        }
+      };
+    });
+  };
+
+  const handleExcludeSelectAll = (classId: string) => {
+    const students = studentsByClass[classId] || [];
+    const isAllSelected = students.length > 0 && students.every((s) => formData.excludedStudentIdsByClass[classId]?.includes(s.id));
+    setFormData(prev => ({
+      ...prev,
+      excludedStudentIdsByClass: {
+        ...prev.excludedStudentIdsByClass,
+        [classId]: isAllSelected ? [] : students.map(s => s.id)
+      }
+    }));
   };
 
   // Close dropdowns when clicking outside
@@ -305,6 +424,7 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
       dateRange: undefined,
       conductWeightages: {},
       gradingSystemId: '',
+      excludedStudentIdsByClass: {},
     });
     setErrors({});
     setIsSubjectDropdownOpen(false);
@@ -601,6 +721,57 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
                   </p>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Exclude Students */}
+          {formData.classIds.length > 0 && (
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                <Users className="w-5 h-5" />
+                Exclude Students (per class)
+              </h3>
+              <p className="text-sm text-gray-600">Update which students are excluded from this exam. Excluded students will not appear in the teacher exam entry screen.</p>
+              {loadingStudents && (
+                <div className="text-sm text-gray-500">Loading class rosters…</div>
+              )}
+              {formData.classIds.map((classId) => {
+                const classData = classes.find(c => c.id === classId);
+                const roster = studentsByClass[classId] || [];
+                const selected = formData.excludedStudentIdsByClass[classId] || [];
+                const allSelected = roster.length > 0 && roster.every(s => selected.includes(s.id));
+                return (
+                  <div key={`exclude-${classId}`} className="border border-gray-200 rounded-lg">
+                    <div className="flex items-center justify-between p-3 bg-gray-50 rounded-t-lg">
+                      <div className="font-semibold text-gray-700">{classData?.name}</div>
+                      <button
+                        type="button"
+                        onClick={() => handleExcludeSelectAll(classId)}
+                        className="text-sm text-blue-600 hover:text-blue-700"
+                      >
+                        {allSelected ? 'Clear All' : 'Select All'}
+                      </button>
+                    </div>
+                    <div className="max-h-44 overflow-y-auto p-2">
+                      {roster.length === 0 ? (
+                        <div className="text-sm text-gray-500 px-2 py-1">No students in this class.</div>
+                      ) : (
+                        roster.map((s) => (
+                          <label key={s.id} className="flex items-center gap-3 px-2 py-1 hover:bg-gray-50 rounded cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={selected.includes(s.id)}
+                              onChange={(e) => handleExcludeToggle(classId, s.id, e.target.checked)}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span className="text-sm text-gray-800">{s.name}</span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
 

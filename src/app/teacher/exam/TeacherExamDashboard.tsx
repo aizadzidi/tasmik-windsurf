@@ -70,6 +70,7 @@ export default function TeacherExamDashboard() {
   const [expandedRows, setExpandedRows] = React.useState<number[]>([]);
   const [saving, setSaving] = React.useState(false);
   const [statusMsg, setStatusMsg] = React.useState<string>("");
+  const [searchQuery, setSearchQuery] = React.useState<string>("");
   // Toast state for quick popup notifications
   const [toast, setToast] = React.useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -155,6 +156,27 @@ export default function TeacherExamDashboard() {
     }
     return list;
   }, [assessmentType, exams, selectedClassId, selectedSubjectId]);
+
+  // Limit dropdowns to classes/subjects configured for the selected exam (fallback to all)
+  const subjectsForUI = React.useMemo(() => {
+    if (!selectedExamId) return subjects;
+    const ex = exams.find(e => String(e.id) === String(selectedExamId));
+    const arr = (ex?.exam_subjects || [])
+      .map(es => es?.subjects)
+      .filter((s): s is { id: string; name: string } => Boolean(s?.id) && Boolean(s?.name))
+      .map(s => ({ id: String(s.id), name: s.name }));
+    return arr.length ? arr : subjects;
+  }, [selectedExamId, exams, subjects]);
+
+  const classesForUI = React.useMemo(() => {
+    if (!selectedExamId) return classes;
+    const ex = exams.find(e => String(e.id) === String(selectedExamId));
+    const arr = (ex?.exam_classes || [])
+      .map(ec => ec?.classes)
+      .filter((c): c is { id: string; name: string } => Boolean(c?.id) && Boolean(c?.name))
+      .map(c => ({ id: String(c.id), name: c.name }));
+    return arr.length ? arr : classes;
+  }, [selectedExamId, exams, classes]);
 
   // Keep selected exam consistent - but only reset if current selection is invalid
   React.useEffect(() => {
@@ -243,7 +265,22 @@ export default function TeacherExamDashboard() {
       }
       
       const { data: studentsData } = await studentsQuery;
-      const roster = studentsData || [];
+      let roster = studentsData || [];
+
+      // Apply exam exclusions when an exam is selected
+      if (selectedExamId) {
+        try {
+          const params = new URLSearchParams({ examId: selectedExamId });
+          if (selectedClassId && selectedClassId !== 'all') params.append('classId', selectedClassId);
+          const res = await fetch(`/api/teacher/exam-exclusions?${params.toString()}`);
+          const json = await res.json();
+          const excluded: string[] = Array.isArray(json.excludedStudentIds) ? json.excludedStudentIds : [];
+          const excludedSet = new Set(excluded);
+          roster = roster.filter((s: any) => !excludedSet.has(String(s.id)));
+        } catch (e) {
+          console.error('Failed to load exam exclusions', e);
+        }
+      }
 
       // Existing marks for exam+subject
       const marksByStudent = new Map<string, { mark: number | null; grade: string | null }>();
@@ -422,6 +459,27 @@ export default function TeacherExamDashboard() {
       await handleSaveAll();
     }
     setSelectedExamId(newExamId);
+
+    // Align subject and class with the chosen exam to avoid auto-reset
+    const chosen = exams.find(ex => String(ex.id) === String(newExamId));
+    const examSubjectIds = (chosen?.exam_subjects || [])
+      .map(es => es?.subjects?.id)
+      .filter((id): id is string => Boolean(id));
+    if (examSubjectIds.length > 0) {
+      if (!examSubjectIds.includes(selectedSubjectId)) {
+        setSelectedSubjectId(examSubjectIds[0]);
+      }
+    } else {
+      // No subjects configured; clear selection
+      if (selectedSubjectId) setSelectedSubjectId("");
+    }
+
+    const examClassIds = (chosen?.exam_classes || [])
+      .map(ec => ec?.classes?.id)
+      .filter((id): id is string => Boolean(id));
+    if (selectedClassId && selectedClassId !== 'all' && examClassIds.length > 0 && !examClassIds.includes(selectedClassId)) {
+      setSelectedClassId('all');
+    }
   };
 
   // Check for unsaved changes
@@ -698,10 +756,18 @@ export default function TeacherExamDashboard() {
   };
 
   // Section 3: Graph Data
-  const marksData = studentRows.map((s) => ({ name: s.name, mark: parseFloat(s.mark) || 0 }));
+  // Visible rows based on search (map indexes back to original array)
+  const visibleRows = React.useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const base = studentRows.map((r, idx) => ({ ...r, _idx: idx } as StudentRow & { _idx: number }));
+    if (!q) return base;
+    return base.filter(r => (r.name || '').toLowerCase().includes(q));
+  }, [studentRows, searchQuery]);
+
+  const marksData = visibleRows.map((s) => ({ name: s.name, mark: parseFloat(s.mark) || 0 }));
   const avgConduct: Record<string, number> = {};
   conductCategories.forEach((cat) => {
-    const vals = studentRows.map((s) => {
+    const vals = visibleRows.map((s) => {
       const score = parseFloat(s.conduct[cat.key]) || 0;
       // Normalize to percentage based on max score
       return cat.maxScore > 0 ? (score / cat.maxScore) * 100 : 0;
@@ -840,7 +906,7 @@ export default function TeacherExamDashboard() {
                 >
                   <option value="">Select Class</option>
                   <option value="all">All Classes</option>
-                  {classes.map(cls => (
+                  {classesForUI.map(cls => (
                     <option key={cls.id} value={cls.id}>{cls.name}</option>
                   ))}
                 </select>
@@ -856,7 +922,7 @@ export default function TeacherExamDashboard() {
                   disabled={!selectedClassId}
                 >
                   <option value="">Select Subject</option>
-                  {subjects.map(subj => (
+                  {subjectsForUI.map(subj => (
                     <option key={subj.id} value={subj.id}>{subj.name}</option>
                   ))}
                 </select>
@@ -865,6 +931,19 @@ export default function TeacherExamDashboard() {
               {/* Right side spacer (button removed) */}
               <div className="w-full md:flex-1" />
             </div>
+            {/* Search */}
+            <div className="w-full">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search students..."
+                className="w-full border rounded px-3 py-2 text-sm"
+                disabled={!selectedExamId || !selectedSubjectId}
+                aria-label="Search students"
+              />
+            </div>
+
             {/* Toast */}
             {toast && (
               <div className={`fixed top-4 right-4 z-50 px-4 py-2 rounded shadow-md text-sm ${toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
@@ -872,15 +951,16 @@ export default function TeacherExamDashboard() {
               </div>
             )}
             {/* No Students Message */}
-            {studentRows.length === 0 && selectedExamId && selectedSubjectId && (
+            {visibleRows.length === 0 && selectedExamId && selectedSubjectId && (
               <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center mb-4">
                 <Users className="w-12 h-12 text-gray-400 mx-auto mb-4" />
                 <h3 className="text-lg font-medium text-gray-700 mb-2">No Students Found</h3>
                 <p className="text-gray-500">
-                  {selectedClassId === 'all' 
-                    ? 'No students are enrolled in any class for this exam.'
-                    : `No students are enrolled in ${classes.find(c => c.id === selectedClassId)?.name}.`
-                  }
+                  {searchQuery.trim() ? 'No students match your search.' : (
+                    selectedClassId === 'all' 
+                      ? 'No students are enrolled in any class for this exam.'
+                      : `No students are enrolled in ${classes.find(c => c.id === selectedClassId)?.name}.`
+                  )}
                 </p>
               </div>
             )}
@@ -899,7 +979,8 @@ export default function TeacherExamDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {studentRows.map((student, idx) => {
+                  {visibleRows.map((student, displayIdx) => {
+                    const idx = (student as any)._idx as number; // original index in studentRows
                     const expanded = expandedRows.includes(idx);
                     // Calculate weighted average conduct score
                     const totalScore = conductCategories.reduce((sum, cat) => sum + (parseFloat(student.conduct[cat.key]) || 0), 0);
@@ -908,7 +989,7 @@ export default function TeacherExamDashboard() {
                     return (
                       <React.Fragment key={student.id}>
                         <tr className="border-b">
-                          <td className="px-3 py-2">{idx + 1}</td>
+                          <td className="px-3 py-2">{displayIdx + 1}</td>
                           <td className="px-3 py-2">{student.name}</td>
                           <td className="px-3 py-2">
                             <div className="relative inline-block">

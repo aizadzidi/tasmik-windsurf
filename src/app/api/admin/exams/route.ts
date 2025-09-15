@@ -57,6 +57,27 @@ export async function GET(request: Request) {
     }
 
     // Optimized grouped queries using admin client for critical tables
+    // Fetch excluded student IDs (for this exam/class) upfront to filter rosters later
+    const excludedIds: string[] = await (async () => {
+      if (!examId) return [];
+      try {
+        const data = await adminOperationSimple(async (client) => {
+          let q = client
+            .from('exam_excluded_students')
+            .select('student_id')
+            .eq('exam_id', examId);
+          if (classId) q = q.eq('class_id', classId);
+          const { data, error } = await q;
+          if (error) throw error;
+          return (data || []).map((r: any) => String(r.student_id));
+        });
+        return data;
+      } catch (e) {
+        console.error('Admin fetch exam_excluded_students failed:', e);
+        return [];
+      }
+    })();
+
     const [studentsResult, subjectsResult, examResultsResult, conductResult, classesResult, examClassesWeightsResult] = await Promise.all([
       // Students (admin client to avoid RLS issues)
       (async () => {
@@ -73,7 +94,10 @@ export async function GET(request: Request) {
           }
           const { data, error } = await q;
           if (error) throw error;
-          return { data, error: null } as const;
+          // Filter out excluded students if any
+          const excludedSet = new Set(excludedIds);
+          const filtered = (data || []).filter((s: any) => !excludedSet.has(String(s.id)));
+          return { data: filtered, error: null } as const;
         }).catch((err) => {
           console.error('Admin fetch students failed:', err);
           return { data: [], error: err } as const;

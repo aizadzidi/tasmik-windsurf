@@ -12,6 +12,7 @@ interface CreateExamData {
   };
   conductWeightages: { [classId: string]: number };
   gradingSystemId?: string;
+  excludedStudentIdsByClass?: { [classId: string]: string[] };
 }
 
 const isValidUuid = (s: string) =>
@@ -94,7 +95,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     }
 
-    const { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId } = body;
+    const { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId, excludedStudentIdsByClass } = body;
 
     console.log('Received exam creation request:', { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId });
 
@@ -198,6 +199,44 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Failed to create exam classes' }, { status: 500 });
     }
 
+    // Optional: Insert excluded students for this exam
+    try {
+      const map = excludedStudentIdsByClass || {};
+      const entries: Array<{ exam_id: string; student_id: string; class_id: string | null }> = [];
+      const allIds = Array.from(new Set(Object.values(map).flat().filter(Boolean)));
+      if (allIds.length > 0) {
+        // Validate students and capture their class_id
+        const { data: roster, error: rosterErr } = await supabaseAdmin
+          .from('students')
+          .select('id, class_id')
+          .in('id', allIds);
+        if (rosterErr) throw rosterErr;
+        const classByStudent = new Map<string, string | null>((roster || []).map((r: any) => [String(r.id), r.class_id ? String(r.class_id) : null]));
+
+        // Build insert list; only include if student_id belongs to a selected class (if provided)
+        for (const [klassId, studentIds] of Object.entries(map)) {
+          for (const sid of (studentIds || [])) {
+            const actualClassId = classByStudent.get(String(sid)) ?? null;
+            // If class was provided, ensure it matches actual class; otherwise allow insert with actual class
+            if (!actualClassId) continue; // skip unknown students
+            if (klassId && isValidUuid(klassId) && actualClassId !== klassId) continue; // skip if mismatch
+            entries.push({ exam_id: exam.id, student_id: String(sid), class_id: actualClassId });
+          }
+        }
+
+        if (entries.length > 0) {
+          // Use upsert to avoid unique constraint errors if duplicates
+          const { error: exclErr } = await supabaseAdmin
+            .from('exam_excluded_students')
+            .upsert(entries, { onConflict: 'exam_id,student_id' });
+          if (exclErr) throw exclErr;
+        }
+      }
+    } catch (exclError) {
+      console.error('Error inserting exam excluded students:', exclError);
+      // Non-fatal: proceed without blocking exam creation
+    }
+
     return NextResponse.json({ 
       success: true, 
       examId: exam.id,
@@ -232,7 +271,7 @@ export async function PUT(request: Request) {
       console.error('Invalid JSON in exam update request:', raw?.slice(0, 500));
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     }
-    const { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId } = body;
+    const { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId, excludedStudentIdsByClass } = body;
 
     if (!title || !subjects.length || !classIds.length || !dateRange.from) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -323,6 +362,43 @@ export async function PUT(request: Request) {
     if (examClassesError) {
       console.error('Error creating exam classes:', examClassesError);
       return NextResponse.json({ error: 'Failed to update exam classes' }, { status: 500 });
+    }
+
+    // Optional: Replace excluded students if provided
+    try {
+      if (excludedStudentIdsByClass) {
+        // Clear existing exclusions for this exam and re-insert
+        await supabaseAdmin.from('exam_excluded_students').delete().eq('exam_id', examId);
+
+        const map = excludedStudentIdsByClass || {};
+        const entries: Array<{ exam_id: string; student_id: string; class_id: string | null }> = [];
+        const allIds = Array.from(new Set(Object.values(map).flat().filter(Boolean)));
+        if (allIds.length > 0) {
+          const { data: roster, error: rosterErr } = await supabaseAdmin
+            .from('students')
+            .select('id, class_id')
+            .in('id', allIds);
+          if (rosterErr) throw rosterErr;
+          const classByStudent = new Map<string, string | null>((roster || []).map((r: any) => [String(r.id), r.class_id ? String(r.class_id) : null]));
+          for (const [klassId, studentIds] of Object.entries(map)) {
+            for (const sid of (studentIds || [])) {
+              const actualClassId = classByStudent.get(String(sid)) ?? null;
+              if (!actualClassId) continue;
+              if (klassId && isValidUuid(klassId) && actualClassId !== klassId) continue;
+              entries.push({ exam_id: examId, student_id: String(sid), class_id: actualClassId });
+            }
+          }
+          if (entries.length > 0) {
+            const { error: exclErr } = await supabaseAdmin
+              .from('exam_excluded_students')
+              .upsert(entries, { onConflict: 'exam_id,student_id' });
+            if (exclErr) throw exclErr;
+          }
+        }
+      }
+    } catch (exclError) {
+      console.error('Error updating exam excluded students:', exclError);
+      // Non-fatal
     }
 
     return NextResponse.json({ 

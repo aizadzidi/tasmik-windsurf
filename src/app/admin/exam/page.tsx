@@ -22,8 +22,18 @@ interface ClassData {
 
 
 // Types for exam metadata
+// Exam with nested classes/subjects for filtering
+interface ExamItem {
+  id: string;
+  name: string;
+  type: string;
+  created_at?: string;
+  exam_classes?: { conduct_weightage: number; classes: { id: string; name: string } }[];
+  exam_subjects?: { subjects: { id: string; name: string } }[];
+}
+
 interface ExamMetadata {
-  exams: Array<{ id: string; name: string; type: string; created_at: string }>;
+  exams: ExamItem[];
   classes: Array<{ id: string; name: string }>;
   subjects: Array<{ id: string; name: string }>;
   success: boolean;
@@ -38,7 +48,7 @@ interface ExamDataResponse {
 export default function AdminExamPage() {
   // State
   const [classes, setClasses] = useState<ClassData[]>([]);
-  const [exams, setExams] = useState<Array<{ id: string; name: string; type: string }>>([]);
+  const [exams, setExams] = useState<ExamItem[]>([]);
   const [subjects, setSubjects] = useState<string[]>([]);
   const [students, setStudents] = useState<StudentData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,11 +78,11 @@ export default function AdminExamPage() {
         // Safety checks before setting state
         setClasses(Array.isArray(data.classes) ? data.classes : []);
         setExams(Array.isArray(data.exams) ? data.exams : []);
-        setSubjects(Array.isArray(data.subjects) ? data.subjects.map(s => s?.name || '') : []);
+        setSubjects(Array.isArray(data.subjects) ? data.subjects.map((s: any) => s?.name || '') : []);
         
         // Auto-select the first exam if available
-        if (Array.isArray(data.exams) && data.exams.length > 0 && data.exams[0]?.id) {
-          setSelectedExam(data.exams[0].id);
+        if (Array.isArray(data.exams) && data.exams.length > 0 && (data.exams as any)[0]?.id) {
+          setSelectedExam((data.exams as any)[0].id);
         }
       }
     } catch (error) {
@@ -97,8 +107,25 @@ export default function AdminExamPage() {
       const data: ExamDataResponse = await parseJsonSafe(response);
       
       if (data.success) {
+        // Optionally enforce exclusion on client as a safeguard
+        let studentsList = Array.isArray(data.students) ? data.students : [];
+        if (selectedExam) {
+          try {
+            const exclParams = new URLSearchParams({ examId: selectedExam });
+            if (selectedClass) exclParams.append('classId', selectedClass);
+            const exclRes = await fetch(`/api/teacher/exam-exclusions?${exclParams.toString()}`);
+            const exclJson = await exclRes.json();
+            const excludedIds: string[] = Array.isArray(exclJson.excludedStudentIds) ? exclJson.excludedStudentIds : [];
+            if (excludedIds.length > 0) {
+              const excludedSet = new Set(excludedIds.map(String));
+              studentsList = studentsList.filter((s: any) => !excludedSet.has(String(s.id)));
+            }
+          } catch (e) {
+            console.error('Client-side exclusion fetch failed', e);
+          }
+        }
         // Safety check before setting students data
-        setStudents(Array.isArray(data.students) ? data.students : []);
+        setStudents(studentsList);
       } else {
         console.error('Error fetching exam data:', data);
         setStudents([]);
@@ -148,6 +175,38 @@ export default function AdminExamPage() {
     if (!Array.isArray(exams) || !selectedExam) return undefined;
     return exams.find(e => e && e.id === selectedExam)?.name;
   }, [exams, selectedExam]);
+
+  // Filter UI lists by selected exam
+  const classesForUI = useMemo(() => {
+    if (!selectedExam) return classes;
+    const ex = exams.find(e => e && e.id === selectedExam);
+    const list = (ex?.exam_classes || [])
+      .map(ec => ec?.classes)
+      .filter((c): c is { id: string; name: string } => Boolean(c?.id) && Boolean(c?.name));
+    return list.length ? list : classes;
+  }, [selectedExam, exams, classes]);
+
+  const subjectsForUI = useMemo(() => {
+    if (!selectedExam) return subjects;
+    const ex = exams.find(e => e && e.id === selectedExam);
+    const list = (ex?.exam_subjects || [])
+      .map(es => es?.subjects?.name)
+      .filter((n): n is string => typeof n === 'string' && n.length > 0);
+    return list.length ? list : subjects;
+  }, [selectedExam, exams, subjects]);
+
+  // Keep chosen class/subject valid for the selected exam
+  useEffect(() => {
+    if (!selectedExam) return;
+    // Fix class if not allowed
+    if (selectedClass && !classesForUI.some(c => c.id === selectedClass)) {
+      setSelectedClass('');
+    }
+    // Fix subject if not allowed
+    if (selectedSubject && !subjectsForUI.includes(selectedSubject)) {
+      setSelectedSubject('');
+    }
+  }, [selectedExam, classesForUI, subjectsForUI]);
   
   // Filter students based on current filters - optimized with safety checks
   const filteredStudents = useMemo(() => {
@@ -412,9 +471,9 @@ export default function AdminExamPage() {
           onExamChange={setSelectedExam}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
-          classes={classes}
-          exams={exams}
-          subjects={subjects}
+          classes={classesForUI}
+          exams={exams.map(e => ({ id: e.id, name: e.name, type: e.type }))}
+          subjects={subjectsForUI}
         />
 
 
