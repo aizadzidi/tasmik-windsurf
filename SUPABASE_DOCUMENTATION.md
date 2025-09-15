@@ -250,6 +250,28 @@ CREATE POLICY "authenticated_can_read_exam_excluded_students" ON exam_excluded_s
   FOR SELECT USING (auth.uid() IS NOT NULL);
 ```
 
+### 6. Exam Class Subjects (New)
+```sql
+-- Configure which subjects apply for each selected class within an exam
+CREATE TABLE exam_class_subjects (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  exam_id UUID NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
+  class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  subject_id UUID NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(exam_id, class_id, subject_id)
+);
+
+ALTER TABLE exam_class_subjects ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "admin_can_manage_exam_class_subjects" ON exam_class_subjects
+  FOR ALL USING (
+    EXISTS (SELECT 1 FROM users WHERE users.id = auth.uid() AND users.role = 'admin')
+  );
+CREATE POLICY "authenticated_can_read_exam_class_subjects" ON exam_class_subjects
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+```
+
 ### Students Table Policies (Existing)
 ```sql
 -- Students are managed based on user roles:

@@ -150,7 +150,18 @@ export default function TeacherExamDashboard() {
       
       // Handle "all" selections
       const hasClass = selectedClassId === "all" || (ex.exam_classes || []).some(ec => ec?.classes?.id === selectedClassId);
-      const hasSubject = (ex.exam_subjects || []).some(es => es?.subjects?.id === selectedSubjectId);
+      // If per-class mapping exists, require matching pair; otherwise check exam_subjects only
+      const ecs = (ex as any)?.exam_class_subjects as Array<{ classes?: { id: string }, subjects?: { id: string } }> | undefined;
+      let hasSubject = false;
+      if (Array.isArray(ecs) && ecs.length > 0) {
+        if (selectedClassId === 'all') {
+          hasSubject = ecs.some(row => row?.subjects?.id === selectedSubjectId);
+        } else {
+          hasSubject = ecs.some(row => row?.classes?.id === selectedClassId && row?.subjects?.id === selectedSubjectId);
+        }
+      } else {
+        hasSubject = (ex.exam_subjects || []).some(es => es?.subjects?.id === selectedSubjectId);
+      }
       
       if (hasClass && hasSubject) list.push({ id: ex.id, name: ex.name });
     }
@@ -161,12 +172,29 @@ export default function TeacherExamDashboard() {
   const subjectsForUI = React.useMemo(() => {
     if (!selectedExamId) return subjects;
     const ex = exams.find(e => String(e.id) === String(selectedExamId));
+    const ecs = (ex as any)?.exam_class_subjects as Array<{ classes?: { id: string }, subjects?: { id: string, name: string } }> | undefined;
+    if (Array.isArray(ecs) && ecs.length > 0) {
+      if (selectedClassId && selectedClassId !== 'all') {
+        const arr = ecs
+          .filter(row => row?.classes?.id === selectedClassId)
+          .map(row => row?.subjects)
+          .filter((s): s is { id: string; name: string } => Boolean(s?.id) && Boolean(s?.name))
+          .map(s => ({ id: String(s.id), name: s.name }));
+        if (arr.length) return arr;
+      } else {
+        const arr = Array.from(new Set((ecs || []).map(row => row?.subjects?.id))).map((sid) => {
+          const found = (ecs || []).find(r => String(r?.subjects?.id) === String(sid));
+          return found?.subjects ? { id: String(found.subjects.id), name: String(found.subjects.name) } : null;
+        }).filter((x): x is { id: string; name: string } => !!x);
+        if (arr.length) return arr;
+      }
+    }
     const arr = (ex?.exam_subjects || [])
       .map(es => es?.subjects)
       .filter((s): s is { id: string; name: string } => Boolean(s?.id) && Boolean(s?.name))
       .map(s => ({ id: String(s.id), name: s.name }));
     return arr.length ? arr : subjects;
-  }, [selectedExamId, exams, subjects]);
+  }, [selectedExamId, selectedClassId, exams, subjects]);
 
   const classesForUI = React.useMemo(() => {
     if (!selectedExamId) return classes;

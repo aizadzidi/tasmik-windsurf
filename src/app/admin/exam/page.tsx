@@ -189,11 +189,23 @@ export default function AdminExamPage() {
   const subjectsForUI = useMemo(() => {
     if (!selectedExam) return subjects;
     const ex = exams.find(e => e && e.id === selectedExam);
-    const list = (ex?.exam_subjects || [])
-      .map(es => es?.subjects?.name)
-      .filter((n): n is string => typeof n === 'string' && n.length > 0);
+    // If per-class mapping exists
+    const ecs = (ex as any)?.exam_class_subjects as Array<{ classes?: { id: string }, subjects?: { id: string, name: string } }> | undefined;
+    if (Array.isArray(ecs) && ecs.length > 0) {
+      if (selectedClass) {
+        const names = ecs
+          .filter(row => row?.classes?.id === selectedClass)
+          .map(row => row?.subjects?.name)
+          .filter((n): n is string => !!n);
+        if (names.length > 0) return names;
+      } else {
+        const names = Array.from(new Set(ecs.map(row => row?.subjects?.name).filter((n): n is string => !!n)));
+        if (names.length > 0) return names;
+      }
+    }
+    const list = (ex as any)?.exam_subjects?.map((es: any) => es?.subjects?.name).filter((n: any): n is string => typeof n === 'string' && n.length > 0) || [];
     return list.length ? list : subjects;
-  }, [selectedExam, exams, subjects]);
+  }, [selectedExam, selectedClass, exams, subjects]);
 
   // Keep chosen class/subject valid for the selected exam
   useEffect(() => {

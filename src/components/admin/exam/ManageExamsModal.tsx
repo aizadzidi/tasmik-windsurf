@@ -7,6 +7,9 @@ interface ExamItem {
   id: string;
   name: string;
   type: string;
+  exam_classes?: { conduct_weightage: number; classes?: { id: string; name: string } }[];
+  exam_subjects?: { subjects?: { id: string; name: string } }[];
+  exam_class_subjects?: { classes?: { id: string; name: string }; subjects?: { id: string; name: string } }[];
 }
 
 interface ManageExamsModalProps {
@@ -69,6 +72,26 @@ export default function ManageExamsModal({
                     <div>
                       <h3 className="font-medium text-gray-900">{exam.name}</h3>
                       <p className="text-sm text-gray-500 capitalize">{exam.type} exam</p>
+                      {(() => {
+                        const classCount = Array.isArray(exam.exam_classes) ? exam.exam_classes.length : undefined;
+                        const pairCount = Array.isArray(exam.exam_class_subjects) ? exam.exam_class_subjects.length : undefined;
+                        const subjCount = Array.isArray(exam.exam_subjects)
+                          ? new Set(
+                              exam.exam_subjects
+                                .map(es => es?.subjects?.id)
+                                .filter((x): x is string => !!x)
+                            ).size
+                          : undefined;
+                        const hasAny = (classCount ?? 0) > 0 || (pairCount ?? 0) > 0 || (subjCount ?? 0) > 0;
+                        if (!hasAny) return null;
+                        return (
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            {typeof classCount === 'number' ? `${classCount} class${classCount === 1 ? '' : 'es'}` : ''}
+                            {typeof pairCount === 'number' ? `${classCount ? ' • ' : ''}${pairCount} class-subject pair${pairCount === 1 ? '' : 's'}` : ''}
+                            {!pairCount && typeof subjCount === 'number' ? `${classCount ? ' • ' : ''}${subjCount} subject${subjCount === 1 ? '' : 's'}` : ''}
+                          </p>
+                        );
+                      })()}
                     </div>
                   </div>
 
@@ -120,4 +143,3 @@ export default function ManageExamsModal({
     </div>
   );
 }
-

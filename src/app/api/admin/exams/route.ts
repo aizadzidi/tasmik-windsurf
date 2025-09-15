@@ -105,16 +105,34 @@ export async function GET(request: Request) {
         return data as any;
       })(),
 
-      // Subjects: if exam selected, fetch only that exam's subjects; else all subjects
+      // Subjects: if exam selected, fetch subjects. If class filter provided and per-class mapping exists, honor it.
       (async () => {
         if (examId) {
+          // Try per-class mapping first when class filter is present
+          if (classId) {
+            const ecs = await adminOperationSimple(async (client) => {
+              const { data, error } = await client
+                .from('exam_class_subjects')
+                .select('subjects(id, name)')
+                .eq('exam_id', examId)
+                .eq('class_id', classId);
+              if (error) throw error;
+              const names = (data || [])
+                .map((row: any) => ({ id: row.subjects?.id, name: row.subjects?.name }))
+                .filter((s) => s.name);
+              return { data: names, error: null } as const;
+            }).catch((err) => {
+              // Fallback silently to exam_subjects
+              return { data: null, error: err } as const;
+            });
+            if (ecs.data && (ecs.data as any[]).length > 0) return ecs as any;
+          }
           const data = await adminOperationSimple(async (client) => {
             const { data, error } = await client
               .from('exam_subjects')
               .select('subjects(id, name)')
               .eq('exam_id', examId);
             if (error) throw error;
-            // Normalize into { id, name }
             const names = (data || [])
               .map((row: any) => ({ id: row.subjects?.id, name: row.subjects?.name }))
               .filter((s) => s.name);

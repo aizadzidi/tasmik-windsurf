@@ -13,6 +13,7 @@ interface CreateExamData {
   conductWeightages: { [classId: string]: number };
   gradingSystemId?: string;
   excludedStudentIdsByClass?: { [classId: string]: string[] };
+  subjectConfigByClass?: { [classId: string]: string[] };
 }
 
 const isValidUuid = (s: string) =>
@@ -21,8 +22,17 @@ const isValidUuid = (s: string) =>
 // GET - Fetch exam metadata (exams, classes, subjects for dropdowns)
 export async function GET() {
   try {
+    // Use service role in GET to avoid RLS issues for exam metadata
+    const supabaseAdmin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      {
+        auth: { autoRefreshToken: false, persistSession: false }
+      }
+    );
+
     // Get all exams with their associated classes and subjects
-    const { data: exams, error: examsError } = await supabase
+    const { data: exams, error: examsError } = await supabaseAdmin
       .from('exams')
       .select(`
         id,
@@ -38,6 +48,10 @@ export async function GET() {
         ),
         exam_subjects(
           subjects(id, name)
+        ),
+        exam_class_subjects(
+          classes(id, name),
+          subjects(id, name)
         )
       `)
       .order('created_at', { ascending: false });
@@ -48,7 +62,7 @@ export async function GET() {
     }
 
     // Get all classes
-    const { data: classes, error: classesError } = await supabase
+    const { data: classes, error: classesError } = await supabaseAdmin
       .from('classes')
       .select('id, name')
       .order('name');
@@ -59,7 +73,7 @@ export async function GET() {
     }
 
     // Get all subjects
-    const { data: subjects, error: subjectsError } = await supabase
+    const { data: subjects, error: subjectsError } = await supabaseAdmin
       .from('subjects')
       .select('id, name')
       .order('name');
@@ -95,7 +109,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     }
 
-    const { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId, excludedStudentIdsByClass } = body;
+    const { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId, excludedStudentIdsByClass, subjectConfigByClass } = body;
 
     console.log('Received exam creation request:', { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId });
 
@@ -199,6 +213,31 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Failed to create exam classes' }, { status: 500 });
     }
 
+    // Optional: Create per-class subject mapping
+    try {
+      const map = subjectConfigByClass || {};
+      if (map && Object.keys(map).length > 0) {
+        // Resolve subject IDs by name used in request
+        const subjectsByName = new Map((subjectData || []).map((s: any) => [String(s.name), String(s.id)]));
+        const ecsRows: Array<{ exam_id: string; class_id: string; subject_id: string }> = [];
+        for (const [classId, subjectNames] of Object.entries(map)) {
+          if (!isValidUuid(classId)) continue;
+          (subjectNames || []).forEach((name) => {
+            const sid = subjectsByName.get(String(name));
+            if (sid) ecsRows.push({ exam_id: exam.id, class_id: classId, subject_id: sid });
+          });
+        }
+        if (ecsRows.length > 0) {
+          const { error: ecsErr } = await supabaseAdmin
+            .from('exam_class_subjects')
+            .insert(ecsRows);
+          if (ecsErr) throw ecsErr;
+        }
+      }
+    } catch (e) {
+      console.error('Error saving exam_class_subjects:', e);
+    }
+
     // Optional: Insert excluded students for this exam
     try {
       const map = excludedStudentIdsByClass || {};
@@ -271,7 +310,7 @@ export async function PUT(request: Request) {
       console.error('Invalid JSON in exam update request:', raw?.slice(0, 500));
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     }
-    const { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId, excludedStudentIdsByClass } = body;
+    const { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId, excludedStudentIdsByClass, subjectConfigByClass } = body;
 
     if (!title || !subjects.length || !classIds.length || !dateRange.from) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -319,7 +358,8 @@ export async function PUT(request: Request) {
     // Delete existing exam_subjects and exam_classes
     await Promise.all([
       supabaseAdmin.from('exam_subjects').delete().eq('exam_id', examId),
-      supabaseAdmin.from('exam_classes').delete().eq('exam_id', examId)
+      supabaseAdmin.from('exam_classes').delete().eq('exam_id', examId),
+      supabaseAdmin.from('exam_class_subjects').delete().eq('exam_id', examId)
     ]);
 
     // Get subject IDs from subject names
@@ -362,6 +402,35 @@ export async function PUT(request: Request) {
     if (examClassesError) {
       console.error('Error creating exam classes:', examClassesError);
       return NextResponse.json({ error: 'Failed to update exam classes' }, { status: 500 });
+    }
+
+    // Optional: Re-create per-class subject mapping
+    try {
+      const map = subjectConfigByClass || {};
+      if (map && Object.keys(map).length > 0) {
+        // Lookup all subjects by name
+        const { data: allSubjects, error: subjErr } = await supabaseAdmin
+          .from('subjects')
+          .select('id, name');
+        if (subjErr) throw subjErr;
+        const byName = new Map((allSubjects || []).map((s: any) => [String(s.name), String(s.id)]));
+        const ecsRows: Array<{ exam_id: string; class_id: string; subject_id: string }> = [];
+        for (const [classId, subjectNames] of Object.entries(map)) {
+          if (!isValidUuid(classId)) continue;
+          (subjectNames || []).forEach((name) => {
+            const sid = byName.get(String(name));
+            if (sid) ecsRows.push({ exam_id: examId, class_id: classId, subject_id: sid });
+          });
+        }
+        if (ecsRows.length > 0) {
+          const { error: ecsErr } = await supabaseAdmin
+            .from('exam_class_subjects')
+            .insert(ecsRows);
+          if (ecsErr) throw ecsErr;
+        }
+      }
+    } catch (e) {
+      console.error('Error updating exam_class_subjects:', e);
     }
 
     // Optional: Replace excluded students if provided

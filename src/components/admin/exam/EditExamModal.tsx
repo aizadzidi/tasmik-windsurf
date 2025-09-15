@@ -27,6 +27,10 @@ interface ExamData {
   exam_subjects?: Array<{
     subjects: { id: string; name: string };
   }>;
+  exam_class_subjects?: Array<{
+    classes: { id: string; name: string };
+    subjects: { id: string; name: string };
+  }>;
 }
 
 interface EditExamModalProps {
@@ -46,6 +50,7 @@ interface ExamFormData {
   conductWeightages: { [classId: string]: number };
   gradingSystemId: string;
   excludedStudentIdsByClass: { [classId: string]: string[] };
+  subjectConfigByClass: { [classId: string]: string[] };
 }
 
 type ExamFormErrors = Partial<Record<keyof ExamFormData, string>>;
@@ -59,6 +64,7 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
     conductWeightages: {},
     gradingSystemId: '',
     excludedStudentIdsByClass: {},
+    subjectConfigByClass: {},
   });
 
   const [gradingSystems, setGradingSystems] = useState<GradingSystem[]>([]);
@@ -110,6 +116,18 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
         to: exam.exam_end_date ? new Date(exam.exam_end_date) : new Date(exam.exam_start_date)
       } : undefined;
 
+      // Build subject configuration by class from exam_class_subjects when present
+      const subjectConfigByClass: { [classId: string]: string[] } = {};
+      if (Array.isArray(exam.exam_class_subjects)) {
+        exam.exam_class_subjects.forEach((row) => {
+          const cid = row?.classes?.id;
+          const sname = row?.subjects?.name;
+          if (!cid || !sname) return;
+          if (!subjectConfigByClass[cid]) subjectConfigByClass[cid] = [];
+          if (!subjectConfigByClass[cid].includes(sname)) subjectConfigByClass[cid].push(sname);
+        });
+      }
+
       setFormData({
         title: exam.name,
         subjects: examSubjects,
@@ -118,6 +136,7 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
         conductWeightages,
         gradingSystemId: exam.grading_system_id || '',
         excludedStudentIdsByClass: {},
+        subjectConfigByClass,
       });
     }
   }, [exam, isOpen]);
@@ -243,6 +262,7 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
       if (field === 'classIds') {
         const updatedWeightages = { ...prev.conductWeightages };
         const updatedExclusions = { ...prev.excludedStudentIdsByClass };
+        const updatedSubjectConfig = { ...prev.subjectConfigByClass };
         
         if (isChecked) {
           // Set default weightage for newly selected class (default to 20%)
@@ -252,20 +272,41 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
           if (!updatedExclusions[value]) {
             updatedExclusions[value] = [];
           }
+          if (!updatedSubjectConfig[value]) {
+            updatedSubjectConfig[value] = [...prev.subjects];
+          }
         } else {
           // Remove weightage for deselected class
           delete updatedWeightages[value];
           delete updatedExclusions[value];
+          delete updatedSubjectConfig[value];
         }
         
         return {
           ...prev,
           [field]: updatedField,
           conductWeightages: updatedWeightages,
-          excludedStudentIdsByClass: updatedExclusions
+          excludedStudentIdsByClass: updatedExclusions,
+          subjectConfigByClass: updatedSubjectConfig
         };
       }
       
+      if (field === 'subjects') {
+        const updatedSubjectConfig = { ...prev.subjectConfigByClass };
+        prev.classIds.forEach(cid => { if (!updatedSubjectConfig[cid]) updatedSubjectConfig[cid] = []; });
+        Object.keys(updatedSubjectConfig).forEach(cid => {
+          const set = new Set(updatedSubjectConfig[cid] || []);
+          if (isChecked) set.add(value); else set.delete(value);
+          const allowed = new Set(updatedField as string[]);
+          updatedSubjectConfig[cid] = Array.from(set).filter(s => allowed.has(s));
+        });
+        return {
+          ...prev,
+          [field]: updatedField,
+          subjectConfigByClass: updatedSubjectConfig,
+        };
+      }
+
       return {
         ...prev,
         [field]: updatedField
@@ -291,11 +332,13 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
       if (field === 'classIds') {
         const updatedWeightages = { ...prev.conductWeightages };
         const updatedExclusions = { ...prev.excludedStudentIdsByClass };
+        const updatedSubjectConfig = { ...prev.subjectConfigByClass };
         
         if (isAllSelected) {
           // Remove all weightages when deselecting all
           items.forEach(classId => delete updatedWeightages[classId]);
           items.forEach(classId => delete updatedExclusions[classId]);
+          items.forEach(classId => delete updatedSubjectConfig[classId]);
         } else {
           // Set default weightage for all selected classes
           items.forEach(classId => {
@@ -305,6 +348,9 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
             if (!updatedExclusions[classId]) {
               updatedExclusions[classId] = [];
             }
+            if (!updatedSubjectConfig[classId]) {
+              updatedSubjectConfig[classId] = [...prev.subjects];
+            }
           });
         }
         
@@ -312,10 +358,23 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
           ...prev,
           [field]: updatedField,
           conductWeightages: updatedWeightages,
-          excludedStudentIdsByClass: updatedExclusions
+          excludedStudentIdsByClass: updatedExclusions,
+          subjectConfigByClass: updatedSubjectConfig
         };
       }
       
+      if (field === 'subjects') {
+        const updatedSubjectConfig = { ...prev.subjectConfigByClass };
+        Object.keys(updatedSubjectConfig).forEach(cid => {
+          updatedSubjectConfig[cid] = isAllSelected ? [] : [...items];
+        });
+        return {
+          ...prev,
+          [field]: updatedField,
+          subjectConfigByClass: updatedSubjectConfig,
+        };
+      }
+
       return {
         ...prev,
         [field]: updatedField
@@ -396,6 +455,12 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
       newErrors.conductWeightages = 'All selected classes must have conduct weightage between 0-50%';
     }
 
+    // Validate per-class subject configuration: at least one subject per selected class
+    const emptyConfigs = formData.classIds.filter((cid) => !(Array.isArray((formData as any).subjectConfigByClass?.[cid]) && (formData as any).subjectConfigByClass?.[cid].length > 0));
+    if (emptyConfigs.length > 0) {
+      (newErrors as any).subjectConfigByClass = 'Each selected class must have at least one subject chosen in "Subjects per class"';
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -418,6 +483,7 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
       conductWeightages: {},
       gradingSystemId: '',
       excludedStudentIdsByClass: {},
+      subjectConfigByClass: {},
     });
     setErrors({});
     setIsSubjectDropdownOpen(false);
@@ -761,6 +827,135 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
                           </label>
                         ))
                       )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Subject configuration per class */}
+          {formData.classIds.length > 0 && formData.subjects.length > 0 && (
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <CheckSquare className="w-5 h-5" />
+                Subjects per class
+              </h3>
+              <p className="text-sm text-gray-600">Choose which of the selected subjects apply to each selected class.</p>
+              {formData.classIds.map((classId) => {
+                const classData = classes.find(c => c.id === classId);
+                const selected = new Set((formData as any).subjectConfigByClass?.[classId] || []);
+                const allSelected = formData.subjects.length > 0 && formData.subjects.every(s => selected.has(s));
+                return (
+                  <div key={`subjcfg-${classId}`} className="border border-gray-200 rounded-lg">
+                    <div className="flex items-center justify-between p-3 bg-gray-50 rounded-t-lg">
+                      <div className="font-semibold text-gray-700">{classData?.name}</div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormData(prev => ({
+                            ...prev,
+                            subjectConfigByClass: {
+                              ...(prev as any).subjectConfigByClass,
+                              [classId]: allSelected ? [] : [...prev.subjects]
+                            }
+                          } as any));
+                        }}
+                        className="text-sm text-blue-600 hover:text-blue-700"
+                      >
+                        {allSelected ? 'Clear All' : 'Select All'}
+                      </button>
+                    </div>
+                    <div className="max-h-44 overflow-y-auto p-2">
+                      {formData.subjects.map((subj) => (
+                        <label key={`${classId}-${subj}`} className="flex items-center gap-3 px-2 py-1 hover:bg-gray-50 rounded cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selected.has(subj)}
+                            onChange={(e) => {
+                              setFormData(prev => {
+                                const current = new Set((prev as any).subjectConfigByClass?.[classId] || []);
+                                if (e.target.checked) current.add(subj); else current.delete(subj);
+                                return {
+                                  ...prev,
+                                  subjectConfigByClass: {
+                                    ...(prev as any).subjectConfigByClass,
+                                    [classId]: Array.from(current)
+                                  }
+                                } as any;
+                              });
+                            }}
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="text-sm text-gray-800">{subj}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+              {(errors as any).subjectConfigByClass && (
+                <p className="text-red-500 text-xs">{(errors as any).subjectConfigByClass}</p>
+              )}
+            </div>
+          )}
+
+          {/* Subject configuration per class */}
+          {formData.classIds.length > 0 && formData.subjects.length > 0 && (
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <CheckSquare className="w-5 h-5" />
+                Subjects per class
+              </h3>
+              <p className="text-sm text-gray-600">Choose which of the selected subjects apply to each selected class.</p>
+              {formData.classIds.map((classId) => {
+                const classData = classes.find(c => c.id === classId);
+                const selected = new Set(formData.subjectConfigByClass[classId] || []);
+                const allSelected = formData.subjects.length > 0 && formData.subjects.every(s => selected.has(s));
+                return (
+                  <div key={`subjcfg-${classId}`} className="border border-gray-200 rounded-lg">
+                    <div className="flex items-center justify-between p-3 bg-gray-50 rounded-t-lg">
+                      <div className="font-semibold text-gray-700">{classData?.name}</div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormData(prev => ({
+                            ...prev,
+                            subjectConfigByClass: {
+                              ...prev.subjectConfigByClass,
+                              [classId]: allSelected ? [] : [...prev.subjects]
+                            }
+                          }));
+                        }}
+                        className="text-sm text-blue-600 hover:text-blue-700"
+                      >
+                        {allSelected ? 'Clear All' : 'Select All'}
+                      </button>
+                    </div>
+                    <div className="max-h-44 overflow-y-auto p-2">
+                      {formData.subjects.map((subj) => (
+                        <label key={`${classId}-${subj}`} className="flex items-center gap-3 px-2 py-1 hover:bg-gray-50 rounded cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selected.has(subj)}
+                            onChange={(e) => {
+                              setFormData(prev => {
+                                const current = new Set(prev.subjectConfigByClass[classId] || []);
+                                if (e.target.checked) current.add(subj); else current.delete(subj);
+                                return {
+                                  ...prev,
+                                  subjectConfigByClass: {
+                                    ...prev.subjectConfigByClass,
+                                    [classId]: Array.from(current)
+                                  }
+                                };
+                              });
+                            }}
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="text-sm text-gray-800">{subj}</span>
+                        </label>
+                      ))}
                     </div>
                   </div>
                 );

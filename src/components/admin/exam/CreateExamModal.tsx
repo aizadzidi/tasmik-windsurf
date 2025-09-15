@@ -29,6 +29,7 @@ interface ExamFormData {
   conductWeightages: { [classId: string]: number };
   gradingSystemId: string;
   excludedStudentIdsByClass: { [classId: string]: string[] };
+  subjectConfigByClass: { [classId: string]: string[] };
 }
 
 type ExamFormErrors = Partial<Record<keyof ExamFormData, string>>;
@@ -42,6 +43,7 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
     conductWeightages: {},
     gradingSystemId: '',
     excludedStudentIdsByClass: {},
+    subjectConfigByClass: {},
   });
 
   const [gradingSystems, setGradingSystems] = useState<GradingSystem[]>([]);
@@ -129,6 +131,7 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
       if (field === 'classIds') {
         const updatedWeightages = { ...prev.conductWeightages };
         const updatedExclusions = { ...prev.excludedStudentIdsByClass };
+        const updatedSubjectConfig = { ...prev.subjectConfigByClass };
         
         if (isChecked) {
           // Set default weightage for newly selected class (default to 20%)
@@ -139,11 +142,15 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
           if (!updatedExclusions[value]) {
             updatedExclusions[value] = [];
           }
+          if (!updatedSubjectConfig[value]) {
+            updatedSubjectConfig[value] = [...prev.subjects];
+          }
         } else {
           // Remove weightage for deselected class
           delete updatedWeightages[value];
           // Remove any existing exclusions for deselected class
           delete updatedExclusions[value];
+          delete updatedSubjectConfig[value];
         }
         
         return {
@@ -151,9 +158,29 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
           [field]: updatedField,
           conductWeightages: updatedWeightages,
           excludedStudentIdsByClass: updatedExclusions,
+          subjectConfigByClass: updatedSubjectConfig,
         };
       }
       
+      if (field === 'subjects') {
+        const updatedSubjectConfig = { ...prev.subjectConfigByClass };
+        // Ensure all selected classes exist in map
+        prev.classIds.forEach(cid => { if (!updatedSubjectConfig[cid]) updatedSubjectConfig[cid] = []; });
+        // Update each class's list by add/remove this subject
+        Object.keys(updatedSubjectConfig).forEach(cid => {
+          const set = new Set(updatedSubjectConfig[cid] || []);
+          if (isChecked) set.add(value); else set.delete(value);
+          // Also prune any subjects no longer globally selected
+          const allowed = new Set(updatedField as string[]);
+          updatedSubjectConfig[cid] = Array.from(set).filter(s => allowed.has(s));
+        });
+        return {
+          ...prev,
+          [field]: updatedField,
+          subjectConfigByClass: updatedSubjectConfig,
+        };
+      }
+
       return {
         ...prev,
         [field]: updatedField
@@ -179,11 +206,13 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
       if (field === 'classIds') {
         const updatedWeightages = { ...prev.conductWeightages };
         const updatedExclusions = { ...prev.excludedStudentIdsByClass };
+        const updatedSubjectConfig = { ...prev.subjectConfigByClass };
         
         if (isAllSelected) {
           // Remove all weightages when deselecting all
           items.forEach(classId => delete updatedWeightages[classId]);
           items.forEach(classId => delete updatedExclusions[classId]);
+          items.forEach(classId => delete updatedSubjectConfig[classId]);
         } else {
           // Set default weightage for all selected classes
           items.forEach(classId => {
@@ -193,6 +222,9 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
             if (!updatedExclusions[classId]) {
               updatedExclusions[classId] = [];
             }
+            if (!updatedSubjectConfig[classId]) {
+              updatedSubjectConfig[classId] = [...prev.subjects];
+            }
           });
         }
         
@@ -201,9 +233,22 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
           [field]: updatedField,
           conductWeightages: updatedWeightages,
           excludedStudentIdsByClass: updatedExclusions,
+          subjectConfigByClass: updatedSubjectConfig,
         };
       }
       
+      if (field === 'subjects') {
+        const updatedSubjectConfig = { ...prev.subjectConfigByClass };
+        Object.keys(updatedSubjectConfig).forEach(cid => {
+          updatedSubjectConfig[cid] = isAllSelected ? [] : [...items];
+        });
+        return {
+          ...prev,
+          [field]: updatedField,
+          subjectConfigByClass: updatedSubjectConfig,
+        };
+      }
+
       return {
         ...prev,
         [field]: updatedField
@@ -318,6 +363,12 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
       newErrors.conductWeightages = 'All selected classes must have conduct weightage between 0-50%';
     }
 
+    // Validate per-class subject configuration: at least one subject per selected class
+    const emptyConfigs = formData.classIds.filter((cid) => !Array.isArray(formData.subjectConfigByClass[cid]) || formData.subjectConfigByClass[cid].length === 0);
+    if (emptyConfigs.length > 0) {
+      newErrors.subjectConfigByClass = 'Each selected class must have at least one subject chosen in "Subjects per class"';
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -340,6 +391,7 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
       conductWeightages: {},
       gradingSystemId: '',
       excludedStudentIdsByClass: {},
+      subjectConfigByClass: {},
     });
     setErrors({});
     setIsSubjectDropdownOpen(false);
@@ -688,6 +740,72 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* Subject configuration per class */}
+          {formData.classIds.length > 0 && formData.subjects.length > 0 && (
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <CheckSquare className="w-5 h-5" />
+                Subjects per class
+              </h3>
+              <p className="text-sm text-gray-600">Choose which of the selected subjects apply to each selected class.</p>
+              {formData.classIds.map((classId) => {
+                const classData = classes.find(c => c.id === classId);
+                const selected = new Set(formData.subjectConfigByClass[classId] || []);
+                const allSelected = formData.subjects.length > 0 && formData.subjects.every(s => selected.has(s));
+                return (
+                  <div key={`subjcfg-${classId}`} className="border border-gray-200 rounded-lg">
+                    <div className="flex items-center justify-between p-3 bg-gray-50 rounded-t-lg">
+                      <div className="font-semibold text-gray-700">{classData?.name}</div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormData(prev => ({
+                            ...prev,
+                            subjectConfigByClass: {
+                              ...prev.subjectConfigByClass,
+                              [classId]: allSelected ? [] : [...prev.subjects]
+                            }
+                          }));
+                        }}
+                        className="text-sm text-blue-600 hover:text-blue-700"
+                      >
+                        {allSelected ? 'Clear All' : 'Select All'}
+                      </button>
+                    </div>
+                    <div className="max-h-44 overflow-y-auto p-2">
+                      {formData.subjects.map((subj) => (
+                        <label key={`${classId}-${subj}`} className="flex items-center gap-3 px-2 py-1 hover:bg-gray-50 rounded cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selected.has(subj)}
+                            onChange={(e) => {
+                              setFormData(prev => {
+                                const current = new Set(prev.subjectConfigByClass[classId] || []);
+                                if (e.target.checked) current.add(subj); else current.delete(subj);
+                                return {
+                                  ...prev,
+                                  subjectConfigByClass: {
+                                    ...prev.subjectConfigByClass,
+                                    [classId]: Array.from(current)
+                                  }
+                                };
+                              });
+                            }}
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="text-sm text-gray-800">{subj}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+              {errors.subjectConfigByClass && (
+                <p className="text-red-500 text-xs">{errors.subjectConfigByClass}</p>
+              )}
             </div>
           )}
 
