@@ -1,5 +1,8 @@
 "use client";
 import React from "react";
+import Navbar from "@/components/Navbar";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { Button } from "@/components/ui/Button";
 import { supabase } from "@/lib/supabaseClient";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -125,41 +128,56 @@ export default function ParentExamPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-5xl mx-auto bg-white rounded-xl shadow p-4">
-        <h1 className="text-xl font-bold mb-3">Released Exam Results</h1>
-        <div className="flex gap-2 mb-4">
-          <select className="border rounded px-2 py-1" value={selectedExam} onChange={e=>setSelectedExam(e.target.value)}>
-            {exams.length===0 && <option value="">No released exams</option>}
-            {exams.map(ex=> <option key={ex.id} value={ex.id}>{ex.name}</option>)}
-          </select>
+    <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
+      <Navbar />
+      <div className="p-4 sm:p-6">
+        <div className="max-w-6xl mx-auto">
+          <Card>
+            <CardHeader>
+              <CardTitle>Released Exam Results</CardTitle>
+              <div className="flex flex-wrap gap-2 mt-2">
+                <select
+                  className="border rounded-lg px-3 py-2 text-sm bg-white"
+                  value={selectedExam}
+                  onChange={(e)=>setSelectedExam(e.target.value)}
+                >
+                  {exams.length===0 && <option value="">No released exams</option>}
+                  {exams.map(ex=> <option key={ex.id} value={ex.id}>{ex.name}</option>)}
+                </select>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto rounded-lg border border-gray-200">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left font-semibold text-gray-700">Child</th>
+                      <th className="px-4 py-3 text-left font-semibold text-gray-700">Overall</th>
+                      <th className="px-4 py-3 text-left font-semibold text-gray-700">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white">
+                    {rows.map((r, i)=> (
+                      <tr key={r.childId} className={`border-t ${i%2===1?'bg-gray-50':''}`}>
+                        <td className="px-4 py-3 text-gray-900 font-medium">{r.childName}</td>
+                        <td className="px-4 py-3">{r.overall!==null? `${r.overall}%`:'-'}</td>
+                        <td className="px-4 py-3">
+                          <Button onClick={()=>handleDownloadChildPdf(r)} className="bg-blue-600 hover:bg-blue-700 text-white">Download Report (PDF)</Button>
+                        </td>
+                      </tr>
+                    ))}
+                    {rows.length===0 && (
+                      <tr>
+                        <td className="px-4 py-6 text-sm text-gray-500" colSpan={3}>No results for this exam yet.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs text-gray-500 mt-3">Only released exams are shown here. Previous unpublished exams remain hidden until released by admin.</p>
+            </CardContent>
+          </Card>
         </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full border">
-            <thead className="bg-gray-100">
-              <tr>
-                <th className="px-3 py-2 text-left">Child</th>
-                <th className="px-3 py-2 text-left">Overall</th>
-                <th className="px-3 py-2 text-left">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(r=> (
-                <tr key={r.childId} className="border-t">
-                  <td className="px-3 py-2">{r.childName}</td>
-                  <td className="px-3 py-2">{r.overall!==null? `${r.overall}%`:'-'}</td>
-                  <td className="px-3 py-2">
-                    <button onClick={()=>handleDownloadChildPdf(r)} className="px-3 py-1.5 text-sm rounded bg-blue-600 text-white hover:bg-blue-700">Download Report (PDF)</button>
-                  </td>
-                </tr>
-              ))}
-              {rows.length===0 && (
-                <tr><td className="px-3 py-6 text-sm text-gray-500" colSpan={3}>No results for this exam yet.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        <p className="text-xs text-gray-500 mt-3">Only released exams are shown here. Previous unpublished exams remain hidden until released by admin.</p>
       </div>
     </div>
   );
