@@ -10,6 +10,7 @@ interface ExamItem {
   exam_classes?: { conduct_weightage: number; classes?: { id: string; name: string } }[];
   exam_subjects?: { subjects?: { id: string; name: string } }[];
   exam_class_subjects?: { classes?: { id: string; name: string }; subjects?: { id: string; name: string } }[];
+  released?: boolean;
 }
 
 interface ManageExamsModalProps {
@@ -20,6 +21,7 @@ interface ManageExamsModalProps {
   onSelectExam: (examId: string) => void;
   onEdit: (exam: ExamItem) => void;
   onDelete: (examId: string, examName: string) => void;
+  onToggleRelease?: (exam: ExamItem, next: boolean) => void;
 }
 
 export default function ManageExamsModal({
@@ -30,6 +32,7 @@ export default function ManageExamsModal({
   onSelectExam,
   onEdit,
   onDelete,
+  onToggleRelease,
 }: ManageExamsModalProps) {
   if (!isOpen) return null;
 
@@ -105,6 +108,14 @@ export default function ManageExamsModal({
                       }`}
                     >
                       {selectedExam === exam.id ? "Selected" : "Select"}
+                    </button>
+                    <button
+                      onClick={() => onToggleRelease && onToggleRelease(exam, !(exam.released ?? false))}
+                      className={`px-3 py-1.5 text-sm rounded-lg border ${ (exam.released ?? false) ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}
+                      aria-label={`Toggle release for ${exam.name}`}
+                      title={(exam.released ?? false) ? 'Unrelease results' : 'Release results'}
+                    >
+                      {(exam.released ?? false) ? 'Released' : 'Release'}
                     </button>
                     <button
                       onClick={() => onEdit(exam)}

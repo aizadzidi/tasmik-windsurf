@@ -537,6 +537,21 @@ export default function AdminExamPage() {
           setIsManageModalOpen(false);
           handleDeleteExam(id, name);
         }}
+        onToggleRelease={async (exam, next) => {
+          try {
+            const res = await fetch('/api/admin/exam-release', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ examId: exam.id, released: next })
+            });
+            const data = await parseJsonSafe(res);
+            if (!res.ok || !data || data.success !== true) throw new Error(data?.error || 'Failed');
+            await fetchExamMetadata();
+          } catch (e) {
+            console.error('Toggle release failed', e);
+            alert('Failed to update release status');
+          }
+        }}
       />
 
       {/* Create Exam Modal */}

@@ -41,6 +41,8 @@ export async function GET() {
         exam_start_date,
         exam_end_date,
         created_at,
+        released,
+        released_at,
         grading_system_id,
         exam_classes(
           conduct_weightage,
