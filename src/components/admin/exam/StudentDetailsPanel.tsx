@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
-import { X, TrendingUp, TrendingDown, Award, AlertCircle, MessageCircle, FileText } from 'lucide-react';
+import { X, TrendingUp, TrendingDown, Award, AlertCircle, FileText } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, BarChart, Bar } from 'recharts';
 import { ResponsiveRadar } from '@nivo/radar';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -68,6 +68,122 @@ export default function StudentDetailsPanel({
   const overallTrend = student.overall.average >= 75 ? 'positive' : 
                        student.overall.average >= 60 ? 'stable' : 'concerning';
 
+  const handleGenerateReport = () => {
+    try {
+      const dateStr = new Date().toLocaleString();
+      const subjectsRows = Object.entries(student.subjects || {})
+        .map(([subject, data]) => {
+          const score = typeof (data as any)?.score === 'number' ? (data as any).score : '';
+          const grade = (data as any)?.grade ?? '';
+          const classAvg = typeof classAverages[subject] === 'number' ? classAverages[subject] : '';
+          return `<tr>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:left">${subject}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:center">${score !== '' ? score + '%' : '-'}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:center">${classAvg !== '' ? classAvg + '%' : '-'}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:center">${grade || '-'}</td>
+          </tr>`;
+        })
+        .join('');
+
+      const conductRows = [
+        ['Discipline', student.conduct.discipline],
+        ['Effort', student.conduct.effort],
+        ['Participation', student.conduct.participation],
+        ['Motivational Level', student.conduct.motivationalLevel],
+        ['Character', student.conduct.character],
+        ['Leadership', student.conduct.leadership],
+      ]
+        .map(([label, v]) => `<tr>
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:left">${label}</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:center">${typeof v === 'number' ? Math.max(0, Math.min(100, v * 20)).toFixed(0) + '%' : '-'}</td>
+        </tr>`)
+        .join('');
+
+      const attentionBlock = student.overall.needsAttention
+        ? `<div style="padding:12px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:8px;margin:12px 0;color:#1e3a8a">
+            <strong>Attention Required:</strong> ${student.overall.attentionReason || 'Student performance needs monitoring'}
+          </div>`
+        : '';
+
+      const html = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Report - ${student.name}</title>
+    <style>
+      body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,'Apple Color Emoji','Segoe UI Emoji';color:#111827;margin:24px}
+      h1{font-size:22px;margin:0}
+      h2{font-size:18px;margin:18px 0 8px}
+      .muted{color:#6b7280}
+      .row{display:flex;justify-content:space-between;align-items:center}
+      table{border-collapse:collapse;width:100%;font-size:13px}
+      @media print{button{display:none} body{margin:0}}
+    </style>
+  </head>
+  <body>
+    <div class="row">
+      <div>
+        <h1>${student.name}</h1>
+        <div class="muted">${student.class}${selectedExamName ? ' • ' + selectedExamName : ''}</div>
+      </div>
+      <div class="muted">Generated: ${dateStr}</div>
+    </div>
+    ${attentionBlock}
+    <h2>Summary</h2>
+    <table style="margin-bottom:16px">
+      <tr>
+        <td style="padding:8px;border:1px solid #e5e7eb">Overall Average</td>
+        <td style="padding:8px;border:1px solid #e5e7eb;text-align:center">${student.overall.average}%</td>
+      </tr>
+      <tr>
+        <td style="padding:8px;border:1px solid #e5e7eb">Rank</td>
+        <td style="padding:8px;border:1px solid #e5e7eb;text-align:center">#${student.overall.rank}</td>
+      </tr>
+    </table>
+    <h2>Subjects</h2>
+    <table>
+      <thead>
+        <tr>
+          <th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Subject</th>
+          <th style="padding:8px;border:1px solid #e5e7eb;text-align:center">Score</th>
+          <th style="padding:8px;border:1px solid #e5e7eb;text-align:center">Class Avg</th>
+          <th style="padding:8px;border:1px solid #e5e7eb;text-align:center">Grade</th>
+        </tr>
+      </thead>
+      <tbody>${subjectsRows}</tbody>
+    </table>
+    <h2 style="margin-top:16px">Conduct</h2>
+    <table>
+      <thead>
+        <tr>
+          <th style="padding:8px;border:1px solid #e5e7eb;text-align:left">Aspect</th>
+          <th style="padding:8px;border:1px solid #e5e7eb;text-align:center">Score</th>
+        </tr>
+      </thead>
+      <tbody>${conductRows}</tbody>
+    </table>
+    <div style="margin-top:24px">
+      <button onclick="window.print()" style="padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;cursor:pointer">Print</button>
+    </div>
+  </body>
+</html>`;
+
+      const w = window.open('', '_blank');
+      if (!w) return;
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+      // slight delay to ensure styles apply before print in some browsers
+      setTimeout(() => {
+        try { w.print(); } catch {}
+      }, 200);
+    } catch (e) {
+      console.error('Failed to generate report', e);
+      alert('Failed to generate report. Please try again.');
+    }
+  };
+
   return (
     <AnimatePresence>
       {student && (
@@ -131,11 +247,10 @@ export default function StudentDetailsPanel({
             
             {/* Quick Actions */}
             <div className="flex gap-3 mt-4">
-              <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm">
-                <MessageCircle className="w-4 h-4" />
-                Message Parent
-              </button>
-              <button className="flex items-center gap-2 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm">
+              <button
+                onClick={handleGenerateReport}
+                className="flex items-center gap-2 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm"
+              >
                 <FileText className="w-4 h-4" />
                 Generate Report
               </button>
