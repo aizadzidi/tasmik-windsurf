@@ -31,14 +31,7 @@ interface ExamFormData {
   excludedStudentIdsByClass: { [classId: string]: string[] };
 }
 
-interface ExamFormErrors {
-  title?: string;
-  subjects?: string;
-  classIds?: string;
-  dateRange?: string;
-  conductWeightages?: string;
-  gradingSystemId?: string;
-}
+type ExamFormErrors = Partial<Record<keyof ExamFormData, string>>;
 
 export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, subjects }: CreateExamModalProps) {
   const [formData, setFormData] = useState<ExamFormData>({
