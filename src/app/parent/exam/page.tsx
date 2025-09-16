@@ -2,10 +2,9 @@
 import React from "react";
 import Navbar from "@/components/Navbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
 import { supabase } from "@/lib/supabaseClient";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import StudentTable, { type StudentData } from "@/components/admin/exam/StudentTable";
+import StudentDetailsPanel from "@/components/admin/exam/StudentDetailsPanel";
 
 type Child = { id: string; name: string; class_id: string | null };
 type MetaExam = {
@@ -22,12 +21,10 @@ export default function ParentExamPage() {
   const [exams, setExams] = React.useState<MetaExam[]>([]);
   const [subjects, setSubjects] = React.useState<string[]>([]);
   const [selectedExam, setSelectedExam] = React.useState("");
-  const [rows, setRows] = React.useState<{
-    childId: string;
-    childName: string;
-    overall: number | null;
-    marksBySubject: Map<string, { mark: number | null; grade: string | null }>;
-  }[]>([]);
+  const [studentRows, setStudentRows] = React.useState<StudentData[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [selectedStudent, setSelectedStudent] = React.useState<StudentData | null>(null);
+  const [isMobile, setIsMobile] = React.useState(false);
 
   // Load user and base metadata
   React.useEffect(() => {
@@ -53,79 +50,52 @@ export default function ParentExamPage() {
   // Load results via admin aggregated endpoint to match admin final marks
   React.useEffect(() => {
     (async () => {
-      if (!selectedExam || children.length === 0) { setRows([]); setSubjects([]); return; }
+      if (!selectedExam || children.length === 0) { setStudentRows([]); setSubjects([]); return; }
+      setLoading(true);
       try {
         const res = await fetch(`/api/admin/exams?examId=${selectedExam}`);
         const json = await res.json();
-        const childIds = new Set(children.map(c => String(c.id)));
         const subjectNames: string[] = Array.isArray(json.subjects) ? json.subjects : [];
         setSubjects(subjectNames);
         const byId = new Map<string, any>((json.students || []).map((s: any) => [String(s.id), s]));
         // Only include children that appear in this exam (i.e., in exam classes)
         const filtered = children.filter(c => byId.has(String(c.id)));
-        const next = filtered.map(c => {
+        const next: StudentData[] = filtered.map(c => {
           const d = byId.get(String(c.id));
-          const marks = new Map<string, { mark: number | null; grade: string | null }>();
+          const subjectsObj: StudentData['subjects'] = {};
           subjectNames.forEach((name) => {
             const sd = d?.subjects?.[name];
-            marks.set(name, { mark: typeof sd?.score === 'number' ? sd.score : null, grade: sd?.grade ?? null });
+            subjectsObj[name] = {
+              score: typeof sd?.score === 'number' ? sd.score : 0,
+              trend: Array.isArray(sd?.trend) ? sd.trend : [],
+              grade: typeof sd?.grade === 'string' ? sd.grade : ''
+            };
           });
-          const overall = typeof d?.overall?.average === 'number' ? d.overall.average : null;
-          return { childId: c.id, childName: c.name, overall, marksBySubject: marks };
+          return {
+            id: String(c.id),
+            name: c.name,
+            class: String(d?.class || ''),
+            subjects: subjectsObj,
+            conduct: d?.conduct || { discipline: 0, effort: 0, participation: 0, motivationalLevel: 0, character: 0, leadership: 0 },
+            overall: d?.overall || { average: 0, rank: 0, needsAttention: false }
+          } as StudentData;
         });
-        setRows(next);
+        setStudentRows(next);
       } catch (e) {
         console.error('Failed to load exam summary for parents', e);
-        setRows([]);
+        setStudentRows([]);
       }
+      setLoading(false);
     })();
   }, [selectedExam, children]);
 
-  const handleDownloadChildPdf = async (row: { childId: string; childName: string; marksBySubject: Map<string, { mark: number | null; grade: string | null }>; overall: number | null }) => {
-    try {
-      const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-      const W = doc.internal.pageSize.getWidth();
-      const M = 36;
-      let y = 40;
-      // Logo (best effort)
-      try {
-        const res = await fetch('/logo-akademi.png');
-        const blob = await res.blob();
-        const fr = new FileReader();
-        const dataUrl: string = await new Promise((resolve, reject) => { fr.onload = () => resolve(String(fr.result)); fr.onerror = reject; fr.readAsDataURL(blob); });
-        doc.addImage(dataUrl, 'PNG', M, y, 42, 42);
-      } catch {}
-      doc.setFontSize(14); doc.setTextColor('#0f172a');
-      doc.text('Al Khayr Class', M+54, y+16);
-      doc.setFontSize(10); doc.setTextColor('#475569');
-      doc.text('Student Performance Report', M+54, y+32);
-      doc.text(`Generated: ${new Date().toLocaleString()}`, W-M, y+10, { align: 'right' });
-      y += 56; doc.setTextColor('#0f172a'); doc.setFontSize(10);
-      const chips = [
-        `Name: ${row.childName}`,
-        ...(children.find(c=>c.id===row.childId)?.class_id ? [] : []),
-        `Exam: ${exams.find(e=>e.id===selectedExam)?.name || ''}`,
-        `Overall: ${row.overall ?? '-'}${row.overall!==null?'%':''}`,
-      ];
-      let x=M; const pad=6, gap=6; let cy=y;
-      chips.forEach(c=>{ const w=doc.getTextWidth(c)+pad*2; if(x+w>W-M){x=M; cy+=20;} doc.setDrawColor('#e2e8f0'); doc.setFillColor('#f8fafc'); doc.roundedRect(x, cy-12, w, 18,3,3,'FD'); doc.setTextColor('#0f172a'); doc.text(c, x+pad, cy+2); x+=w+gap; });
-      y = cy + 26;
-      // Subjects table
-      const head = [['Subject','Score','Grade']];
-      const body = subjects.map(name=>{
-        const v = row.marksBySubject.get(name);
-        const mark = typeof v?.mark==='number' ? `${v!.mark}%` : '-';
-        const grade = v?.grade || '-';
-        return [name, mark, grade];
-      });
-      autoTable(doc, { startY: y, head, body, styles:{fontSize:10}, headStyles:{fillColor:[241,245,249], textColor:15}, margin:{left:M,right:M} });
-      const slug = row.childName.replace(/\s+/g,'-').toLowerCase();
-      doc.save(`exam-report-${slug}.pdf`);
-    } catch(e) {
-      console.error(e);
-      alert('Failed to generate PDF.');
-    }
-  };
+  // Mobile breakpoint check
+  React.useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 1024);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
@@ -147,38 +117,35 @@ export default function ParentExamPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="overflow-x-auto rounded-lg border border-gray-200">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-4 py-3 text-left font-semibold text-gray-700">Child</th>
-                      <th className="px-4 py-3 text-left font-semibold text-gray-700">Overall</th>
-                      <th className="px-4 py-3 text-left font-semibold text-gray-700">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white">
-                    {rows.map((r, i)=> (
-                      <tr key={r.childId} className={`border-t ${i%2===1?'bg-gray-50':''}`}>
-                        <td className="px-4 py-3 text-gray-900 font-medium">{r.childName}</td>
-                        <td className="px-4 py-3">{r.overall!==null? `${r.overall}%`:'-'}</td>
-                        <td className="px-4 py-3">
-                          <Button onClick={()=>handleDownloadChildPdf(r)} className="bg-blue-600 hover:bg-blue-700 text-white">Download Report (PDF)</Button>
-                        </td>
-                      </tr>
-                    ))}
-                    {rows.length===0 && (
-                      <tr>
-                        <td className="px-4 py-6 text-sm text-gray-500" colSpan={3}>No results for this exam yet.</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              <p className="text-xs text-gray-500 mt-3">Only released exams are shown here. Previous unpublished exams remain hidden until released by admin.</p>
+              <StudentTable
+                data={studentRows}
+                onRowClick={(s) => setSelectedStudent(s)}
+                loading={loading}
+              />
+              <p className="text-xs text-gray-500 mt-3">Only released exams are shown here. Previous unpublished exams remain hidden until released by admin. Click a student to view details and export.</p>
             </CardContent>
           </Card>
         </div>
       </div>
+      <StudentDetailsPanel
+        student={selectedStudent}
+        onClose={() => setSelectedStudent(null)}
+        classAverages={React.useMemo(() => {
+          if (!selectedStudent || studentRows.length === 0 || subjects.length === 0) return {} as { [k:string]: number };
+          const targetClass = selectedStudent.class;
+          const sameClass = studentRows.filter(s => s.class === targetClass);
+          const avg: Record<string, number> = {};
+          subjects.forEach(name => {
+            let total = 0, count = 0;
+            sameClass.forEach(s => { const sd = s.subjects?.[name]; if (sd && typeof sd.score === 'number') { total += sd.score; count++; } });
+            avg[name] = count>0 ? Math.round(total / count) : 0;
+          });
+          return avg;
+        }, [selectedStudent, studentRows, subjects])}
+        isMobile={isMobile}
+        selectedExamName={exams.find(e=>e.id===selectedExam)?.name || ''}
+        reportButtonLabel="View / Export"
+      />
     </div>
   );
 }

@@ -1,6 +1,8 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { X, TrendingUp, TrendingDown, Award, AlertCircle, FileText } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, BarChart, Bar } from 'recharts';
 import { ResponsiveRadar } from '@nivo/radar';
@@ -15,6 +17,7 @@ interface StudentDetailsPanelProps {
   };
   isMobile?: boolean;
   selectedExamName?: string;
+  reportButtonLabel?: string;
 }
 
 export default function StudentDetailsPanel({ 
@@ -22,9 +25,115 @@ export default function StudentDetailsPanel({
   onClose, 
   classAverages = {},
   isMobile = false,
-  selectedExamName = ''
+  selectedExamName = '',
+  reportButtonLabel = 'Generate Report'
 }: StudentDetailsPanelProps) {
   const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
+  const [reportHtml, setReportHtml] = useState<string | null>(null);
+  const [showReportPreview, setShowReportPreview] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  const handleDownloadPdf = async () => {
+    try {
+      const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 36;
+      let y = 40;
+
+      // Logo (best effort)
+      try {
+        const res = await fetch('/logo-akademi.png');
+        const blob = await res.blob();
+        const reader = new FileReader();
+        const dataUrl: string = await new Promise((resolve, reject) => { reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsDataURL(blob); });
+        doc.addImage(dataUrl, 'PNG', margin, y, 42, 42);
+      } catch {}
+
+      doc.setFontSize(14); doc.setTextColor('#0f172a');
+      doc.text('Al Khayr Class', margin + 54, y + 16);
+      doc.setFontSize(10); doc.setTextColor('#475569');
+      doc.text('Student Performance Report', margin + 54, y + 32);
+      doc.text(`Generated: ${new Date().toLocaleString()}`, pageWidth - margin, y + 10, { align: 'right' });
+
+      y += 56; doc.setTextColor('#0f172a'); doc.setFontSize(10);
+      const chips = [
+        `Name: ${student.name}`,
+        `Class: ${student.class}`,
+        ...(selectedExamName ? [`Exam: ${selectedExamName}`] : []),
+        `Overall: ${student.overall?.average ?? 0}%`,
+        `Rank #${student.overall?.rank ?? 0}`,
+      ];
+      let x = margin; const pad = 6, gap = 6; let cy = y;
+      chips.forEach(c => { const w = doc.getTextWidth(c) + pad * 2; if (x + w > pageWidth - margin) { x = margin; cy += 20; } doc.setDrawColor('#e2e8f0'); doc.setFillColor('#f8fafc'); doc.roundedRect(x, cy - 12, w, 18, 3, 3, 'FD'); doc.setTextColor('#0f172a'); doc.text(c, x + pad, cy + 2); x += w + gap; });
+      y = cy + 26;
+
+      if (student.overall?.needsAttention) {
+        const text = `Attention Required: ${student.overall.attentionReason || 'Student performance needs monitoring'}`;
+        doc.setDrawColor('#bfdbfe'); doc.setFillColor('#eff6ff');
+        doc.roundedRect(margin, y, pageWidth - margin * 2, 36, 6, 6, 'FD');
+        doc.setFontSize(11); doc.setTextColor('#1e3a8a');
+        doc.text(text, margin + 10, y + 22, { maxWidth: pageWidth - margin * 2 - 20 });
+        y += 48; doc.setTextColor('#0f172a');
+      }
+
+      // Summary table
+      doc.setFontSize(12); doc.text('Summary', margin, y); y += 6;
+      autoTable(doc, {
+        startY: y + 6,
+        head: [['Overall Average', 'Rank']],
+        body: [[`${student.overall?.average ?? 0}%`, `#${student.overall?.rank ?? 0}`]],
+        styles: { fontSize: 10 },
+        headStyles: { fillColor: [241, 245, 249], textColor: 15 },
+        margin: { left: margin, right: margin },
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      y = (doc as any).lastAutoTable.finalY + 18;
+
+      // Subjects table
+      doc.text('Subjects', margin, y); y += 6;
+      const subjectsBody = Object.entries(student.subjects || {}).map(([name, d]: any) => [
+        name,
+        typeof d?.score === 'number' ? `${d.score}%` : '-',
+        typeof classAverages[name] === 'number' ? `${classAverages[name]}%` : '-',
+        d?.grade || '-',
+      ]);
+      autoTable(doc, {
+        startY: y + 6,
+        head: [['Subject', 'Score', 'Class Avg', 'Grade']],
+        body: subjectsBody,
+        styles: { fontSize: 10 },
+        headStyles: { fillColor: [241, 245, 249], textColor: 15 },
+        margin: { left: margin, right: margin },
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      y = (doc as any).lastAutoTable.finalY + 18;
+
+      // Conduct table
+      const toPct = (v?: number) => (typeof v === 'number' ? `${Math.max(0, Math.min(100, v * 20)).toFixed(0)}%` : '-');
+      doc.text('Conduct', margin, y); y += 6;
+      autoTable(doc, {
+        startY: y + 6,
+        head: [['Aspect', 'Score']],
+        body: [
+          ['Discipline', toPct(student.conduct?.discipline)],
+          ['Effort', toPct(student.conduct?.effort)],
+          ['Participation', toPct(student.conduct?.participation)],
+          ['Motivational Level', toPct((student as any).conduct?.motivational_level ?? student.conduct?.motivationalLevel)],
+          ['Character', toPct(student.conduct?.character)],
+          ['Leadership', toPct(student.conduct?.leadership)],
+        ],
+        styles: { fontSize: 10 },
+        headStyles: { fillColor: [241, 245, 249], textColor: 15 },
+        margin: { left: margin, right: margin },
+      });
+
+      const nameSlug = student.name.replace(/\s+/g, '-').toLowerCase();
+      doc.save(`student-report-${nameSlug}.pdf`);
+    } catch (e) {
+      console.error('PDF export failed', e);
+      alert('Failed to generate PDF. You can still use Print in the preview.');
+    }
+  };
   
   if (!student) return null;
 
@@ -163,21 +272,11 @@ export default function StudentDetailsPanel({
       </thead>
       <tbody>${conductRows}</tbody>
     </table>
-    <div style="margin-top:24px">
-      <button onclick="window.print()" style="padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;cursor:pointer">Print</button>
-    </div>
+    <div style="margin-top:24px"><em class="muted">Open Print from the viewer to save as PDF.</em></div>
   </body>
 </html>`;
-
-      const w = window.open('', '_blank');
-      if (!w) return;
-      w.document.open();
-      w.document.write(html);
-      w.document.close();
-      // slight delay to ensure styles apply before print in some browsers
-      setTimeout(() => {
-        try { w.print(); } catch {}
-      }, 200);
+      setReportHtml(html);
+      setShowReportPreview(true);
     } catch (e) {
       console.error('Failed to generate report', e);
       alert('Failed to generate report. Please try again.');
@@ -252,13 +351,30 @@ export default function StudentDetailsPanel({
                 className="flex items-center gap-2 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm"
               >
                 <FileText className="w-4 h-4" />
-                Generate Report
+                {reportButtonLabel}
               </button>
             </div>
           </div>
 
           {/* Content */}
           <div className="p-6 space-y-8">
+            {showReportPreview && reportHtml && (
+              <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true" onClick={()=>setShowReportPreview(false)}>
+                <div className="bg-white w-full max-w-5xl max-h-[90vh] rounded-xl shadow-2xl overflow-hidden flex flex-col" onClick={e=>e.stopPropagation()}>
+                  <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
+                    <div className="text-sm text-gray-700 font-medium">Report Preview</div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={handleDownloadPdf} className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700">Download PDF</button>
+                      <button onClick={() => { try { const win = iframeRef.current?.contentWindow; win?.focus(); win?.print(); } catch (e) { console.error(e); } }} className="px-3 py-1.5 text-sm rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-100">Print</button>
+                      <button onClick={()=>setShowReportPreview(false)} className="px-3 py-1.5 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Close</button>
+                    </div>
+                  </div>
+                  <div className="flex-1 overflow-auto bg-gray-100">
+                    <iframe ref={iframeRef} title="Report Preview" className="w-full h-[75vh] bg-white" srcDoc={reportHtml || ''} />
+                  </div>
+                </div>
+              </div>
+            )}
             {/* Alerts */}
             {student.overall.needsAttention && (
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
