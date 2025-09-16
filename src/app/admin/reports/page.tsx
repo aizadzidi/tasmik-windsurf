@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import Link from 'next/link';
 import AdminNavbar from "@/components/admin/AdminNavbar";
 import { Card } from "@/components/ui/Card";
 import JuzTestModal from "@/components/admin/JuzTestModal";
@@ -390,6 +391,14 @@ export default function AdminReportsPage() {
               />
             </div>
           </div>
+
+          {viewMode === 'juz_tests' && (
+            <div className="flex justify-end mb-2">
+              <Link href="/admin/juz-test-schedule" className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800">
+                Open Juz Test Schedule →
+              </Link>
+            </div>
+          )}
 
           {/* Students Table */}
           <Card className="bg-white/80 backdrop-blur-sm border border-white/20 shadow-lg">

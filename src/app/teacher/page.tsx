@@ -9,6 +9,7 @@ import EditReportModal from "./EditReportModal";
 import FullRecordsModal from "@/components/teacher/FullRecordsModal";
 import JuzTestProgressLineChart from "@/components/teacher/JuzTestProgressLineChart";
 import JuzTestHistoryModalViewOnly from "@/components/teacher/JuzTestHistoryModalViewOnly";
+import ScheduleTestModal from "@/components/teacher/ScheduleTestModal";
 import { notificationService } from "@/lib/notificationService";
 import {
   StudentProgressData,
@@ -63,7 +64,10 @@ export default function TeacherPage() {
   const [fullRecordsStudent, setFullRecordsStudent] = useState<Student | null>(null);
 
   // Juz test history modal
-  const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
+const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
+  // Schedule modal
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [scheduleStudent, setScheduleStudent] = useState<Student | null>(null);
   const [juzTestHistoryStudent, setJuzTestHistoryStudent] = useState<Student | null>(null);
 
   // Auth check and fetch teacher name
@@ -873,7 +877,14 @@ export default function TeacherPage() {
                                     <div className="flex flex-col gap-1">
                                       {(extendedStudent.juz_test_gap || 0) > 0 && (
                                         <button
-                                          onClick={async () => {
+onClick={async () => {
+                                            // Open scheduling modal instead of sending notification
+                                            const s = students.find(s => s.id === student.id);
+                                            if (s) {
+                                              setScheduleStudent(s);
+                                              setShowScheduleModal(true);
+                                              return;
+                                            }
                                             if (!userId || !teacherName) {
                                               alert('Error: Unable to identify teacher. Please try refreshing the page.');
                                               return;
@@ -902,9 +913,9 @@ export default function TeacherPage() {
                                               alert('❌ An error occurred while sending the notification. Please try again.');
                                             }
                                           }}
-                                          className="px-3 py-1 rounded-lg text-xs font-medium transition-colors bg-purple-100 hover:bg-purple-200 text-purple-700"
+className="px-3 py-1 rounded-lg text-xs font-medium transition-colors bg-purple-100 hover:bg-purple-200 text-purple-700"
                                         >
-                                          Notify Examiner
+                                          Schedule Test
                                         </button>
                                       )}
                                       <button
@@ -989,8 +1000,17 @@ export default function TeacherPage() {
               </div>
             )}
           </Card>
-        </div>
+</div>
       </div>
+        
+        {/* Schedule Test Modal */}
+        {showScheduleModal && scheduleStudent && (
+          <ScheduleTestModal
+            student={{ id: scheduleStudent.id, name: scheduleStudent.name }}
+            onClose={() => { setShowScheduleModal(false); setScheduleStudent(null); }}
+            onScheduled={() => { /* noop for now - could refresh table if needed */ }}
+          />
+        )}
         
         {/* Quick Report Modal */}
         {showQuickModal && quickModalData && userId && (
