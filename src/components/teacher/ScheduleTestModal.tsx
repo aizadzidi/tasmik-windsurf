@@ -50,8 +50,9 @@ function monthLabel(date: Date) {
     try {
       const { from, to } = monthRange(date);
       const res = await fetch(`/api/juz-test-schedule?from=${from}&to=${to}`);
-      const json: CountsResponse = await res.json();
-      if (json.error) throw new Error(json.error);
+      const raw = await res.json();
+      if (!res.ok || (raw && (raw as any).error)) throw new Error((raw as any)?.error || 'Failed to load schedule');
+      const json = raw as CountsResponse;
       setCounts(json.countsByDate || {});
       setCapacity(json.capacityPerDay || 5);
 
