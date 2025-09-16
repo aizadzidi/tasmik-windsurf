@@ -85,6 +85,42 @@ export default function StudentTable({ data, onRowClick, loading, selectedSubjec
         </div>
       ),
     }),
+    // Grade column (summary of subject grades)
+    columnHelper.accessor(row => row, {
+      id: 'summary',
+      header: 'Grade',
+      size: 260,
+      cell: ({ row }) => {
+        const subjects = row.original.subjects || {};
+        const gradeCounts: Record<string, number> = {};
+        Object.values(subjects).forEach((s: any) => {
+          const g = (s && typeof s.grade === 'string') ? s.grade : '';
+          if (!g) return;
+          gradeCounts[g] = (gradeCounts[g] || 0) + 1;
+        });
+        const entries = Object.entries(gradeCounts);
+        if (entries.length === 0) return <span className="text-gray-400">—</span>;
+        // Sort by a simple preferred order if common, else by count desc
+        const order = ['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D', 'E', 'F', 'TH'];
+        entries.sort((a, b) => {
+          const ia = order.indexOf(a[0]);
+          const ib = order.indexOf(b[0]);
+          if (ia !== -1 && ib !== -1) return ia - ib;
+          if (ia !== -1) return -1;
+          if (ib !== -1) return 1;
+          return b[1] - a[1];
+        });
+        return (
+          <div className="flex flex-wrap gap-1 justify-center">
+            {entries.map(([grade, count]) => (
+              <span key={grade} className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-800 border border-gray-200">
+                {grade}: {count}
+              </span>
+            ))}
+          </div>
+        );
+      }
+    }),
     columnHelper.accessor((row) => {
       // Return the appropriate score for sorting
       return selectedSubject && row.subjects[selectedSubject] 
