@@ -35,6 +35,7 @@ export default function StudentDetailsPanel({
 
   const handleDownloadPdf = async () => {
     try {
+      if (!student) return;
       const doc = new jsPDF({ unit: 'pt', format: 'a4' });
       const pageWidth = doc.internal.pageSize.getWidth();
       const margin = 36;
@@ -179,6 +180,7 @@ export default function StudentDetailsPanel({
 
   const handleGenerateReport = () => {
     try {
+      if (!student) return;
       const dateStr = new Date().toLocaleString();
       const subjectsRows = Object.entries(student.subjects || {})
         .map(([subject, data]) => {
