@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import React from "react";
 import { QuranProgressBar, ChartTabs } from "@/components/ReportCharts";
 import Navbar from "@/components/Navbar";
 import { Card } from "@/components/ui/Card";
@@ -31,6 +32,24 @@ const SURAHS = [
 
 const REPORT_TYPES = ["Tasmi", "Murajaah"];
 const GRADES = ["mumtaz", "jayyid jiddan", "jayyid"];
+
+function FetchActiveSchedules({ students, onData }: { students: string[]; onData: (map: Record<string, any>) => void }) {
+  React.useEffect(() => {
+    async function run() {
+      if (!Array.isArray(students) || students.length === 0) { onData({}); return; }
+      const params = new URLSearchParams({ student_ids: students.join(',') });
+      const res = await fetch(`/api/juz-test-schedule?${params.toString()}`);
+      const raw = await res.json();
+      if (res.ok && raw && raw.activeByStudent) {
+        onData(raw.activeByStudent as Record<string, any>);
+      } else {
+        onData({});
+      }
+    }
+    run();
+  }, [JSON.stringify(students)]);
+  return null;
+}
 
 export default function TeacherPage() {
   const [students, setStudents] = useState<Student[]>([]);
@@ -68,6 +87,21 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
   // Schedule modal
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [scheduleStudent, setScheduleStudent] = useState<Student | null>(null);
+  // Active test sessions (by student)
+  const [activeSessionsByStudent, setActiveSessionsByStudent] = useState<Record<string, { scheduled_date: string; slot_number: number; status: string }>>({});
+
+  // Refetch helper to immediately reflect schedule/cancel actions
+  const refetchActiveSchedules = useCallback(async (ids: string[]) => {
+    try {
+      if (!Array.isArray(ids) || ids.length === 0) { setActiveSessionsByStudent({}); return; }
+      const params = new URLSearchParams({ student_ids: ids.join(',') });
+      const res = await fetch(`/api/juz-test-schedule?${params.toString()}`);
+      const raw = await res.json();
+      if (res.ok && raw && raw.activeByStudent) {
+        setActiveSessionsByStudent(raw.activeByStudent as Record<string, { scheduled_date: string; slot_number: number; status: string }>);
+      }
+    } catch {}
+  }, []);
   const [juzTestHistoryStudent, setJuzTestHistoryStudent] = useState<Student | null>(null);
 
   // Auth check and fetch teacher name
@@ -702,6 +736,14 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
               </div>
             )}
 
+            {/* Fetch active schedules in juz_tests view */}
+            {!monitorLoading && viewMode === 'juz_tests' && (
+              <FetchActiveSchedules
+                students={filteredMonitorStudents.map(s => s.id)}
+                onData={(map) => setActiveSessionsByStudent(map)}
+              />
+            )}
+
             {/* Student Progress Table */}
             {!monitorLoading && (
               <div className="overflow-x-auto border rounded-lg">
@@ -875,9 +917,9 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
                               </td>
                               <td className="px-4 py-3 text-center ">
                                     <div className="flex flex-col gap-1">
-                                      {(extendedStudent.juz_test_gap || 0) > 0 && (
-                                        <button
-onClick={async () => {
+                                      {/* Always allow scheduling/rescheduling in Juz Tests */}
+                                      <button
+                                          onClick={async () => {
                                             // Open scheduling modal instead of sending notification
                                             const s = students.find(s => s.id === student.id);
                                             if (s) {
@@ -913,10 +955,16 @@ onClick={async () => {
                                               alert('❌ An error occurred while sending the notification. Please try again.');
                                             }
                                           }}
-className="px-3 py-1 rounded-lg text-xs font-medium transition-colors bg-purple-100 hover:bg-purple-200 text-purple-700"
+                                          className="px-3 py-1 rounded-lg text-xs font-medium transition-colors bg-purple-100 hover:bg-purple-200 text-purple-700"
                                         >
-                                          Schedule Test
+                                          {activeSessionsByStudent[student.id] ? 'Reschedule' : 'Schedule Test'}
                                         </button>
+                                      
+                                      {/* Scheduled badge */}
+                                      {activeSessionsByStudent[student.id] && (
+                                        <div className="inline-block mt-1 text-[11px] px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">
+                                          Scheduled {activeSessionsByStudent[student.id].scheduled_date} • Slot {activeSessionsByStudent[student.id].slot_number}
+                                        </div>
                                       )}
                                       <button
                                         onClick={() => {
@@ -1008,7 +1056,7 @@ className="px-3 py-1 rounded-lg text-xs font-medium transition-colors bg-purple-
           <ScheduleTestModal
             student={{ id: scheduleStudent.id, name: scheduleStudent.name }}
             onClose={() => { setShowScheduleModal(false); setScheduleStudent(null); }}
-            onScheduled={() => { /* noop for now - could refresh table if needed */ }}
+            onScheduled={() => { refetchActiveSchedules(filteredMonitorStudents.map(s => s.id)); }}
           />
         )}
         
@@ -1063,6 +1111,8 @@ className="px-3 py-1 rounded-lg text-xs font-medium transition-colors bg-purple-
             onClose={() => {
               setShowJuzTestHistoryModal(false);
               setJuzTestHistoryStudent(null);
+              // In case any cancel occurred in history view, refresh badges
+              refetchActiveSchedules(filteredMonitorStudents.map(s => s.id));
             }}
           />
         )}

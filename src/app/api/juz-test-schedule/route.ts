@@ -41,6 +41,7 @@ export async function GET(request: NextRequest) {
     const to = searchParams.get('to');
     const studentId = searchParams.get('student_id');
     const activeOnly = searchParams.get('activeOnly') === '1';
+    const studentIdsCsv = searchParams.get('student_ids');
 
     const result = await adminOperationSimple(async (client) => {
       if (studentId) {
@@ -56,6 +57,27 @@ export async function GET(request: NextRequest) {
         const { data, error } = await query;
         if (error) throw error;
         return { sessions: data, countsByDate: {}, capacityPerDay: 5 };
+      }
+
+      // Bulk active schedule lookup by student IDs
+      if (studentIdsCsv) {
+        const ids = studentIdsCsv.split(',').map(s => s.trim()).filter(Boolean);
+        if (ids.length === 0) return { sessions: [], countsByDate: {}, capacityPerDay: 5, activeByStudent: {} };
+        let query = client
+          .from('test_sessions')
+          .select('student_id, scheduled_date, slot_number, status')
+          .in('student_id', ids)
+          .in('status', ['scheduled','reschedule_requested'])
+          .order('scheduled_date', { ascending: true })
+          .order('slot_number', { ascending: true });
+        const { data, error } = await query;
+        if (error) throw error;
+        const map: Record<string, any> = {};
+        for (const row of data || []) {
+          // Keep earliest upcoming by default
+          if (!map[row.student_id]) map[row.student_id] = row;
+        }
+        return { sessions: data, countsByDate: {}, capacityPerDay: 5, activeByStudent: map };
       }
 
       // Default: date range view
