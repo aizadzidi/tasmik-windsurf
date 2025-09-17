@@ -265,6 +265,29 @@ export default function AdminReportsPage() {
   // Unique teachers for filter dropdown
   const uniqueTeachers = useMemo(() => getUniqueTeachers(students), [students]);
 
+  // Active schedule annotations (for Juz Tests)
+  const [activeSchedules, setActiveSchedules] = useState<Record<string, { scheduled_date: string; slot_number: number }>>({});
+  React.useEffect(() => {
+    if (viewMode !== 'juz_tests') { setActiveSchedules({}); return; }
+    const ids = filteredStudents.map(s => s.id);
+    if (ids.length === 0) { setActiveSchedules({}); return; }
+    const run = async () => {
+      const params = new URLSearchParams({ student_ids: ids.join(',') });
+      const res = await fetch(`/api/juz-test-schedule?${params.toString()}`);
+      const raw = await res.json();
+      if (res.ok && raw && raw.activeByStudent) {
+        const map: Record<string, { scheduled_date: string; slot_number: number }> = {};
+        Object.entries(raw.activeByStudent as Record<string, any>).forEach(([k, v]) => {
+          map[k] = { scheduled_date: v.scheduled_date, slot_number: v.slot_number };
+        });
+        setActiveSchedules(map);
+      } else {
+        setActiveSchedules({});
+      }
+    };
+    run();
+  }, [viewMode, JSON.stringify(filteredStudents.map(s => s.id))]);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9] flex items-center justify-center">
@@ -519,23 +542,30 @@ export default function AdminReportsPage() {
                                   {extended.juz_test_gap || 0}
                                 </span>
                               </td>
-                              <td className="py-3 px-4">
-                                <div className="flex space-x-2">
-                                  <button 
-                                    onClick={() => handleOpenJuzTestHistory({ id: student.id, name: student.name })}
-                                    className="text-green-600 hover:text-green-800 text-sm font-medium"
-                                  >
-                                    History
-                                  </button>
-                                  <button 
-                                    onClick={() => {
-                                      const nextJuz = Math.min((extended.highest_memorized_juz || 1), 30);
-                                      handleOpenJuzTestModal({ id: student.id, name: student.name, teacher_name: student.teacher_name || undefined }, nextJuz);
-                                    }}
-                                    className="text-purple-600 hover:text-purple-800 text-sm font-medium"
-                                  >
-                                    Add Test
-                                  </button>
+<td className="py-3 px-4">
+                                <div className="flex flex-col gap-1">
+                                  {activeSchedules[student.id] && (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-purple-50 text-purple-700 border border-purple-200 w-fit">
+                                      Scheduled {activeSchedules[student.id].scheduled_date} • Slot {activeSchedules[student.id].slot_number}
+                                    </span>
+                                  )}
+                                  <div className="flex space-x-2">
+                                    <button 
+                                      onClick={() => handleOpenJuzTestHistory({ id: student.id, name: student.name })}
+                                      className="text-green-600 hover:text-green-800 text-sm font-medium"
+                                    >
+                                      History
+                                    </button>
+                                    <button 
+                                      onClick={() => {
+                                        const nextJuz = Math.min((extended.highest_memorized_juz || 1), 30);
+                                        handleOpenJuzTestModal({ id: student.id, name: student.name, teacher_name: student.teacher_name || undefined }, nextJuz);
+                                      }}
+                                      className="text-purple-600 hover:text-purple-800 text-sm font-medium"
+                                    >
+                                      Add Test
+                                    </button>
+                                  </div>
                                 </div>
                               </td>
                             </>

@@ -63,9 +63,13 @@ function monthLabel(date: Date) {
     const start = new Date(Date.UTC(viewMonthStart.getUTCFullYear(), viewMonthStart.getUTCMonth(), 1));
     const end = new Date(Date.UTC(viewMonthStart.getUTCFullYear(), viewMonthStart.getUTCMonth() + 1, 0));
     const out: { key: string; display: string; booked: number }[] = [];
-    for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 24 * 60 * 60 * 1000)) {
+for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 24 * 60 * 60 * 1000)) {
       const day = d.getUTCDay();
       if (day === 0 || day === 6) continue;
+      // Hide past dates (UTC)
+      const todayUTC = new Date();
+      const todayStart = new Date(Date.UTC(todayUTC.getUTCFullYear(), todayUTC.getUTCMonth(), todayUTC.getUTCDate()));
+      if (d < todayStart) continue;
       const key = d.toISOString().split('T')[0];
 const weekdays = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
     out.push({ key, display: `${weekdays[d.getUTCDay()]} ${d.getUTCDate()}`, booked: counts[key] || 0 });
@@ -74,6 +78,10 @@ const weekdays = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   }, [viewMonthStart, counts]);
 
   const listForDay = React.useMemo(() => sessions.filter((s: any) => s.scheduled_date === selectedDate), [sessions, selectedDate]);
+
+  const refetchDay = React.useCallback(async () => {
+    await loadMonth(viewMonthStart);
+  }, [viewMonthStart]);
 
   async function updateStatus(id: string, status: 'completed' | 'reschedule_requested' | 'cancelled') {
     try {
@@ -196,12 +204,16 @@ return (
                       {s.students?.users?.name && (
                         <div className="text-xs text-gray-500">Teacher: {s.students.users.name}</div>
                       )}
-                      <div className="text-xs text-gray-600">Status: {s.status}{s.juz_number ? ` • Juz ${s.juz_number}` : ''}</div>
+<div className="mt-1">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${s.status === 'scheduled' ? 'bg-purple-50 text-purple-700 border border-purple-200' : s.status === 'reschedule_requested' ? 'bg-amber-50 text-amber-700 border border-amber-200' : s.status === 'completed' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-gray-100 text-gray-700 border border-gray-200'}`}>
+                        {s.status.replace('_',' ')}{s.juz_number ? ` • Juz ${s.juz_number}` : ''}
+                      </span>
+                    </div>
                     </div>
                     <div className="flex gap-2">
-                      <button onClick={() => updateStatus(s.id, 'completed')} className="px-2 py-1 text-xs rounded bg-green-100 text-green-700 hover:bg-green-200">Mark Completed</button>
-                      <button onClick={() => updateStatus(s.id, 'reschedule_requested')} className="px-2 py-1 text-xs rounded bg-amber-100 text-amber-700 hover:bg-amber-200">Request Reschedule</button>
-                      <button onClick={() => updateStatus(s.id, 'cancelled')} className="px-2 py-1 text-xs rounded bg-red-100 text-red-700 hover:bg-red-200">Cancel</button>
+<button onClick={async () => { await updateStatus(s.id, 'completed'); await refetchDay(); }} className="px-2 py-1 text-xs rounded bg-green-100 text-green-700 hover:bg-green-200">Mark Completed</button>
+<button onClick={async () => { await updateStatus(s.id, 'reschedule_requested'); await refetchDay(); }} className="px-2 py-1 text-xs rounded bg-amber-100 text-amber-700 hover:bg-amber-200">Request Reschedule</button>
+<button onClick={async () => { await updateStatus(s.id, 'cancelled'); await refetchDay(); }} className="px-2 py-1 text-xs rounded bg-red-100 text-red-700 hover:bg-red-200">Cancel</button>
                     </div>
                   </div>
                 ))}
@@ -221,7 +233,7 @@ return (
         <AdminScheduleTestModal
           date={selectedDate}
           onClose={() => setShowScheduleModal(false)}
-          onScheduled={async () => { setToast({ type: 'success', message: 'Scheduled successfully' }); await loadMonth(viewMonthStart); }}
+onScheduled={async () => { setToast({ type: 'success', message: 'Scheduled successfully' }); await refetchDay(); }}
         />
       )}
     </div>

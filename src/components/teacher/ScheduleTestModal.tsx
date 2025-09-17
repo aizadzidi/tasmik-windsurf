@@ -14,6 +14,7 @@ type CountsResponse = {
 };
 
 export default function ScheduleTestModal({ student, onClose, onScheduled }: ScheduleTestModalProps) {
+  const weekdays = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [counts, setCounts] = React.useState<Record<string, number>>({});
@@ -83,11 +84,14 @@ const days = React.useMemo(() => {
     const start = new Date(Date.UTC(viewMonthStart.getUTCFullYear(), viewMonthStart.getUTCMonth(), 1));
     const end = new Date(Date.UTC(viewMonthStart.getUTCFullYear(), viewMonthStart.getUTCMonth() + 1, 0));
     const out: { key: string; display: string; booked: number }[] = [];
-    for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 24 * 60 * 60 * 1000)) {
+for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 24 * 60 * 60 * 1000)) {
       const day = d.getUTCDay();
       if (day === 0 || day === 6) continue; // weekends
+      // Hide past dates (UTC)
+      const todayUTC = new Date();
+      const todayStart = new Date(Date.UTC(todayUTC.getUTCFullYear(), todayUTC.getUTCMonth(), todayUTC.getUTCDate()));
+      if (d < todayStart) continue;
       const key = d.toISOString().split('T')[0];
-const weekdays = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
       out.push({ key, display: `${weekdays[d.getUTCDay()]} ${d.getUTCDate()}`, booked: counts[key] || 0 });
     }
     return out;
@@ -150,6 +154,11 @@ body: JSON.stringify({ student_id: student.id, scheduled_date: selectedDate, juz
         <div className="p-4 border-b">
           <h2 className="text-lg font-semibold">{activeSession ? 'Reschedule Juz Test' : 'Schedule Juz Test'}</h2>
           <p className="text-sm text-gray-600 mt-1">Student: <span className="font-medium">{student.name}</span></p>
+          {activeSession && (
+            <div className="mt-3 bg-purple-50 border border-purple-200 text-purple-800 text-sm rounded px-3 py-2">
+              Scheduled on {activeSession.scheduled_date} • Slot {activeSession.slot_number}
+            </div>
+          )}
         </div>
         <div className="p-4 space-y-4">
           {error && <div className="text-red-600 text-sm">{error}</div>}
