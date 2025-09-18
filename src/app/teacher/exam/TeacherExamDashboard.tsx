@@ -72,6 +72,10 @@ export default function TeacherExamDashboard() {
   const [statusMsg, setStatusMsg] = React.useState<string>("");
   const [searchQuery, setSearchQuery] = React.useState<string>("");
   const [sortBy, setSortBy] = React.useState<{ key: 'name' | 'mark' | 'grade' | null; dir: 'asc' | 'desc' | null }>({ key: null, dir: null });
+  // Aggregate per-student across all subjects for the selected exam (used when no subject selected)
+  const [aggregateByStudent, setAggregateByStudent] = React.useState<Map<string, { avg: number | null; gradeCounts: Record<string, number> }>>(new Map());
+  // Metadata readiness to avoid UI flicker while initial selections are being computed
+  const [metaReady, setMetaReady] = React.useState(false);
   // Toast state for quick popup notifications
   const [toast, setToast] = React.useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -91,12 +95,15 @@ export default function TeacherExamDashboard() {
       const { data: userData, error } = await supabase.auth.getUser();
       if (!error && userData.user) setUserId(userData.user.id);
 
-      const [{ data: classesData }, { data: subjectsData }] = await Promise.all([
+      const [{ data: classesData }, { data: subjectsData }, examsResp] = await Promise.all([
         supabase.from('classes').select('id, name').order('name'),
         supabase.from('subjects').select('id, name').order('name'),
+        fetch('/api/admin/exam-metadata').then((r) => r.json()).catch((e) => { console.error('Failed to load exam metadata', e); return { exams: [] } })
       ]);
       setClasses(classesData || []);
       setSubjects(subjectsData || []);
+      const allExams = examsResp?.exams || [];
+      setExams(allExams);
 
       // Fetch conduct criteria
       try {
@@ -109,36 +116,13 @@ export default function TeacherExamDashboard() {
         console.error('Failed to load conduct criteria', e);
       }
 
-      // Fetch exams metadata via local API (uses service role internally)
-      try {
-        const res = await fetch('/api/admin/exam-metadata');
-        const json = await res.json();
-        setExams(json.exams || []);
-      } catch (e) {
-        console.error('Failed to load exam metadata', e);
-      }
+      // Do not auto-select exam/class/subject on first load; leave filters empty by default
+      setMetaReady(true);
     })();
   }, []);
 
-  // Defaults when metadata loaded - now prioritize exam selection first
-  React.useEffect(() => {
-    if (exams.length && !selectedExamId) {
-      // Auto-select the first available exam based on assessment type
-      const filteredExams = exams.filter(exam => {
-        const isQuiz = exam.type && exam.type.toLowerCase() === 'quiz';
-        return (assessmentType === 'Quiz') === isQuiz;
-      });
-      if (filteredExams.length > 0) {
-        setSelectedExamId(filteredExams[0].id);
-      }
-    }
-  }, [exams, assessmentType]);
-  React.useEffect(() => {
-    if (classes.length && !selectedClassId && selectedExamId) setSelectedClassId("all");
-  }, [classes, selectedExamId]);
-  React.useEffect(() => {
-    if (subjects.length && !selectedSubjectId && selectedClassId) setSelectedSubjectId(subjects[0].id);
-  }, [subjects, selectedClassId]);
+  // No defaults: keep filters empty to avoid UI thrash on first load
+
 
   // Compute assessment list from metadata
   const assessmentList = React.useMemo(() => {
@@ -207,6 +191,20 @@ export default function TeacherExamDashboard() {
     return arr.length ? arr : classes;
   }, [selectedExamId, exams, classes]);
 
+  // Subject validity for current exam/class options
+  const subjectIsInUI = React.useMemo(() => {
+    if (!selectedSubjectId) return false;
+    return subjectsForUI.some(s => s.id === selectedSubjectId);
+  }, [subjectsForUI, selectedSubjectId]);
+
+  // Keep selected subject valid for the chosen exam+class; reset to blank if invalid
+  React.useEffect(() => {
+    const valid = subjectsForUI.map(s => s.id);
+    if (selectedSubjectId && !valid.includes(selectedSubjectId)) {
+      setSelectedSubjectId('');
+    }
+  }, [subjectsForUI, selectedSubjectId]);
+
   // Keep selected exam consistent - but only reset if current selection is invalid
   React.useEffect(() => {
     if (selectedExamId && assessmentList.length > 0) {
@@ -233,6 +231,57 @@ export default function TeacherExamDashboard() {
       setGradingScale(null);
     }
   }, [selectedExamId]);
+
+  // Compute per-student aggregates for the selected exam (all subjects). Used when no subject is selected
+  React.useEffect(() => {
+    (async () => {
+      if (!selectedExamId) {
+        setAggregateByStudent(new Map());
+        return;
+      }
+      try {
+        // Pull all subjects' results for this exam for students in the current class selection
+        const rosterIds = studentRows.map(r => r.id);
+        if (rosterIds.length === 0) {
+          setAggregateByStudent(new Map());
+          return;
+        }
+        const { data } = await supabase
+          .from('exam_results')
+          .select('student_id, final_score, grade')
+          .eq('exam_id', selectedExamId)
+          .in('student_id', rosterIds);
+        const map = new Map<string, { sum: number; count: number; gradeCounts: Record<string, number> }>();
+        (data || []).forEach((r: any) => {
+          const id = String(r.student_id);
+          const fs = typeof r.final_score === 'number' ? r.final_score : null;
+          const g = (r.grade || '').toUpperCase();
+          if (!map.has(id)) map.set(id, { sum: 0, count: 0, gradeCounts: {} });
+          const agg = map.get(id)!;
+          if (typeof fs === 'number') {
+            agg.sum += fs;
+            agg.count += 1;
+          }
+          if (g) {
+            agg.gradeCounts[g] = (agg.gradeCounts[g] || 0) + 1;
+          }
+        });
+        const out = new Map<string, { avg: number | null; gradeCounts: Record<string, number> }>();
+        rosterIds.forEach((id) => {
+          const a = map.get(id);
+          if (!a) {
+            out.set(id, { avg: null, gradeCounts: {} });
+          } else {
+            out.set(id, { avg: a.count > 0 ? a.sum / a.count : null, gradeCounts: a.gradeCounts });
+          }
+        });
+        setAggregateByStudent(out);
+      } catch (e) {
+        console.error('Aggregate compute failed', e);
+        setAggregateByStudent(new Map());
+      }
+    })();
+  }, [selectedExamId, studentRows]);
 
   // Compute conduct categories from dynamic criteria or use defaults
   const conductCategories = React.useMemo(() => {
@@ -281,57 +330,62 @@ export default function TeacherExamDashboard() {
 
   // Load students, marks and current teacher conduct for selections
   React.useEffect(() => {
-    if (!selectedClassId || !selectedSubjectId) return;
+    // Only fetch roster once exam and class are explicitly selected by user
+    if (!selectedClassId || !selectedExamId) return;
     
     (async () => {
       // Students in class or all students if "all" is selected
       let studentsQuery = supabase
         .from('students')
         .select('id, name, class_id');
-      
+    
       if (selectedClassId !== "all") {
         studentsQuery = studentsQuery.eq('class_id', selectedClassId);
       }
-      
+    
       const { data: studentsData } = await studentsQuery;
       let roster = studentsData || [];
 
-      // Apply exam exclusions when an exam is selected
-      if (selectedExamId) {
+      // Prepare containers to fill inside try
+      let marksByStudent = new Map<string, { mark: number | null; grade: string | null }>();
+      let conductByStudent = new Map<string, Record<ConductKey, number>>();
+
+      // Apply exam exclusions, fetch marks and conduct in parallel to reduce latency
+      try {
+        const params = new URLSearchParams({ examId: selectedExamId });
+        if (selectedClassId && selectedClassId !== 'all') params.append('classId', selectedClassId);
+        const [exclRes, resultsRes, conductRes] = await Promise.all([
+          fetch(`/api/teacher/exam-exclusions?${params.toString()}`),
+          selectedSubjectId
+            ? supabase.from('exam_results')
+                .select('student_id, mark, grade')
+                .eq('exam_id', selectedExamId)
+                .eq('subject_id', selectedSubjectId)
+            : Promise.resolve({ data: [] as any[] }),
+          userId
+            ? supabase
+                .from('conduct_entries')
+                .select('student_id, discipline, effort, participation, motivational_level, character, leadership')
+                .eq('exam_id', selectedExamId)
+                .eq('teacher_id', userId)
+            : Promise.resolve({ data: [] as any[] })
+        ]);
+        // Exclusions
         try {
-          const params = new URLSearchParams({ examId: selectedExamId });
-          if (selectedClassId && selectedClassId !== 'all') params.append('classId', selectedClassId);
-          const res = await fetch(`/api/teacher/exam-exclusions?${params.toString()}`);
-          const json = await res.json();
+          const json = await exclRes.json();
           const excluded: string[] = Array.isArray(json.excludedStudentIds) ? json.excludedStudentIds : [];
           const excludedSet = new Set(excluded);
           roster = roster.filter((s: any) => !excludedSet.has(String(s.id)));
-        } catch (e) {
-          console.error('Failed to load exam exclusions', e);
-        }
-      }
-
-      // Existing marks for exam+subject
-      const marksByStudent = new Map<string, { mark: number | null; grade: string | null }>();
-      if (selectedExamId) {
-        const { data: results } = await supabase
-          .from('exam_results')
-          .select('student_id, mark, grade')
-          .eq('exam_id', selectedExamId)
-          .eq('subject_id', selectedSubjectId);
+        } catch {}
+        // Marks
+        marksByStudent = new Map<string, { mark: number | null; grade: string | null }>();
+        const results = (resultsRes as any)?.data || [];
         (results || []).forEach((r: any) => {
           marksByStudent.set(String(r.student_id), { mark: r.mark, grade: r.grade });
         });
-      }
-
-      // Current teacher's conduct entries for this exam
-      const conductByStudent = new Map<string, Record<ConductKey, number>>();
-      if (selectedExamId && userId) {
-        const { data: conductEntries } = await supabase
-          .from('conduct_entries')
-          .select('student_id, discipline, effort, participation, motivational_level, character, leadership')
-          .eq('exam_id', selectedExamId)
-          .eq('teacher_id', userId);
+        // Conduct
+        conductByStudent = new Map<string, Record<ConductKey, number>>();
+        const conductEntries = (conductRes as any)?.data || [];
         (conductEntries || []).forEach((e: any) => {
           conductByStudent.set(String(e.student_id), {
             discipline: Number(e.discipline) || 0,
@@ -342,6 +396,8 @@ export default function TeacherExamDashboard() {
             leadership: Number(e.leadership) || 0,
           });
         });
+      } catch (err) {
+        console.error('Failed loading exclusions/results/conduct', err);
       }
 
       // Build rows
@@ -562,27 +618,10 @@ export default function TeacherExamDashboard() {
       await handleSaveAll();
     }
     setSelectedExamId(newExamId);
-
-    // Align subject and class with the chosen exam to avoid auto-reset
-    const chosen = exams.find(ex => String(ex.id) === String(newExamId));
-    const examSubjectIds = (chosen?.exam_subjects || [])
-      .map(es => es?.subjects?.id)
-      .filter((id): id is string => Boolean(id));
-    if (examSubjectIds.length > 0) {
-      if (!examSubjectIds.includes(selectedSubjectId)) {
-        setSelectedSubjectId(examSubjectIds[0]);
-      }
-    } else {
-      // No subjects configured; clear selection
-      if (selectedSubjectId) setSelectedSubjectId("");
-    }
-
-    const examClassIds = (chosen?.exam_classes || [])
-      .map(ec => ec?.classes?.id)
-      .filter((id): id is string => Boolean(id));
-    if (selectedClassId && selectedClassId !== 'all' && examClassIds.length > 0 && !examClassIds.includes(selectedClassId)) {
-      setSelectedClassId('all');
-    }
+    // Do not auto-select a subject; keep it empty to avoid transient invalid states
+    setSelectedSubjectId('');
+    // Proactively set class to 'all' so teacher sees students immediately after choosing exam
+    if (!selectedClassId) setSelectedClassId('all');
   };
 
   // Toggle sort for a given column
@@ -886,13 +925,20 @@ export default function TeacherExamDashboard() {
           return dirMul * comp;
         }
         if (sortBy.key === 'mark') {
-          const aVal = parseFloat(String(a.mark));
-          const bVal = parseFloat(String(b.mark));
+          const getVal = (s: StudentRow) => {
+            if (selectedSubjectId) {
+              const v = parseFloat(String(s.mark));
+              return Number.isFinite(v) ? v : NaN;
+            }
+            const agg = aggregateByStudent.get(s.id)?.avg;
+            return typeof agg === 'number' ? agg : NaN;
+          };
+          const aVal = getVal(a);
+          const bVal = getVal(b);
           const aValid = Number.isFinite(aVal);
           const bValid = Number.isFinite(bVal);
           if (!aValid && !bValid) return 0;
           if (!aValid || !bValid) {
-            // For ascending: empties/invalids first; for descending: empties/invalids last
             if (sortBy.dir === 'asc') return !aValid ? -1 : 1;
             return !aValid ? 1 : -1;
           }
@@ -900,6 +946,25 @@ export default function TeacherExamDashboard() {
           return dirMul * comp;
         }
         if (sortBy.key === 'grade') {
+          if (!selectedSubjectId) {
+            // For aggregated view, sort by number of best grades descending/ascending using grade order
+            const scoreSummary = (s: StudentRow) => {
+              const counts = aggregateByStudent.get(s.id)?.gradeCounts || {};
+              const order = gradeOrder;
+              let score = 0;
+              for (let i = 0; i < order.length; i++) {
+                const g = order[i];
+                const c = counts[g] || 0;
+                // Higher weight for better grades
+                score += (order.length - i) * c;
+              }
+              return score;
+            };
+            const aVal = scoreSummary(a);
+            const bVal = scoreSummary(b);
+            const comp = aVal - bVal;
+            return dirMul * comp;
+          }
           const idx = (g: string) => {
             const up = (g || '').toUpperCase();
             const i = gradeOrder.indexOf(up);
@@ -912,7 +977,7 @@ export default function TeacherExamDashboard() {
       });
     }
     return base;
-  }, [studentRows, searchQuery, sortBy]);
+  }, [studentRows, searchQuery, sortBy, aggregateByStudent, selectedSubjectId]);
 
   const marksData = visibleRows.map((s) => ({ name: s.name, mark: parseFloat(s.mark) || 0 }));
   const avgConduct: Record<string, number> = {};
@@ -956,40 +1021,9 @@ export default function TeacherExamDashboard() {
               </div>
             </div>
 
-            {/* No Exams Warning */}
-            {exams.filter(exam => {
-              const isQuiz = exam.type && exam.type.toLowerCase() === 'quiz';
-              return (assessmentType === 'Quiz') === isQuiz;
-            }).length === 0 && (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
-                <div className="flex items-start gap-3">
-                  <AlertTriangle className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <h3 className="font-medium text-amber-800">No {assessmentType}s Available</h3>
-                    <p className="text-sm text-amber-700 mt-1">
-                      No {assessmentType.toLowerCase()}s have been created yet.
-                      <br />Contact your admin to create {assessmentType.toLowerCase()}s before you can enter marks.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
+            {/* Removed: No Exams Warning to prevent flash on initial load */}
 
-            {/* No Valid Class-Subject Combination Warning */}
-            {selectedExamId && selectedClassId && selectedSubjectId && assessmentList.length === 0 && (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
-                <div className="flex items-start gap-3">
-                  <AlertTriangle className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <h3 className="font-medium text-amber-800">Invalid Combination</h3>
-                    <p className="text-sm text-amber-700 mt-1">
-                      The selected {assessmentType.toLowerCase()} is not available for this class-subject combination.
-                      <br />Please select a different class or subject, or contact your admin.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
+            {/* Deprecated: Invalid combination banner removed by request */}
 
             {/* Redesigned Picker Section */}
             <div className="bg-white rounded-lg shadow-sm px-6 py-4 flex flex-col md:flex-row md:items-end gap-4 md:gap-6 md:flex-wrap border mb-4">
@@ -1025,7 +1059,7 @@ export default function TeacherExamDashboard() {
                     onChange={e => handleExamChange(e.target.value)}
                     className="border rounded px-3 py-2 text-sm focus:outline-primary"
                   >
-                    <option value="">Select {assessmentType}</option>
+                  <option value="">Select {assessmentType}</option>
                     {exams.filter(exam => {
                       const isQuiz = exam.type && exam.type.toLowerCase() === 'quiz';
                       return (assessmentType === 'Quiz') === isQuiz;
@@ -1089,7 +1123,7 @@ export default function TeacherExamDashboard() {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search students..."
                 className="w-full border rounded px-3 py-2 text-sm"
-                disabled={!selectedExamId || !selectedSubjectId}
+                disabled={!selectedExamId}
                 aria-label="Search students"
               />
             </div>
@@ -1148,7 +1182,7 @@ export default function TeacherExamDashboard() {
                         aria-label="Sort by mark"
                         title="Sort by mark"
                       >
-                        <span>Mark (%)</span>
+                        <span>{selectedSubjectId ? 'Mark (%)' : 'Final Mark'}</span>
                         <span className="ml-1 flex flex-col">
                           <ChevronUp
                             className={`w-3 h-3 ${sortBy.key === 'mark' && sortBy.dir === 'asc' ? 'text-blue-600' : 'text-gray-300'}`}
@@ -1167,7 +1201,7 @@ export default function TeacherExamDashboard() {
                         aria-label="Sort by grade"
                         title="Sort by grade"
                       >
-                        <span>Grade</span>
+                        <span>{selectedSubjectId ? 'Grade' : 'Grade Summary'}</span>
                         <span className="ml-1 flex flex-col">
                           <ChevronUp
                             className={`w-3 h-3 ${sortBy.key === 'grade' && sortBy.dir === 'asc' ? 'text-blue-600' : 'text-gray-300'}`}
@@ -1190,14 +1224,22 @@ export default function TeacherExamDashboard() {
                     const totalScore = conductCategories.reduce((sum, cat) => sum + (parseFloat(student.conduct[cat.key]) || 0), 0);
                     const totalMaxScore = conductCategories.reduce((sum, cat) => sum + cat.maxScore, 0);
                     const avgConduct = totalMaxScore > 0 ? (totalScore / totalMaxScore) * 100 : 0;
+                    const agg = aggregateByStudent.get(student.id);
+                    const getScoreColor = (score: number) => {
+                      if (score >= 90) return 'text-green-700';
+                      if (score >= 80) return 'text-blue-700';
+                      if (score >= 70) return 'text-yellow-600';
+                      return 'text-red-600';
+                    };
                     return (
                       <React.Fragment key={student.id}>
                         <tr className="border-b">
                           <td className="px-3 py-2">{displayIdx + 1}</td>
                           <td className="px-3 py-2">{student.name}</td>
                           <td className="px-3 py-2">
-                            <div className="relative inline-block">
-                              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-500">%</span>
+                            {selectedSubjectId ? (
+                              <div className="relative inline-block">
+                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-500">%</span>
                               <input
                                 type="text"
                                 className="w-16 border rounded pl-5 pr-2 py-1 text-right"
@@ -1208,17 +1250,49 @@ export default function TeacherExamDashboard() {
                                 disabled={!!student.isAbsent}
                               />
                             </div>
+                            ) : (
+                              <div className="text-base font-semibold text-center">
+                                {typeof agg?.avg === 'number' ? (
+                                  <span className={getScoreColor(agg.avg)}>{Math.round(agg.avg)}%</span>
+                                ) : (
+                                  <span className="text-gray-400">—</span>
+                                )}
+                              </div>
+                            )}
                           </td>
                           <td className="px-3 py-2">
-                            {student.isAbsent ? (
-                              <span className="text-gray-700">TH</span>
-                            ) : student.grade ? (
-                              <span>{student.grade}</span>
-                            ) : (Number.isFinite(parseFloat(student.mark)) ? (
-                              <span className="text-gray-500" title="Grade will be computed after save or is not defined for this score in the selected grading system.">N/A</span>
+                            {selectedSubjectId ? (
+                              student.isAbsent ? (
+                                <span className="text-gray-700">TH</span>
+                              ) : student.grade ? (
+                                <span>{student.grade}</span>
+                              ) : (Number.isFinite(parseFloat(student.mark)) ? (
+                                <span className="text-gray-500" title="Grade will be computed after save or is not defined for this score in the selected grading system.">N/A</span>
+                              ) : (
+                                <span className="text-gray-400">—</span>
+                              ))
                             ) : (
-                              <span className="text-gray-400">—</span>
-                            ))}
+                              <div className="flex flex-wrap gap-1">
+                                {(() => {
+                                  const gradeCounts = agg?.gradeCounts || {};
+                                  const order = ['A+','A','A-','B+','B','B-','C+','C','C-','D','E','F','G','TH'];
+                                  const entries = Object.entries(gradeCounts).filter(([g,c]) => (c as number) > 0);
+                                  entries.sort((a,b) => {
+                                    const ia = order.indexOf(a[0]);
+                                    const ib = order.indexOf(b[0]);
+                                    if (ia !== -1 && ib !== -1) return ia - ib;
+                                    if (ia !== -1) return -1;
+                                    if (ib !== -1) return 1;
+                                    return (b[1] as number) - (a[1] as number);
+                                  });
+                                  return entries.length ? entries.map(([grade, count]) => (
+                                    <span key={grade} className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-800 border border-gray-200">
+                                      {grade}: {count as number}
+                                    </span>
+                                  )) : <span className="text-gray-400">—</span>;
+                                })()}
+                              </div>
+                            )}
                           </td>
                           <td className="px-3 py-2">
                             <Button
@@ -1238,6 +1312,7 @@ export default function TeacherExamDashboard() {
                                 className="h-4 w-4"
                                 checked={!!student.isAbsent}
                                 onChange={(e) => handleAbsentToggle(idx, e.target.checked)}
+                                disabled={!selectedSubjectId}
                               />
                               <span>Absent</span>
                             </label>
