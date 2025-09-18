@@ -71,7 +71,7 @@ export default function TeacherExamDashboard() {
   const [saving, setSaving] = React.useState(false);
   const [statusMsg, setStatusMsg] = React.useState<string>("");
   const [searchQuery, setSearchQuery] = React.useState<string>("");
-  const [nameSort, setNameSort] = React.useState<'asc' | 'desc' | null>(null);
+  const [sortBy, setSortBy] = React.useState<{ key: 'name' | 'mark' | 'grade' | null; dir: 'asc' | 'desc' | null }>({ key: null, dir: null });
   // Toast state for quick popup notifications
   const [toast, setToast] = React.useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -511,9 +511,13 @@ export default function TeacherExamDashboard() {
     }
   };
 
-  // Toggle sort for Name column
-  const toggleNameSort = () => {
-    setNameSort((prev) => (prev === 'asc' ? 'desc' : prev === 'desc' ? null : 'asc'));
+  // Toggle sort for a given column
+  const toggleSort = (key: 'name' | 'mark' | 'grade') => {
+    setSortBy((prev) => {
+      if (prev.key !== key) return { key, dir: 'asc' };
+      if (prev.dir === 'asc') return { key, dir: 'desc' };
+      return { key: null, dir: null };
+    });
   };
 
   // Check for unsaved changes
@@ -797,14 +801,42 @@ export default function TeacherExamDashboard() {
     if (q) {
       base = base.filter(r => (r.name || '').toLowerCase().includes(q));
     }
-    if (nameSort) {
+    if (sortBy.key && sortBy.dir) {
+      const dirMul = sortBy.dir === 'asc' ? 1 : -1;
+      const gradeOrder = ['A+','A','A-','B+','B','B-','C+','C','C-','D','E','F','G','TH'];
       base = [...base].sort((a, b) => {
-        const comp = (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
-        return nameSort === 'asc' ? comp : -comp;
-        });
+        if (sortBy.key === 'name') {
+          const comp = (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
+          return dirMul * comp;
+        }
+        if (sortBy.key === 'mark') {
+          const aVal = parseFloat(String(a.mark));
+          const bVal = parseFloat(String(b.mark));
+          const aValid = Number.isFinite(aVal);
+          const bValid = Number.isFinite(bVal);
+          if (!aValid && !bValid) return 0;
+          if (!aValid || !bValid) {
+            // For ascending: empties/invalids first; for descending: empties/invalids last
+            if (sortBy.dir === 'asc') return !aValid ? -1 : 1;
+            return !aValid ? 1 : -1;
+          }
+          const comp = aVal - bVal;
+          return dirMul * comp;
+        }
+        if (sortBy.key === 'grade') {
+          const idx = (g: string) => {
+            const up = (g || '').toUpperCase();
+            const i = gradeOrder.indexOf(up);
+            return i === -1 ? gradeOrder.length + 1 : i;
+          };
+          const comp = idx(a.grade) - idx(b.grade);
+          return dirMul * comp;
+        }
+        return 0;
+      });
     }
     return base;
-  }, [studentRows, searchQuery, nameSort]);
+  }, [studentRows, searchQuery, sortBy]);
 
   const marksData = visibleRows.map((s) => ({ name: s.name, mark: parseFloat(s.mark) || 0 }));
   const avgConduct: Record<string, number> = {};
@@ -1016,7 +1048,7 @@ export default function TeacherExamDashboard() {
                     <th className="px-3 py-2 text-left select-none">
                       <div
                         className="flex items-center gap-2 cursor-pointer hover:text-blue-600"
-                        onClick={toggleNameSort}
+                        onClick={() => toggleSort('name')}
                         role="button"
                         aria-label="Sort by student name"
                         title="Sort by student name"
@@ -1024,16 +1056,52 @@ export default function TeacherExamDashboard() {
                         <span>Name</span>
                         <span className="ml-1 flex flex-col">
                           <ChevronUp
-                            className={`w-3 h-3 ${nameSort === 'asc' ? 'text-blue-600' : 'text-gray-300'}`}
+                            className={`w-3 h-3 ${sortBy.key === 'name' && sortBy.dir === 'asc' ? 'text-blue-600' : 'text-gray-300'}`}
                           />
                           <ChevronDown
-                            className={`w-3 h-3 -mt-1 ${nameSort === 'desc' ? 'text-blue-600' : 'text-gray-300'}`}
+                            className={`w-3 h-3 -mt-1 ${sortBy.key === 'name' && sortBy.dir === 'desc' ? 'text-blue-600' : 'text-gray-300'}`}
                           />
                         </span>
                       </div>
                     </th>
-                    <th className="px-3 py-2 text-left">Mark (%)</th>
-                    <th className="px-3 py-2 text-left">Grade</th>
+                    <th className="px-3 py-2 text-left select-none">
+                      <div
+                        className="flex items-center gap-2 cursor-pointer hover:text-blue-600"
+                        onClick={() => toggleSort('mark')}
+                        role="button"
+                        aria-label="Sort by mark"
+                        title="Sort by mark"
+                      >
+                        <span>Mark (%)</span>
+                        <span className="ml-1 flex flex-col">
+                          <ChevronUp
+                            className={`w-3 h-3 ${sortBy.key === 'mark' && sortBy.dir === 'asc' ? 'text-blue-600' : 'text-gray-300'}`}
+                          />
+                          <ChevronDown
+                            className={`w-3 h-3 -mt-1 ${sortBy.key === 'mark' && sortBy.dir === 'desc' ? 'text-blue-600' : 'text-gray-300'}`}
+                          />
+                        </span>
+                      </div>
+                    </th>
+                    <th className="px-3 py-2 text-left select-none">
+                      <div
+                        className="flex items-center gap-2 cursor-pointer hover:text-blue-600"
+                        onClick={() => toggleSort('grade')}
+                        role="button"
+                        aria-label="Sort by grade"
+                        title="Sort by grade"
+                      >
+                        <span>Grade</span>
+                        <span className="ml-1 flex flex-col">
+                          <ChevronUp
+                            className={`w-3 h-3 ${sortBy.key === 'grade' && sortBy.dir === 'asc' ? 'text-blue-600' : 'text-gray-300'}`}
+                          />
+                          <ChevronDown
+                            className={`w-3 h-3 -mt-1 ${sortBy.key === 'grade' && sortBy.dir === 'desc' ? 'text-blue-600' : 'text-gray-300'}`}
+                          />
+                        </span>
+                      </div>
+                    </th>
                     <th className="px-3 py-2 text-left">Conduct</th>
                     <th className="px-3 py-2 text-left">Status</th>
                   </tr>
