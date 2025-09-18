@@ -71,9 +71,15 @@ export default function TeacherExamDashboard() {
   const [saving, setSaving] = React.useState(false);
   const [statusMsg, setStatusMsg] = React.useState<string>("");
   const [searchQuery, setSearchQuery] = React.useState<string>("");
-  const [sortBy, setSortBy] = React.useState<{ key: 'name' | 'mark' | 'grade' | null; dir: 'asc' | 'desc' | null }>({ key: null, dir: null });
+  const [sortBy, setSortBy] = React.useState<{ key: 'name' | 'mark' | 'grade' | 'missing' | null; dir: 'asc' | 'desc' | null }>({ key: null, dir: null });
   // Aggregate per-student across all subjects for the selected exam (used when no subject selected)
   const [aggregateByStudent, setAggregateByStudent] = React.useState<Map<string, { avg: number | null; gradeCounts: Record<string, number> }>>(new Map());
+  // Per-student missing subject list for current exam/class configuration
+  const [missingByStudent, setMissingByStudent] = React.useState<Map<string, string[]>>(new Map());
+  // Per-subject completion summary for current roster
+  const [subjectCompletion, setSubjectCompletion] = React.useState<Map<string, { completed: number; total: number; th: number }>>(new Map());
+  // Toggle to filter only students with missing subjects (when no subject is selected)
+  const [showOnlyMissing, setShowOnlyMissing] = React.useState(false);
   // Metadata readiness to avoid UI flicker while initial selections are being computed
   const [metaReady, setMetaReady] = React.useState(false);
   // Toast state for quick popup notifications
@@ -232,56 +238,82 @@ export default function TeacherExamDashboard() {
     }
   }, [selectedExamId]);
 
-  // Compute per-student aggregates for the selected exam (all subjects). Used when no subject is selected
+  // Compute per-student aggregates, missing subjects, and per-subject completion
   React.useEffect(() => {
     (async () => {
       if (!selectedExamId) {
         setAggregateByStudent(new Map());
+        setMissingByStudent(new Map());
+        setSubjectCompletion(new Map());
         return;
       }
       try {
-        // Pull all subjects' results for this exam for students in the current class selection
         const rosterIds = studentRows.map(r => r.id);
-        if (rosterIds.length === 0) {
+        const allSubjectIds = subjectsForUI.map(s => s.id);
+        if (rosterIds.length === 0 || allSubjectIds.length === 0) {
           setAggregateByStudent(new Map());
+          setMissingByStudent(new Map());
+          setSubjectCompletion(new Map());
           return;
         }
         const { data } = await supabase
           .from('exam_results')
-          .select('student_id, final_score, grade')
+          .select('student_id, subject_id, mark, grade, final_score')
           .eq('exam_id', selectedExamId)
           .in('student_id', rosterIds);
-        const map = new Map<string, { sum: number; count: number; gradeCounts: Record<string, number> }>();
+        const perStudentAgg = new Map<string, { sum: number; count: number; gradeCounts: Record<string, number> }>();
+        const perStudentFilled = new Map<string, Set<string>>();
+        const perStudentTH = new Map<string, Set<string>>();
+        const perSubjectCompleted = new Map<string, number>();
+        const perSubjectTH = new Map<string, number>();
         (data || []).forEach((r: any) => {
-          const id = String(r.student_id);
+          const sid = String(r.student_id);
+          const subId = String(r.subject_id);
           const fs = typeof r.final_score === 'number' ? r.final_score : null;
           const g = (r.grade || '').toUpperCase();
-          if (!map.has(id)) map.set(id, { sum: 0, count: 0, gradeCounts: {} });
-          const agg = map.get(id)!;
-          if (typeof fs === 'number') {
-            agg.sum += fs;
-            agg.count += 1;
-          }
-          if (g) {
-            agg.gradeCounts[g] = (agg.gradeCounts[g] || 0) + 1;
+          const isTH = g === 'TH';
+          const hasMark = typeof r.mark === 'number';
+          // Agg averages
+          if (!perStudentAgg.has(sid)) perStudentAgg.set(sid, { sum: 0, count: 0, gradeCounts: {} });
+          const agg = perStudentAgg.get(sid)!;
+          if (typeof fs === 'number') { agg.sum += fs; agg.count += 1; }
+          if (g) { agg.gradeCounts[g] = (agg.gradeCounts[g] || 0) + 1; }
+          // Filled logic
+          if (isTH || hasMark) {
+            if (!perStudentFilled.has(sid)) perStudentFilled.set(sid, new Set());
+            perStudentFilled.get(sid)!.add(subId);
+            perSubjectCompleted.set(subId, (perSubjectCompleted.get(subId) || 0) + 1);
+            if (isTH) perSubjectTH.set(subId, (perSubjectTH.get(subId) || 0) + 1);
           }
         });
-        const out = new Map<string, { avg: number | null; gradeCounts: Record<string, number> }>();
+        // Build outputs
+        const outAgg = new Map<string, { avg: number | null; gradeCounts: Record<string, number> }>();
         rosterIds.forEach((id) => {
-          const a = map.get(id);
-          if (!a) {
-            out.set(id, { avg: null, gradeCounts: {} });
-          } else {
-            out.set(id, { avg: a.count > 0 ? a.sum / a.count : null, gradeCounts: a.gradeCounts });
-          }
+          const a = perStudentAgg.get(id);
+          outAgg.set(id, a ? { avg: a.count > 0 ? a.sum / a.count : null, gradeCounts: a.gradeCounts } : { avg: null, gradeCounts: {} });
         });
-        setAggregateByStudent(out);
+        setAggregateByStudent(outAgg);
+        const outMissing = new Map<string, string[]>();
+        rosterIds.forEach((id) => {
+          const filled = perStudentFilled.get(id) || new Set<string>();
+          const missing = allSubjectIds.filter(sid => !filled.has(sid));
+          outMissing.set(id, missing);
+        });
+        setMissingByStudent(outMissing);
+        const total = rosterIds.length;
+        const outSubject = new Map<string, { completed: number; total: number; th: number }>();
+        allSubjectIds.forEach((sid) => {
+          outSubject.set(sid, { completed: perSubjectCompleted.get(sid) || 0, total, th: perSubjectTH.get(sid) || 0 });
+        });
+        setSubjectCompletion(outSubject);
       } catch (e) {
         console.error('Aggregate compute failed', e);
         setAggregateByStudent(new Map());
+        setMissingByStudent(new Map());
+        setSubjectCompletion(new Map());
       }
     })();
-  }, [selectedExamId, studentRows]);
+  }, [selectedExamId, studentRows, subjectsForUI]);
 
   // Compute conduct categories from dynamic criteria or use defaults
   const conductCategories = React.useMemo(() => {
@@ -625,7 +657,7 @@ export default function TeacherExamDashboard() {
   };
 
   // Toggle sort for a given column
-  const toggleSort = (key: 'name' | 'mark' | 'grade') => {
+  const toggleSort = (key: 'name' | 'mark' | 'grade' | 'missing') => {
     setSortBy((prev) => {
       if (prev.key !== key) return { key, dir: 'asc' };
       if (prev.dir === 'asc') return { key, dir: 'desc' };
@@ -924,6 +956,11 @@ export default function TeacherExamDashboard() {
           const comp = (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
           return dirMul * comp;
         }
+        if (sortBy.key === 'missing') {
+          const getMissing = (s: StudentRow) => (missingByStudent.get(s.id)?.length || 0);
+          const comp = getMissing(a) - getMissing(b);
+          return dirMul * comp;
+        }
         if (sortBy.key === 'mark') {
           const getVal = (s: StudentRow) => {
             if (selectedSubjectId) {
@@ -976,8 +1013,11 @@ export default function TeacherExamDashboard() {
         return 0;
       });
     }
+    if (!selectedSubjectId && showOnlyMissing) {
+      base = base.filter(r => (missingByStudent.get(r.id)?.length || 0) > 0);
+    }
     return base;
-  }, [studentRows, searchQuery, sortBy, aggregateByStudent, selectedSubjectId]);
+  }, [studentRows, searchQuery, sortBy, aggregateByStudent, selectedSubjectId, showOnlyMissing, missingByStudent]);
 
   const marksData = visibleRows.map((s) => ({ name: s.name, mark: parseFloat(s.mark) || 0 }));
   const avgConduct: Record<string, number> = {};
@@ -1106,26 +1146,58 @@ export default function TeacherExamDashboard() {
                   disabled={!selectedClassId}
                 >
                   <option value="">Select Subject</option>
-                  {subjectsForUI.map(subj => (
-                    <option key={subj.id} value={subj.id}>{subj.name}</option>
-                  ))}
+                  {subjectsForUI.map(subj => {
+                    const c = subjectCompletion.get(subj.id);
+                    const label = c ? `${subj.name} (${c.completed}/${c.total})` : subj.name;
+                    return (
+                      <option key={subj.id} value={subj.id}>{label}</option>
+                    );
+                  })}
                 </select>
               </div>
 
               {/* Right side spacer (button removed) */}
               <div className="w-full md:flex-1" />
             </div>
-            {/* Search */}
-            <div className="w-full">
+            {/* Subject Completion Pills (when exam selected) */}
+            {selectedExamId && subjectsForUI.length > 0 && (
+              <div className="flex gap-2 flex-wrap items-center mb-2">
+                {subjectsForUI.map((s) => {
+                  const c = subjectCompletion.get(s.id) || { completed: 0, total: studentRows.length, th: 0 };
+                  const pct = c.total > 0 ? Math.round((c.completed / c.total) * 100) : 0;
+                  const color = pct === 100 ? 'bg-green-100 text-green-800 border-green-200' : pct === 0 ? 'bg-red-100 text-red-800 border-red-200' : 'bg-amber-100 text-amber-800 border-amber-200';
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => { setSelectedSubjectId(s.id); if (c.completed < c.total) setShowOnlyMissing(true); }}
+                      className={`px-2 py-1 text-xs rounded-full border ${color}`}
+                      title={`${s.name}: ${c.completed}/${c.total} completed${c.th ? ` • TH: ${c.th}` : ''}`}
+                    >
+                      {s.name} {c.completed}/{c.total}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Search and Missing toggle */}
+            <div className="w-full flex flex-col md:flex-row md:items-center gap-3">
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search students..."
-                className="w-full border rounded px-3 py-2 text-sm"
+                className="flex-1 border rounded px-3 py-2 text-sm"
                 disabled={!selectedExamId}
                 aria-label="Search students"
               />
+              {!selectedSubjectId && selectedExamId && (
+                <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                  <input type="checkbox" className="h-4 w-4" checked={showOnlyMissing} onChange={(e) => setShowOnlyMissing(e.target.checked)} />
+                  <span>Show only students with missing subjects</span>
+                </label>
+              )}
             </div>
 
             {/* Toast */}
@@ -1177,18 +1249,18 @@ export default function TeacherExamDashboard() {
                     <th className="px-3 py-2 text-left select-none">
                       <div
                         className="flex items-center gap-2 cursor-pointer hover:text-blue-600"
-                        onClick={() => toggleSort('mark')}
+                        onClick={() => toggleSort(selectedSubjectId ? 'mark' : 'missing')}
                         role="button"
-                        aria-label="Sort by mark"
-                        title="Sort by mark"
+                        aria-label={selectedSubjectId ? 'Sort by mark' : 'Sort by missing count'}
+                        title={selectedSubjectId ? 'Sort by mark' : 'Sort by missing count'}
                       >
-                        <span>{selectedSubjectId ? 'Mark (%)' : 'Final Mark'}</span>
+                        <span>{selectedSubjectId ? 'Mark (%)' : 'Completion'}</span>
                         <span className="ml-1 flex flex-col">
                           <ChevronUp
-                            className={`w-3 h-3 ${sortBy.key === 'mark' && sortBy.dir === 'asc' ? 'text-blue-600' : 'text-gray-300'}`}
+                            className={`w-3 h-3 ${(selectedSubjectId ? sortBy.key === 'mark' : sortBy.key === 'missing') && sortBy.dir === 'asc' ? 'text-blue-600' : 'text-gray-300'}`}
                           />
                           <ChevronDown
-                            className={`w-3 h-3 -mt-1 ${sortBy.key === 'mark' && sortBy.dir === 'desc' ? 'text-blue-600' : 'text-gray-300'}`}
+                            className={`w-3 h-3 -mt-1 ${(selectedSubjectId ? sortBy.key === 'mark' : sortBy.key === 'missing') && sortBy.dir === 'desc' ? 'text-blue-600' : 'text-gray-300'}`}
                           />
                         </span>
                       </div>
@@ -1251,11 +1323,36 @@ export default function TeacherExamDashboard() {
                               />
                             </div>
                             ) : (
-                              <div className="text-base font-semibold text-center">
-                                {typeof agg?.avg === 'number' ? (
-                                  <span className={getScoreColor(agg.avg)}>{Math.round(agg.avg)}%</span>
+                              <div className="text-sm">
+                                {subjectsForUI.length > 0 ? (
+                                  (() => {
+                                    const total = subjectsForUI.length;
+                                    const missing = missingByStudent.get(student.id) || [];
+                                    const completed = total - missing.length;
+                                    const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+                                    const barColor = pct === 100 ? 'bg-green-500' : pct === 0 ? 'bg-red-500' : 'bg-amber-500';
+                                    return (
+                                      <div>
+                                        <div className="h-2 w-28 bg-gray-200 rounded overflow-hidden mx-auto">
+                                          <div className={`h-2 ${barColor}`} style={{ width: `${pct}%` }}></div>
+                                        </div>
+                                        <div className="text-center mt-1 text-xs text-gray-700">{completed}/{total}</div>
+                                        {missing.length > 0 && (
+                                          <div className="mt-1 flex flex-wrap gap-1 justify-center">
+                                            {missing.slice(0,3).map((sid) => {
+                                              const name = subjectsForUI.find(s => s.id === sid)?.name || sid;
+                                              return <span key={sid} className="px-1.5 py-0.5 text-[10px] rounded bg-red-100 text-red-800 border border-red-200">{name}</span>;
+                                            })}
+                                            {missing.length > 3 && (
+                                              <span className="px-1.5 py-0.5 text-[10px] rounded bg-gray-100 text-gray-700 border border-gray-200">+{missing.length-3} more</span>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })()
                                 ) : (
-                                  <span className="text-gray-400">—</span>
+                                  <div className="text-center text-gray-400">—</div>
                                 )}
                               </div>
                             )}
