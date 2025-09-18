@@ -430,6 +430,80 @@ export default function TeacherExamDashboard() {
       return updated;
     });
   };
+
+  // Paste a column of marks from Google Sheets into the table starting at the given visible row index
+  const handleMarkPaste = (startDisplayIdx: number, text: string) => {
+    // Split by newlines; ignore a possible trailing empty line from Sheets
+    const lines = text
+      .replace(/\r/g, '')
+      .split(/\n/)
+      .filter((l, i, arr) => !(i === arr.length - 1 && l.trim() === ''));
+
+    if (lines.length === 0) return;
+
+    // Build order of indices in the current visible ordering
+    const orderIdxs = visibleRows.map((v) => (v as any)._idx as number);
+    const startPos = Math.max(0, Math.min(startDisplayIdx, orderIdxs.length - 1));
+
+    setStudentRows((prev) => {
+      const updated = [...prev];
+      for (let i = 0; i < lines.length && startPos + i < orderIdxs.length; i++) {
+        const targetIdx = orderIdxs[startPos + i];
+        const raw = String(lines[i] ?? '').trim();
+
+        // Interpret TH/Absent markers
+        if (/^(th|absent)$/i.test(raw)) {
+          updated[targetIdx] = {
+            ...updated[targetIdx],
+            isAbsent: true,
+            mark: '',
+            grade: 'TH',
+          };
+          continue;
+        }
+
+        // Extract numeric (allow percent or other symbols copied from sheets)
+        const cleaned = raw.replace(/[^0-9.\-]/g, '');
+        if (cleaned === '' || cleaned === '-' || cleaned === '--') {
+          updated[targetIdx] = {
+            ...updated[targetIdx],
+            isAbsent: false,
+            mark: '',
+            grade: '',
+          };
+          continue;
+        }
+
+        const num = parseFloat(cleaned);
+        if (isNaN(num)) {
+          // Skip invalid value
+          continue;
+        }
+
+        const bounded = Math.max(0, Math.min(100, num));
+        updated[targetIdx] = {
+          ...updated[targetIdx],
+          isAbsent: false,
+          mark: String(bounded),
+          grade: computeGradeClientSide(bounded),
+        };
+      }
+      return updated;
+    });
+
+    // Save shortly after paste so data isn't lost
+    setTimeout(() => {
+      if (!saving) {
+        handleSaveAll();
+      }
+    }, 150);
+  };
+
+  const handleMarkPasteFromInput = (e: React.ClipboardEvent<HTMLInputElement>, startDisplayIdx: number) => {
+    e.preventDefault();
+    const text = e.clipboardData.getData('text') || '';
+    handleMarkPaste(startDisplayIdx, text);
+  };
   const handleAbsentToggle = (idx: number, checked: boolean) => {
     setStudentRows((prev) => {
       const updated = [...prev];
@@ -605,11 +679,13 @@ export default function TeacherExamDashboard() {
             }
             return null;
           }
+          // Clamp to valid range to satisfy DB constraints
+          const bounded = Math.max(0, Math.min(100, mark));
           
           return {
             studentId: r.id,
-            mark,
-            finalScore: mark,
+            mark: bounded,
+            finalScore: bounded,
             isAbsent: false
           };
         })
@@ -1127,6 +1203,7 @@ export default function TeacherExamDashboard() {
                                 className="w-16 border rounded pl-5 pr-2 py-1 text-right"
                                 value={student.mark}
                                 onChange={(e) => handleMarkChange(idx, e.target.value)}
+                                onPaste={(e) => handleMarkPasteFromInput(e, displayIdx)}
                                 placeholder=""
                                 disabled={!!student.isAbsent}
                               />
