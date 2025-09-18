@@ -71,6 +71,7 @@ export default function TeacherExamDashboard() {
   const [saving, setSaving] = React.useState(false);
   const [statusMsg, setStatusMsg] = React.useState<string>("");
   const [searchQuery, setSearchQuery] = React.useState<string>("");
+  const [nameSort, setNameSort] = React.useState<'asc' | 'desc' | null>(null);
   // Toast state for quick popup notifications
   const [toast, setToast] = React.useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -510,6 +511,11 @@ export default function TeacherExamDashboard() {
     }
   };
 
+  // Toggle sort for Name column
+  const toggleNameSort = () => {
+    setNameSort((prev) => (prev === 'asc' ? 'desc' : prev === 'desc' ? null : 'asc'));
+  };
+
   // Check for unsaved changes
   const hasUnsavedChanges = () => {
     if (!initialRowsRef.current || initialRowsRef.current.length === 0) return false;
@@ -787,10 +793,18 @@ export default function TeacherExamDashboard() {
   // Visible rows based on search (map indexes back to original array)
   const visibleRows = React.useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const base = studentRows.map((r, idx) => ({ ...r, _idx: idx } as StudentRow & { _idx: number }));
-    if (!q) return base;
-    return base.filter(r => (r.name || '').toLowerCase().includes(q));
-  }, [studentRows, searchQuery]);
+    let base = studentRows.map((r, idx) => ({ ...r, _idx: idx } as StudentRow & { _idx: number }));
+    if (q) {
+      base = base.filter(r => (r.name || '').toLowerCase().includes(q));
+    }
+    if (nameSort) {
+      base = [...base].sort((a, b) => {
+        const comp = (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
+        return nameSort === 'asc' ? comp : -comp;
+        });
+    }
+    return base;
+  }, [studentRows, searchQuery, nameSort]);
 
   const marksData = visibleRows.map((s) => ({ name: s.name, mark: parseFloat(s.mark) || 0 }));
   const avgConduct: Record<string, number> = {};
@@ -999,7 +1013,25 @@ export default function TeacherExamDashboard() {
                 <thead>
                   <tr className="bg-muted">
                     <th className="px-3 py-2 text-left">No</th>
-                    <th className="px-3 py-2 text-left">Name</th>
+                    <th className="px-3 py-2 text-left select-none">
+                      <div
+                        className="flex items-center gap-2 cursor-pointer hover:text-blue-600"
+                        onClick={toggleNameSort}
+                        role="button"
+                        aria-label="Sort by student name"
+                        title="Sort by student name"
+                      >
+                        <span>Name</span>
+                        <span className="ml-1 flex flex-col">
+                          <ChevronUp
+                            className={`w-3 h-3 ${nameSort === 'asc' ? 'text-blue-600' : 'text-gray-300'}`}
+                          />
+                          <ChevronDown
+                            className={`w-3 h-3 -mt-1 ${nameSort === 'desc' ? 'text-blue-600' : 'text-gray-300'}`}
+                          />
+                        </span>
+                      </div>
+                    </th>
                     <th className="px-3 py-2 text-left">Mark (%)</th>
                     <th className="px-3 py-2 text-left">Grade</th>
                     <th className="px-3 py-2 text-left">Conduct</th>
