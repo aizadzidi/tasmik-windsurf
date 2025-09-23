@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   useReactTable,
@@ -11,6 +11,8 @@ import {
   createColumnHelper
 } from '@tanstack/react-table';
 import { ChevronDown, ChevronUp } from 'lucide-react';
+import { supabase } from '@/lib/supabaseClient';
+import { GradeSummaryRow, rpcGetGradeSummaryPerClass } from '@/data/exams';
 
 export interface StudentData {
   id: string;
@@ -56,12 +58,79 @@ interface StudentTableProps {
   onRowClick: (student: StudentData) => void;
   loading?: boolean;
   selectedSubject?: string;
+  examId?: string;
+  classId?: string;
 }
 
 const columnHelper = createColumnHelper<StudentData>();
 
+export default function StudentTable({ data, onRowClick, loading, selectedSubject, examId, classId }: StudentTableProps) {
+  const [gradeCache, setGradeCache] = useState<Record<string, Map<string, GradeSummaryRow[]>>>({});
+  const [gradeLoading, setGradeLoading] = useState(false);
 
-export default function StudentTable({ data, onRowClick, loading, selectedSubject }: StudentTableProps) {
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!examId || !classId) {
+      setGradeCache({});
+      setGradeLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const key = `${examId}:${classId}`;
+
+    setGradeLoading(true);
+
+    (async () => {
+      try {
+        const rows = await rpcGetGradeSummaryPerClass(supabase, examId, classId);
+        const byStudent = new Map<string, GradeSummaryRow[]>();
+
+        for (const r of rows) {
+          if (!byStudent.has(r.student_id)) {
+            byStudent.set(r.student_id, []);
+          }
+          byStudent.get(r.student_id)!.push(r);
+        }
+
+        for (const [, arr] of byStudent) {
+          arr.sort((a, b) => a.grade_rank - b.grade_rank || a.grade.localeCompare(b.grade));
+        }
+
+        if (!cancelled) {
+          setGradeCache((prev) => ({
+            ...prev,
+            [key]: byStudent,
+          }));
+          console.debug('[grade-summary]', examId, classId, 'rows=', rows.length, 'students=', byStudent.size);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error(error);
+          setGradeCache((prev) => ({
+            ...prev,
+            [key]: new Map<string, GradeSummaryRow[]>(),
+          }));
+        }
+      } finally {
+        if (!cancelled) {
+          setGradeLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [examId, classId]);
+
+  const gradeMap = useMemo(() => {
+    if (!examId || !classId) return new Map<string, GradeSummaryRow[]>();
+    const key = `${examId}:${classId}`;
+    return gradeCache[key] ?? new Map<string, GradeSummaryRow[]>();
+  }, [gradeCache, examId, classId]);
 
   const columns = useMemo(() => [
     columnHelper.accessor('name', {
@@ -101,32 +170,33 @@ export default function StudentTable({ data, onRowClick, loading, selectedSubjec
       header: 'Grade',
       size: 260,
       cell: ({ row }) => {
-        const subjects = row.original.subjects || {};
-        const gradeCounts: Record<string, number> = {};
-        Object.values(subjects).forEach((s: any) => {
-          const g = (s && typeof s.grade === 'string') ? s.grade : '';
-          if (!g) return;
-          gradeCounts[g] = (gradeCounts[g] || 0) + 1;
-        });
-        const entries = Object.entries(gradeCounts);
-        if (entries.length === 0) return <span className="text-gray-400">—</span>;
-        // Sort by a simple preferred order if common, else by count desc
-        const order = ['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D', 'E', 'F', 'TH'];
-        entries.sort((a, b) => {
-          const ia = order.indexOf(a[0]);
-          const ib = order.indexOf(b[0]);
-          if (ia !== -1 && ib !== -1) return ia - ib;
-          if (ia !== -1) return -1;
-          if (ib !== -1) return 1;
-          return b[1] - a[1];
-        });
+        const rows = gradeMap.get(row.original.id);
+
+        if (!rows || rows.length === 0) {
+          return (
+            <span className={gradeLoading ? "text-muted-foreground animate-pulse" : "text-muted-foreground"}>
+              —
+            </span>
+          );
+        }
+
+        const absent = rows[0]?.absent_cnt ?? 0;
+
         return (
-          <div className="flex flex-wrap gap-1 justify-center">
-            {entries.map(([grade, count]) => (
-              <span key={grade} className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-800 border border-gray-200">
-                {grade}: {count}
+          <div className="flex flex-wrap gap-1">
+            {rows.map((r) => (
+              <span
+                key={`${r.grade}-${r.grade_rank}`}
+                className="inline-flex items-center rounded-full px-2 py-0.5 text-xs bg-muted"
+              >
+                {r.grade}: {r.cnt}
               </span>
             ))}
+            {absent > 0 && (
+              <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs bg-muted/60">
+                Abs: {absent}
+              </span>
+            )}
           </div>
         );
       }
@@ -173,7 +243,7 @@ export default function StudentTable({ data, onRowClick, loading, selectedSubjec
         );
       },
     }),
-  ], [selectedSubject]);
+  ], [selectedSubject, gradeMap, gradeLoading]);
 
   const table = useReactTable({
     data,

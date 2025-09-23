@@ -515,6 +515,8 @@ export default function AdminExamPage() {
               onRowClick={handleStudentClick}
               loading={loading}
               selectedSubject={selectedSubject}
+              examId={selectedExam}
+              classId={selectedClass}
             />
           )}
         </div>

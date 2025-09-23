@@ -16,6 +16,15 @@ export type ClassAvg = {
   n: number;
 };
 
+export type GradeSummaryRow = {
+  student_id: string;
+  grade: string;
+  cnt: number;
+  absent_cnt: number;
+  total_present: number;
+  grade_rank: number;
+};
+
 export async function rpcGetStudentSubjects(
   supabase: SupabaseClient,
   examId: string,
@@ -49,4 +58,18 @@ export async function rpcGetClassSubjectAverages(
     class_avg: a.class_avg === null ? null : Number(a.class_avg),
     n: Number(a.n),
   }));
+}
+
+export async function rpcGetGradeSummaryPerClass(
+  supabase: SupabaseClient,
+  examId: string,
+  classId: string
+): Promise<GradeSummaryRow[]> {
+  const { data, error } = await supabase.rpc('get_grade_summary_per_class', {
+    p_exam_id: examId,
+    p_class_id: classId,
+  });
+
+  if (error) throw error;
+  return (data ?? []) as GradeSummaryRow[];
 }
