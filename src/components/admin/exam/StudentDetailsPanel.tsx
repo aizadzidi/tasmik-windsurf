@@ -169,6 +169,21 @@ export default function StudentDetailsPanel({
   const fmt = (value: number | null | undefined) =>
     value == null || Number.isNaN(value) ? '—' : `${value}%`;
 
+  const toNumeric = (value: unknown): number | null => {
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : null;
+    }
+    if (typeof value === 'string') {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    if (Array.isArray(value) && value.length > 0) {
+      const parsed = Number(value[0]);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  };
+
   React.useEffect(() => {
     if (selectedSubject && !filled.some((row) => row.subject_name === selectedSubject)) {
       setSelectedSubject(null);
@@ -644,11 +659,10 @@ export default function StudentDetailsPanel({
                             />
                             <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
                             <Tooltip 
-                              formatter={(value: number | string | null | undefined, name: string, item: { payload?: ChartDatum }) => {
-                                const payload = item?.payload;
+                              formatter={(value: unknown, name: string, item: unknown) => {
+                                const payload = (item as { payload?: ChartDatum })?.payload;
                                 if (!payload) {
-                                  const numeric = typeof value === 'number' ? value : value == null ? null : Number(value);
-                                  return [fmt(numeric), name];
+                                  return [fmt(toNumeric(value)), name];
                                 }
                                 if (name === 'Student Mark') {
                                   return [fmt(payload.score), name];
@@ -656,8 +670,7 @@ export default function StudentDetailsPanel({
                                 if (name === 'Class Average') {
                                   return [fmt(payload.classAvg), name];
                                 }
-                                const numeric = typeof value === 'number' ? value : value == null ? null : Number(value);
-                                return [fmt(numeric), name];
+                                return [fmt(toNumeric(value)), name];
                               }}
                               labelFormatter={(label) => `Subject: ${label}`}
                               contentStyle={{
@@ -720,15 +733,14 @@ export default function StudentDetailsPanel({
                                 <XAxis dataKey="label" tick={{ fontSize: 12 }} />
                                 <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
                                 <Tooltip
-                                  formatter={(value: number | string | null | undefined, name: string) => {
-                                    const numeric = typeof value === 'number' ? value : value == null ? null : Number(value);
+                                  formatter={(value: unknown, name: string) => {
                                     if (name === 'Student') {
-                                      return [fmt(numeric), 'Student Mark'];
+                                      return [fmt(toNumeric(value)), 'Student Mark'];
                                     }
                                     if (name === 'Class Avg') {
-                                      return [fmt(numeric), 'Class Average'];
+                                      return [fmt(toNumeric(value)), 'Class Average'];
                                     }
-                                    return [fmt(numeric), name];
+                                    return [fmt(toNumeric(value)), name];
                                   }}
                                 />
                                 <Line
