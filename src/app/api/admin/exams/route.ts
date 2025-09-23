@@ -412,7 +412,15 @@ export async function GET(request: Request) {
       const studentResults = (examResults || []).filter((result: any) => result.student_id === student.id) || [];
       
       // Build subjects object
-      const subjectsData: { [subject: string]: { score: number; trend: number[]; grade: string; exams?: { name: string; score: number }[] } } = {};
+      const subjectsData: {
+        [subject: string]: {
+          score: number;
+          trend: number[];
+          grade: string;
+          exams?: { name: string; score: number }[];
+          optedOut?: boolean;
+        };
+      } = {};
       
       const subjectCandidates = new Map<string, { id: string; name: string }>();
       (subjects || []).forEach((subject: any) => {
