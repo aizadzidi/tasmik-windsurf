@@ -265,14 +265,22 @@ export default function AdminExamPage() {
       if (!subject) return;
       let total = 0;
       let count = 0;
+      let thCount = 0;
       baseStudents.forEach((stu) => {
         const s = stu?.subjects?.[subject];
-        if (s && typeof s.score === 'number') {
+        if (!s) return;
+        const grade = String(s.grade || '').toUpperCase();
+        if (grade === 'TH') {
+          thCount += 1;
+          return;
+        }
+        if (typeof s.score === 'number') {
           total += s.score;
           count += 1;
         }
       });
       averages[subject] = count > 0 ? Math.round(total / count) : 0;
+      // For display, TH students are handled per-student; no need to include them in averages.
     });
 
     return averages;
@@ -519,6 +527,8 @@ export default function AdminExamPage() {
         classAverages={classAverages}
         isMobile={isMobile}
         selectedExamName={selectedExamName || ''}
+        examId={selectedExam || ''}
+        classId={selectedStudent?.classId || selectedClass || ''}
       />
 
       {/* Manage Exams Modal */}

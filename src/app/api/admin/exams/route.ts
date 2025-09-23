@@ -7,8 +7,25 @@ interface ExamStudent {
   id: string;
   name: string;
   class: string;
-  subjects: { [subject: string]: { score: number; trend: number[]; grade: string; exams?: { name: string; score: number }[] } };
+  classId: string;
+  subjects: {
+    [subject: string]: {
+      score: number;
+      trend: number[];
+      grade: string;
+      exams?: { name: string; score: number }[];
+      optedOut?: boolean;
+    };
+  };
   conduct: {
+    discipline: number;
+    effort: number;
+    participation: number;
+    motivationalLevel: number;
+    character: number;
+    leadership: number;
+  };
+  conductPercentages?: {
     discipline: number;
     effort: number;
     participation: number;
@@ -78,7 +95,7 @@ export async function GET(request: Request) {
       }
     })();
 
-    const [studentsResult, subjectsResult, examResultsResult, conductResult, classesResult, examClassesWeightsResult] = await Promise.all([
+    const [studentsResult, subjectsResult, examResultsResult, conductResult, classesResult, examClassesWeightsResult, subjectOptOutsResult] = await Promise.all([
       // Students (admin client to avoid RLS issues)
       (async () => {
         const data = await adminOperationSimple(async (client) => {
@@ -157,6 +174,7 @@ export async function GET(request: Request) {
             student_id,
             subject_id,
             mark,
+            final_score,
             grade,
             subjects!inner(name),
             exam_id
@@ -170,6 +188,7 @@ export async function GET(request: Request) {
               student_id,
               subject_id,
               mark,
+              final_score,
               grade,
               subjects(name),
               exam_id
@@ -251,6 +270,27 @@ export async function GET(request: Request) {
         });
         return data as any;
       })(),
+
+      (async () => {
+        const data = await adminOperationSimple(async (client) => {
+          let q = client
+            .from('subject_opt_outs')
+            .select('exam_id, subject_id, student_id');
+          if (examId) q = q.eq('exam_id', examId);
+          const { data, error } = await q;
+          if (error) throw error;
+          return { data, error: null } as const;
+        }).catch((err) => {
+          const message = String(err?.message || '');
+          if (message.includes('subject_opt_outs')) {
+            console.warn('subject_opt_outs table not found; treating as empty');
+            return { data: [], error: null } as const;
+          }
+          console.error('Admin fetch subject_opt_outs failed:', err);
+          return { data: [], error: err } as const;
+        });
+        return data as any;
+      })(),
     ]);
 
     const { data: students, error: studentsError } = studentsResult;
@@ -259,6 +299,7 @@ export async function GET(request: Request) {
     const { data: conductEntries, error: conductError } = conductResult;
     const { data: classesData } = classesResult || { data: [] } as any;
     const { data: examClassesWeights } = examClassesWeightsResult || { data: [] } as any;
+    const { data: subjectOptOuts } = subjectOptOutsResult || { data: [] } as any;
     
     if (studentsError) {
       console.error('Error fetching students:', studentsError);
@@ -316,6 +357,56 @@ export async function GET(request: Request) {
       if (row && row.class_id) conductWeightByClassId.set(String(row.class_id), Number(row.conduct_weightage) || 0);
     });
 
+    const optOutMap = new Map<string, Set<string>>();
+    (subjectOptOuts || []).forEach((row: any) => {
+      const sid = row?.student_id ? String(row.student_id) : null;
+      const subjId = row?.subject_id ? String(row.subject_id) : null;
+      if (!sid || !subjId) return;
+      if (!optOutMap.has(sid)) optOutMap.set(sid, new Set());
+      optOutMap.get(sid)!.add(subjId);
+    });
+    const subjectsSeen = new Set<string>();
+
+    const subjectMetaById = new Map<string, string>();
+    (subjects || []).forEach((subject: any) => {
+      const subjId = subject?.id ? String(subject.id) : null;
+      const subjectName = subject?.name ? String(subject.name) : null;
+      if (!subjId) return;
+      if (subjectName) {
+        subjectMetaById.set(subjId, subjectName);
+      }
+    });
+
+    const resultSubjectIds = new Set<string>();
+    (examResults || []).forEach((row: any) => {
+      const subjId = row?.subject_id ? String(row.subject_id) : null;
+      if (subjId) resultSubjectIds.add(subjId);
+    });
+    const missingSubjectIds = Array.from(resultSubjectIds).filter((id) => !subjectMetaById.has(id));
+    if (missingSubjectIds.length > 0) {
+      try {
+        const extraSubjects = await adminOperationSimple(async (client) => {
+          const { data, error } = await client
+            .from('subjects')
+            .select('id, name')
+            .in('id', missingSubjectIds);
+          if (error) throw error;
+          return data as Array<{ id: string; name: string | null }>;
+        }).catch((err) => {
+          console.error('Admin fetch extra subjects failed:', err);
+          return [] as Array<{ id: string; name: string | null }>;
+        });
+        extraSubjects.forEach((subject) => {
+          const subjId = subject?.id ? String(subject.id) : null;
+          if (!subjId) return;
+          const subjectName = subject?.name ? String(subject.name) : `Subject ${subjId}`;
+          subjectMetaById.set(subjId, subjectName);
+        });
+      } catch (err) {
+        console.error('Failed to backfill subject names for results', err);
+      }
+    }
+
     const studentExamData: ExamStudent[] = (students || []).map((student: any) => {
       // Get student's exam results
       const studentResults = (examResults || []).filter((result: any) => result.student_id === student.id) || [];
@@ -323,45 +414,71 @@ export async function GET(request: Request) {
       // Build subjects object
       const subjectsData: { [subject: string]: { score: number; trend: number[]; grade: string; exams?: { name: string; score: number }[] } } = {};
       
+      const subjectCandidates = new Map<string, { id: string; name: string }>();
       (subjects || []).forEach((subject: any) => {
         const subjId = subject?.id ? String(subject.id) : null;
-        const subjectResults = (studentResults || []).filter((r: any) => {
-          // Prefer matching by subject_id; fallback to joined name if available
-          if (subjId) return String(r.subject_id) === subjId;
-          return (r as any).subjects?.name === subject.name;
-        });
+        const subjectName = subject?.name ? String(subject.name) : null;
+        if (!subjId || !subjectName) return;
+        subjectCandidates.set(subjId, { id: subjId, name: subjectName });
+      });
+      (studentResults || []).forEach((result: any) => {
+        const subjId = result?.subject_id ? String(result.subject_id) : null;
+        if (!subjId) return;
+        const subjectNameRaw = result?.subjects?.name ?? subjectMetaById.get(subjId);
+        const subjectName = subjectNameRaw ? String(subjectNameRaw) : `Subject ${subjId}`;
+        subjectCandidates.set(subjId, { id: subjId, name: subjectName });
+      });
 
-        // Determine the score to show for the currently selected exam (or latest)
+      subjectCandidates.forEach(({ id: subjId, name: subjectName }) => {
+        const subjectResults = (studentResults || []).filter((r: any) => String(r.subject_id) === subjId);
+        if (subjectResults.length === 0) return;
+
+        const studentOptOuts = optOutMap.get(String(student.id));
+        const isOptedOut = studentOptOuts?.has(subjId) ?? false;
+
         let currentResult: any | undefined;
         if (examId) {
           currentResult = subjectResults.find((r: any) => String(r.exam_id) === String(examId));
         }
         if (!currentResult) {
-          // latest by exam date if available from metadata map
           currentResult = subjectResults
             .slice()
             .sort((a: any, b: any) => {
               const da = new Date(examMetaById.get(String(a.exam_id))?.date || 0).getTime();
               const db = new Date(examMetaById.get(String(b.exam_id))?.date || 0).getTime();
-              return db - da;
+              return da - db;
             })[0];
         }
+        if (!currentResult) return;
 
-        const score = currentResult?.mark ?? 0;
-        // Rely on DB-calculated grade only; no JS fallback
-        const grade = currentResult?.grade ?? '';
+        const gradeRaw = currentResult?.grade ?? '';
+        const grade = typeof gradeRaw === 'string' ? gradeRaw : '';
+        const isTH = grade.toUpperCase() === 'TH';
 
-        // Build exam-based history for charts
-        const examsHistory = subjectResults
-          .filter((r: any) => typeof r?.mark === 'number')
+        const markCandidate = currentResult?.final_score ?? currentResult?.mark;
+        const numericMark = typeof markCandidate === 'number' ? markCandidate : Number(markCandidate);
+        const hasNumericMark = Number.isFinite(numericMark);
+        const hasGrade = grade !== '';
+
+        if (!hasNumericMark && !isTH && !hasGrade) {
+          return;
+        }
+
+        const score = hasNumericMark ? Number(numericMark) : 0;
+
+        const examsHistory = (subjectResults || [])
           .map((r: any) => {
+            const markValue = r?.final_score ?? r?.mark;
+            const numeric = typeof markValue === 'number' ? markValue : Number(markValue);
+            if (!Number.isFinite(numeric)) return null;
             const meta = examMetaById.get(String(r.exam_id));
             return {
               name: meta?.name || 'Exam',
-              score: r.mark as number,
+              score: Number(numeric),
               _date: meta?.date || null
             };
           })
+          .filter((entry: any) => entry !== null)
           .sort((a: any, b: any) => {
             const da = new Date(a._date || 0).getTime();
             const db = new Date(b._date || 0).getTime();
@@ -371,12 +488,14 @@ export async function GET(request: Request) {
 
         const trend = examsHistory.length > 0 ? examsHistory.map((h: any) => h.score) : generateTrend(score);
 
-        subjectsData[subject.name] = {
+        subjectsData[subjectName] = {
           score,
           trend,
           grade,
-          exams: examsHistory
+          exams: examsHistory,
+          optedOut: isOptedOut || undefined
         };
+        subjectsSeen.add(subjectName);
       });
 
       // Aggregate conduct from conduct_entries for this student/exam
@@ -413,20 +532,47 @@ export async function GET(request: Request) {
           character: (acc.character || 0) + (Number(e.character) || 0),
           leadership: (acc.leadership || 0) + (Number(e.leadership) || 0),
         }), {} as any);
-        return {
-          discipline: safeDiv(sum.discipline || 0, n) / 20,
-          effort: safeDiv(sum.effort || 0, n) / 20,
-          participation: safeDiv(sum.participation || 0, n) / 20,
-          motivationalLevel: safeDiv(sum.motivational_level || 0, n) / 20,
-          character: safeDiv(sum.character || 0, n) / 20,
-          leadership: safeDiv(sum.leadership || 0, n) / 20,
+        const percent = {
+          discipline: safeDiv(sum.discipline || 0, n),
+          effort: safeDiv(sum.effort || 0, n),
+          participation: safeDiv(sum.participation || 0, n),
+          motivationalLevel: safeDiv(sum.motivational_level || 0, n),
+          character: safeDiv(sum.character || 0, n),
+          leadership: safeDiv(sum.leadership || 0, n),
         };
+        const normalized = {
+          discipline: percent.discipline / 20,
+          effort: percent.effort / 20,
+          participation: percent.participation / 20,
+          motivationalLevel: percent.motivationalLevel / 20,
+          character: percent.character / 20,
+          leadership: percent.leadership / 20,
+        };
+        return { percent, normalized };
       })();
 
-      const conduct = avgByCategory;
+      const conductPercentages = avgByCategory.percent;
+      const conduct = avgByCategory.normalized;
 
       // Calculate overall average: academic average blended with conduct by weight
-      const scores = Object.values(subjectsData).map((s: { score: number }) => s.score);
+      // Only include subjects with numeric scores in the average calculation
+      const scoredSubjects = Object.values(subjectsData).filter((s: any) => {
+        // Include in average if it has a numeric score or isn't marked as TH
+        return s.score > 0 || (s.grade && s.grade.toUpperCase() !== 'TH');
+      });
+      const scores = scoredSubjects.map((s: { score: number; grade?: string }) => {
+        // For grade-only entries, estimate a score based on grade
+        if (s.score === 0 && s.grade) {
+          const gradeEstimates: { [key: string]: number } = {
+            'A+': 95, 'A': 85, 'A-': 75,
+            'B+': 67, 'B': 62, 'B-': 57,
+            'C+': 52, 'C': 47, 'C-': 42,
+            'D': 37, 'E': 32, 'F': 25, 'G': 20
+          };
+          return gradeEstimates[s.grade.toUpperCase()] || s.score;
+        }
+        return s.score;
+      });
       const academicAvg = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
       const cw = (examId ? (conductWeightByClassId.get(String(student.class_id)) || 0) : 0);
       const aw = Math.max(0, 100 - cw);
@@ -440,8 +586,10 @@ export async function GET(request: Request) {
         id: student.id,
         name: student.name,
         class: classNameById.get(student.class_id) || 'Unknown',
+        classId: String(student.class_id || ''),
         subjects: subjectsData,
         conduct,
+        conductPercentages,
         overall: {
           average,
           rank: 0, // Will be calculated after sorting
@@ -459,7 +607,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       students: studentExamData,
-      subjects: (subjects || []).map((s: any) => s.name),
+      subjects: Array.from(subjectsSeen),
       success: true
     });
 

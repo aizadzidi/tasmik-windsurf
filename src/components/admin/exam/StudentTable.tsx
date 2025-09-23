@@ -17,15 +17,25 @@ export interface StudentData {
   name: string;
   avatar?: string;
   class: string;
+  classId?: string;
   subjects: {
     [subject: string]: {
       score: number;
       trend: number[];
       grade: string;
       exams?: { name: string; score: number }[]; // optional exam history for charts
+      optedOut?: boolean;
     };
   };
   conduct: {
+    discipline: number;
+    effort: number;
+    participation: number;
+    motivationalLevel: number;
+    character: number;
+    leadership: number;
+  };
+  conductPercentages?: {
     discipline: number;
     effort: number;
     participation: number;

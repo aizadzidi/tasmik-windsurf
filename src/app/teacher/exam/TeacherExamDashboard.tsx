@@ -51,6 +51,7 @@ type StudentRow = {
   grade: string;
   conduct: Record<ConductKey, string>;
   isAbsent?: boolean;
+  optedOut?: boolean;
 };
 
 export default function TeacherExamDashboard() {
@@ -78,6 +79,8 @@ export default function TeacherExamDashboard() {
   const [missingByStudent, setMissingByStudent] = React.useState<Map<string, string[]>>(new Map());
   // Per-subject completion summary for current roster
   const [subjectCompletion, setSubjectCompletion] = React.useState<Map<string, { completed: number; total: number; th: number }>>(new Map());
+  // Per-subject opt-out tracking (subject -> student set)
+  const [subjectOptOutMap, setSubjectOptOutMap] = React.useState<Map<string, Set<string>>>(new Map());
   // Toggle to filter only students with missing subjects (when no subject is selected)
   const [showOnlyMissing, setShowOnlyMissing] = React.useState(false);
   // Metadata readiness to avoid UI flicker while initial selections are being computed
@@ -249,6 +252,8 @@ export default function TeacherExamDashboard() {
       }
       try {
         const rosterIds = studentRows.map(r => r.id);
+        const rosterSet = new Set(rosterIds);
+        const studentRowMap = new Map(studentRows.map((row) => [row.id, row]));
         const allSubjectIds = subjectsForUI.map(s => s.id);
         if (rosterIds.length === 0 || allSubjectIds.length === 0) {
           setAggregateByStudent(new Map());
@@ -263,29 +268,79 @@ export default function TeacherExamDashboard() {
           .in('student_id', rosterIds);
         const perStudentAgg = new Map<string, { sum: number; count: number; gradeCounts: Record<string, number> }>();
         const perStudentFilled = new Map<string, Set<string>>();
-        const perStudentTH = new Map<string, Set<string>>();
         const perSubjectCompleted = new Map<string, number>();
         const perSubjectTH = new Map<string, number>();
         (data || []).forEach((r: any) => {
           const sid = String(r.student_id);
           const subId = String(r.subject_id);
           const fs = typeof r.final_score === 'number' ? r.final_score : null;
+          const markVal = typeof fs === 'number' ? fs : (typeof r.mark === 'number' ? r.mark : null);
           const g = (r.grade || '').toUpperCase();
           const isTH = g === 'TH';
-          const hasMark = typeof r.mark === 'number';
-          // Agg averages
+          const hasNumeric = typeof markVal === 'number';
+
           if (!perStudentAgg.has(sid)) perStudentAgg.set(sid, { sum: 0, count: 0, gradeCounts: {} });
           const agg = perStudentAgg.get(sid)!;
-          if (typeof fs === 'number') { agg.sum += fs; agg.count += 1; }
+          if (hasNumeric) {
+            agg.sum += markVal as number;
+            agg.count += 1;
+          } else if (isTH) {
+            agg.count += 1;
+          }
           if (g) { agg.gradeCounts[g] = (agg.gradeCounts[g] || 0) + 1; }
-          // Filled logic
-          if (isTH || hasMark) {
+
+          if (isTH || hasNumeric) {
             if (!perStudentFilled.has(sid)) perStudentFilled.set(sid, new Set());
-            perStudentFilled.get(sid)!.add(subId);
-            perSubjectCompleted.set(subId, (perSubjectCompleted.get(subId) || 0) + 1);
+            const filledSet = perStudentFilled.get(sid)!;
+            const sizeBefore = filledSet.size;
+            filledSet.add(subId);
+            if (filledSet.size !== sizeBefore) {
+              perSubjectCompleted.set(subId, (perSubjectCompleted.get(subId) || 0) + 1);
+            }
             if (isTH) perSubjectTH.set(subId, (perSubjectTH.get(subId) || 0) + 1);
           }
         });
+
+        subjectOptOutMap.forEach((studentSet, subId) => {
+          studentSet.forEach((sid) => {
+            if (!rosterSet.has(sid)) return;
+            if (!perStudentFilled.has(sid)) perStudentFilled.set(sid, new Set());
+            const filledSet = perStudentFilled.get(sid)!;
+            if (!filledSet.has(subId)) {
+              filledSet.add(subId);
+              perSubjectCompleted.set(subId, (perSubjectCompleted.get(subId) || 0) + 1);
+            }
+          });
+        });
+
+        if (selectedSubjectId) {
+          const subId = selectedSubjectId;
+          const completedSet = new Set<string>();
+          studentRows.forEach((row) => {
+            const sid = row.id;
+            if (!rosterSet.has(sid)) return;
+            if (!perStudentFilled.has(sid)) perStudentFilled.set(sid, new Set());
+            const filledSet = perStudentFilled.get(sid)!;
+            filledSet.delete(subId);
+
+            if (row.optedOut) {
+              filledSet.add(subId);
+              completedSet.add(sid);
+              return;
+            }
+
+            const numeric = parseFloat(String(row.mark));
+            const hasNumeric = Number.isFinite(numeric);
+            const isTH = Boolean(row.isAbsent);
+            if (hasNumeric || isTH) {
+              filledSet.add(subId);
+              completedSet.add(sid);
+              if (isTH) perSubjectTH.set(subId, (perSubjectTH.get(subId) || 0) + 1);
+            }
+          });
+
+          perSubjectCompleted.set(subId, completedSet.size);
+        }
         // Build outputs
         const outAgg = new Map<string, { avg: number | null; gradeCounts: Record<string, number> }>();
         rosterIds.forEach((id) => {
@@ -299,6 +354,20 @@ export default function TeacherExamDashboard() {
           const missing = allSubjectIds.filter(sid => !filled.has(sid));
           outMissing.set(id, missing);
         });
+        if (selectedSubjectId) {
+          rosterIds.forEach((id) => {
+            const row = studentRowMap.get(id);
+            if (!row) return;
+            const filled = outMissing.get(id) || [];
+            const shouldFill = Boolean(row.optedOut) || Boolean(row.isAbsent) || Number.isFinite(parseFloat(String(row.mark)));
+            const hasSubject = filled.includes(selectedSubjectId);
+            if (shouldFill && hasSubject) {
+              outMissing.set(id, filled.filter(sid => sid !== selectedSubjectId));
+            } else if (!shouldFill && !hasSubject) {
+              outMissing.set(id, [...filled, selectedSubjectId]);
+            }
+          });
+        }
         setMissingByStudent(outMissing);
         const total = rosterIds.length;
         const outSubject = new Map<string, { completed: number; total: number; th: number }>();
@@ -313,7 +382,7 @@ export default function TeacherExamDashboard() {
         setSubjectCompletion(new Map());
       }
     })();
-  }, [selectedExamId, studentRows, subjectsForUI]);
+  }, [selectedExamId, studentRows, subjectsForUI, subjectOptOutMap]);
 
   // Compute conduct categories from dynamic criteria or use defaults
   const conductCategories = React.useMemo(() => {
@@ -381,12 +450,15 @@ export default function TeacherExamDashboard() {
       // Prepare containers to fill inside try
       let marksByStudent = new Map<string, { mark: number | null; grade: string | null }>();
       let conductByStudent = new Map<string, Record<ConductKey, number>>();
+      let optOutIdsForRows = new Set<string>();
 
       // Apply exam exclusions, fetch marks and conduct in parallel to reduce latency
       try {
+        setSubjectOptOutMap(new Map());
         const params = new URLSearchParams({ examId: selectedExamId });
         if (selectedClassId && selectedClassId !== 'all') params.append('classId', selectedClassId);
-        const [exclRes, resultsRes, conductRes] = await Promise.all([
+        const optOutQuery = new URLSearchParams({ examId: selectedExamId });
+        const [exclRes, resultsRes, conductRes, optOutJson] = await Promise.all([
           fetch(`/api/teacher/exam-exclusions?${params.toString()}`),
           selectedSubjectId
             ? supabase.from('exam_results')
@@ -400,7 +472,10 @@ export default function TeacherExamDashboard() {
                 .select('student_id, discipline, effort, participation, motivational_level, character, leadership')
                 .eq('exam_id', selectedExamId)
                 .eq('teacher_id', userId)
-            : Promise.resolve({ data: [] as any[] })
+            : Promise.resolve({ data: [] as any[] }),
+          fetch(`/api/teacher/subject-opt-outs?${optOutQuery.toString()}`)
+            .then((r) => r.json())
+            .catch(() => ({ entries: [] as any[] }))
         ]);
         // Exclusions
         try {
@@ -428,6 +503,20 @@ export default function TeacherExamDashboard() {
             leadership: Number(e.leadership) || 0,
           });
         });
+
+        const optOutEntriesRaw = Array.isArray(optOutJson?.entries) ? optOutJson.entries : [];
+        const optOutMap = new Map<string, Set<string>>();
+        (optOutEntriesRaw || []).forEach((entry: any) => {
+          if (!entry) return;
+          const sid = entry?.student_id ? String(entry.student_id) : null;
+          const subId = entry?.subject_id ? String(entry.subject_id) : null;
+          if (!sid || !subId) return;
+          if (!optOutMap.has(subId)) optOutMap.set(subId, new Set());
+          optOutMap.get(subId)!.add(sid);
+        });
+        setSubjectOptOutMap(optOutMap);
+        const currentOptOutSet = selectedSubjectId ? (optOutMap.get(String(selectedSubjectId)) || new Set<string>()) : new Set<string>();
+        optOutIdsForRows = new Set(currentOptOutSet);
       } catch (err) {
         console.error('Failed loading exclusions/results/conduct', err);
       }
@@ -440,19 +529,25 @@ export default function TeacherExamDashboard() {
           acc[cat.key] = '' as string;
           return acc;
         }, {} as Record<ConductKey, string>);
+        const isOptedOut = selectedSubjectId ? optOutIdsForRows.has(String(s.id)) : false;
         return {
           id: String(s.id),
           name: s.name,
-          mark: typeof m?.mark === 'number' ? String(m?.mark ?? '') : '',
-          grade: m?.grade || '',
-          isAbsent: (m?.grade || '').toUpperCase() === 'TH' && (m?.mark === null || m?.mark === undefined),
+          mark: isOptedOut ? '' : (typeof m?.mark === 'number' ? String(m?.mark ?? '') : ''),
+          grade: isOptedOut ? 'N/A' : (m?.grade || ''),
+          isAbsent: isOptedOut ? false : (m?.grade || '').toUpperCase() === 'TH' && (m?.mark === null || m?.mark === undefined),
+          optedOut: isOptedOut,
           conduct: c
             ? (Object.fromEntries(Object.entries(c).map(([k, v]) => [k, v === null || v === undefined ? '' : String(v)])) as Record<ConductKey, string>)
             : emptyConduct,
         };
       });
       // Set baseline to fresh DB rows (not the cached/merged view)
-      initialRowsRef.current = rows;
+      initialRowsRef.current = rows.map((r) => ({
+        ...r,
+        conduct: { ...r.conduct },
+        optedOut: Boolean(r.optedOut),
+      }));
       
       // Check if we have cached unsaved data for this selection
       const newCacheKey = `${selectedClassId}-${selectedSubjectId}-${selectedExamId}`;
@@ -468,7 +563,9 @@ export default function TeacherExamDashboard() {
               ...freshRow,
               mark: cachedRow.mark || freshRow.mark,
               grade: cachedRow.grade || freshRow.grade,
-              conduct: cachedRow.conduct
+              conduct: cachedRow.conduct,
+              isAbsent: cachedRow.isAbsent ?? freshRow.isAbsent,
+              optedOut: cachedRow.optedOut ?? freshRow.optedOut
             };
           }
           return freshRow;
@@ -503,6 +600,7 @@ export default function TeacherExamDashboard() {
 
   // Editable cell handlers
   const handleMarkChange = (idx: number, value: string) => {
+    if (studentRows[idx]?.optedOut) return;
     setStudentRows((prev) => {
       const updated = [...prev];
       const numericMark = parseFloat(value);
@@ -538,6 +636,7 @@ export default function TeacherExamDashboard() {
       for (let i = 0; i < lines.length && startPos + i < orderIdxs.length; i++) {
         const targetIdx = orderIdxs[startPos + i];
         const raw = String(lines[i] ?? '').trim();
+        if (updated[targetIdx]?.optedOut) continue;
 
         // Interpret TH/Absent markers
         if (/^(th|absent)$/i.test(raw)) {
@@ -593,6 +692,7 @@ export default function TeacherExamDashboard() {
     handleMarkPaste(startDisplayIdx, text);
   };
   const handleAbsentToggle = (idx: number, checked: boolean) => {
+    if (studentRows[idx]?.optedOut) return;
     setStudentRows((prev) => {
       const updated = [...prev];
       updated[idx] = {
@@ -608,6 +708,66 @@ export default function TeacherExamDashboard() {
     setTimeout(() => {
       handleSaveAll();
     }, 100);
+  };
+
+  const handleOptOutToggle = async (idx: number, checked: boolean) => {
+    if (!selectedExamId || !selectedSubjectId) return;
+    const student = studentRows[idx];
+    if (!student) return;
+    const studentId = student.id;
+    setStudentRows((prev) => {
+      const updated = [...prev];
+      updated[idx] = {
+        ...updated[idx],
+        optedOut: checked,
+        isAbsent: checked ? false : updated[idx].isAbsent,
+        mark: checked ? '' : '',
+        grade: checked ? 'N/A' : '',
+      };
+      return updated;
+    });
+
+    try {
+      if (checked) {
+        await fetch('/api/teacher/subject-opt-outs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ examId: selectedExamId, subjectId: selectedSubjectId, studentId })
+        });
+        await fetch('/api/teacher/exam-results', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ examId: selectedExamId, subjectId: selectedSubjectId, studentIds: [studentId] })
+        });
+      } else {
+        const params = new URLSearchParams({ examId: selectedExamId, subjectId: selectedSubjectId, studentId });
+        await fetch(`/api/teacher/subject-opt-outs?${params.toString()}`, { method: 'DELETE' });
+      }
+
+      setSubjectOptOutMap((prev) => {
+        const next = new Map(prev);
+        const set = next.get(selectedSubjectId) ?? new Set();
+        if (checked) set.add(studentId); else set.delete(studentId);
+        next.set(selectedSubjectId, set);
+        return next;
+      });
+      initialRowsRef.current = initialRowsRef.current.map((row) => (
+        row.id === studentId
+          ? { ...row, optedOut: checked, isAbsent: false, mark: '', grade: checked ? 'N/A' : '' }
+          : row
+      ));
+    } catch (err) {
+      console.error('Subject opt-out toggle failed', err);
+      setStudentRows((prev) => {
+        const updated = [...prev];
+        updated[idx] = {
+          ...updated[idx],
+          optedOut: !checked,
+        };
+        return updated;
+      });
+      showToast('Failed to update N/A status', 'error');
+    }
   };
   const handleConductChange = (idx: number, key: ConductKey, value: string) => {
     setStudentRows((prev) => {
@@ -676,6 +836,8 @@ export default function TeacherExamDashboard() {
       if (markChanged) return true;
       const statusChanged = Boolean(curr.isAbsent) !== Boolean(init.isAbsent);
       if (statusChanged) return true;
+      const optOutChanged = Boolean(curr.optedOut) !== Boolean(init.optedOut);
+      if (optOutChanged) return true;
       // Compare conduct fields (string compare, trimmed)
       const conductChanged = (['discipline','effort','participation','motivational_level','character','leadership'] as ConductKey[])
         .some((key) => String(curr.conduct?.[key] ?? '').trim() !== String(init.conduct?.[key] ?? '').trim());
@@ -712,6 +874,7 @@ export default function TeacherExamDashboard() {
       // Determine changed rows compared to baseline
       const initialMap = new Map(initialRowsRef.current.map(r => [r.id, r]));
       const changedRows = studentRows.filter((r) => {
+        if (r.optedOut) return false;
         const init = initialMap.get(r.id);
         if (!init) return true;
         const markChanged = String(r.mark ?? '').trim() !== String(init.mark ?? '').trim();
@@ -1319,7 +1482,7 @@ export default function TeacherExamDashboard() {
                                 onChange={(e) => handleMarkChange(idx, e.target.value)}
                                 onPaste={(e) => handleMarkPasteFromInput(e, displayIdx)}
                                 placeholder=""
-                                disabled={!!student.isAbsent}
+                                disabled={!!student.isAbsent || student.optedOut}
                               />
                             </div>
                             ) : (
@@ -1359,7 +1522,9 @@ export default function TeacherExamDashboard() {
                           </td>
                           <td className="px-3 py-2">
                             {selectedSubjectId ? (
-                              student.isAbsent ? (
+                              student.optedOut ? (
+                                <span className="text-gray-700">N/A</span>
+                              ) : student.isAbsent ? (
                                 <span className="text-gray-700">TH</span>
                               ) : student.grade ? (
                                 <span>{student.grade}</span>
@@ -1403,16 +1568,28 @@ export default function TeacherExamDashboard() {
                             <span className="ml-2">{avgConduct ? avgConduct.toFixed(1) : "-"}%</span>
                           </td>
                           <td className="px-3 py-2">
-                            <label className="inline-flex items-center gap-2 text-sm">
-                              <input
-                                type="checkbox"
-                                className="h-4 w-4"
-                                checked={!!student.isAbsent}
-                                onChange={(e) => handleAbsentToggle(idx, e.target.checked)}
-                                disabled={!selectedSubjectId}
-                              />
-                              <span>Absent</span>
-                            </label>
+                            <div className="flex items-center gap-3 text-sm">
+                              <label className="inline-flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  className="h-4 w-4"
+                                  checked={!!student.isAbsent}
+                                  onChange={(e) => handleAbsentToggle(idx, e.target.checked)}
+                                  disabled={!selectedSubjectId || student.optedOut}
+                                />
+                                <span>Absent</span>
+                              </label>
+                              <label className="inline-flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  className="h-4 w-4"
+                                  checked={!!student.optedOut}
+                                  onChange={(e) => handleOptOutToggle(idx, e.target.checked)}
+                                  disabled={!selectedSubjectId}
+                                />
+                                <span>N/A</span>
+                              </label>
+                            </div>
                           </td>
                         </tr>
                         {expanded && (

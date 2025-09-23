@@ -8,6 +8,12 @@ import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, BarChart, 
 import { ResponsiveRadar } from '@nivo/radar';
 import { motion, AnimatePresence } from 'framer-motion';
 import { StudentData } from './StudentTable';
+import {
+  rpcGetClassSubjectAverages,
+  rpcGetStudentSubjects,
+  type StudentSubjectRow,
+} from '@/data/exams';
+import { supabase } from '@/lib/supabaseClient';
 
 interface StudentDetailsPanelProps {
   student: StudentData | null;
@@ -18,7 +24,19 @@ interface StudentDetailsPanelProps {
   isMobile?: boolean;
   selectedExamName?: string;
   reportButtonLabel?: string;
+  examId?: string;
+  classId?: string;
 }
+
+type SubjectSummary = {
+  subject: string;
+  subjectId: string;
+  score: number;
+  classAvg: number | null;
+  grade: string;
+};
+
+type ChartDatum = SubjectSummary & { classAvgForChart?: number };
 
 export default function StudentDetailsPanel({ 
   student, 
@@ -26,12 +44,136 @@ export default function StudentDetailsPanel({
   classAverages = {},
   isMobile = false,
   selectedExamName = '',
-  reportButtonLabel = 'Generate Report'
+  reportButtonLabel = 'Generate Report',
+  examId,
+  classId
 }: StudentDetailsPanelProps) {
   const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
   const [reportHtml, setReportHtml] = useState<string | null>(null);
   const [showReportPreview, setShowReportPreview] = useState(false);
+  const [subjectRows, setSubjectRows] = useState<StudentSubjectRow[]>([]);
+  const [subjectsLoading, setSubjectsLoading] = useState(false);
+  const [avgMap, setAvgMap] = useState<Map<string, number | null>>(new Map());
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  React.useEffect(() => {
+    if (!student?.id || !examId || !classId) {
+      setSubjectRows([]);
+      setSubjectsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setSubjectsLoading(true);
+
+    (async () => {
+      try {
+        const data = await rpcGetStudentSubjects(supabase, examId, classId, student.id);
+        if (cancelled) return;
+        setSubjectRows(data);
+      } catch (error) {
+        if (!cancelled) {
+          console.error('RPC get_exam_student_subjects failed:', error);
+          setSubjectRows([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setSubjectsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [student?.id, examId, classId]);
+
+  React.useEffect(() => {
+    setSelectedSubject(null);
+  }, [student?.id]);
+
+  const filled = React.useMemo(
+    () => subjectRows.filter((row) => row.result_id !== null),
+    [subjectRows]
+  );
+
+  React.useEffect(() => {
+    if (!examId || !classId) {
+      setAvgMap(new Map());
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const avgs = await rpcGetClassSubjectAverages(supabase, examId, classId);
+        if (cancelled) return;
+        setAvgMap(new Map(avgs.map((a) => [a.subject_id, a.class_avg])));
+      } catch (e) {
+        console.error('get_class_subject_averages failed', e);
+        if (!cancelled) {
+          setAvgMap(new Map());
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [examId, classId]);
+
+  const resolveMark = (row: StudentSubjectRow) => {
+    if (typeof row.mark === 'number' && Number.isFinite(row.mark)) return row.mark;
+    if (row.mark !== null && row.mark !== undefined) {
+      const parsed = Number(row.mark);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    if (typeof row.final_score === 'number' && Number.isFinite(row.final_score)) {
+      return Number(row.final_score);
+    }
+    if (row.final_score !== null && row.final_score !== undefined) {
+      const parsed = Number(row.final_score);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return 0;
+  };
+
+  const selectedSubjectRow = React.useMemo(() => {
+    if (!selectedSubject) return undefined;
+    return filled.find((row) => row.subject_name === selectedSubject);
+  }, [filled, selectedSubject]);
+
+  const getClassAverage = React.useCallback(
+    (subjectId: string) => {
+      if (!avgMap.has(subjectId)) {
+        return null;
+      }
+      return avgMap.get(subjectId) ?? null;
+    },
+    [avgMap]
+  );
+
+  const subjectSummaries = React.useMemo<SubjectSummary[]>(
+    () =>
+      filled.map((row) => ({
+        subject: row.subject_name,
+        subjectId: row.subject_id,
+        score: resolveMark(row),
+        classAvg: getClassAverage(row.subject_id),
+        grade: row.grade ?? '',
+      })),
+    [filled, getClassAverage]
+  );
+
+  const fmt = (value: number | null | undefined) =>
+    value == null || Number.isNaN(value) ? '—' : `${value}%`;
+
+  React.useEffect(() => {
+    if (selectedSubject && !filled.some((row) => row.subject_name === selectedSubject)) {
+      setSelectedSubject(null);
+    }
+  }, [filled, selectedSubject]);
 
   const handleDownloadPdf = async () => {
     try {
@@ -92,12 +234,18 @@ export default function StudentDetailsPanel({
 
       // Subjects table
       doc.text('Subjects', margin, y); y += 6;
-      const subjectsBody = Object.entries(student.subjects || {}).map(([name, d]: any) => [
-        name,
-        typeof d?.score === 'number' ? `${d.score}%` : '-',
-        typeof classAverages[name] === 'number' ? `${classAverages[name]}%` : '-',
-        d?.grade || '-',
-      ]);
+      const subjectsBody = filled.map((row) => {
+        const score = resolveMark(row);
+        const scoreText = fmt(score);
+        const avgValue = getClassAverage(row.subject_id);
+        const avgText = fmt(avgValue);
+        return [
+          row.subject_name,
+          scoreText,
+          avgText,
+          row.grade || '-',
+        ];
+      });
       autoTable(doc, {
         startY: y + 6,
         head: [['Subject', 'Score', 'Class Avg', 'Grade']],
@@ -110,18 +258,18 @@ export default function StudentDetailsPanel({
       y = (doc as any).lastAutoTable.finalY + 18;
 
       // Conduct table
-      const toPct = (v?: number) => (typeof v === 'number' ? `${Math.max(0, Math.min(100, v * 20)).toFixed(0)}%` : '-');
+      const toPct = (v?: number) => (typeof v === 'number' ? `${Math.max(0, Math.min(100, v)).toFixed(0)}%` : '-');
       doc.text('Conduct', margin, y); y += 6;
       autoTable(doc, {
         startY: y + 6,
         head: [['Aspect', 'Score']],
         body: [
-          ['Discipline', toPct(student.conduct?.discipline)],
-          ['Effort', toPct(student.conduct?.effort)],
-          ['Participation', toPct(student.conduct?.participation)],
-          ['Motivational Level', toPct((student as any).conduct?.motivational_level ?? student.conduct?.motivationalLevel)],
-          ['Character', toPct(student.conduct?.character)],
-          ['Leadership', toPct(student.conduct?.leadership)],
+          ['Discipline', toPct(conductPercentages.discipline)],
+          ['Effort', toPct(conductPercentages.effort)],
+          ['Participation', toPct(conductPercentages.participation)],
+          ['Motivational Level', toPct(conductPercentages.motivationalLevel)],
+          ['Character', toPct(conductPercentages.character)],
+          ['Leadership', toPct(conductPercentages.leadership)],
         ],
         styles: { fontSize: 10 },
         headStyles: { fillColor: [241, 245, 249], textColor: 15 },
@@ -136,35 +284,87 @@ export default function StudentDetailsPanel({
     }
   };
   
-  if (!student) return null;
-
   // Build chart points from either real exam history or fallback trend
   const buildChartData = (
-    subject: { score: number; trend: number[]; grade: string; exams?: { name: string; score: number }[] },
+    subject: { score: number; trend?: number[]; grade: string; exams?: { name: string; score: number }[] } | null | undefined,
+    fallbackRow?: StudentSubjectRow,
     fixedClassAvg?: number
-  ) => {
+  ): Array<{ label: string; score: number; classAvg: number | null }> => {
+    const classAvgValue = typeof fixedClassAvg === 'number' ? fixedClassAvg : null;
+    // Check if subject data exists
+    if (!subject) {
+      if (fallbackRow) {
+        const score = resolveMark(fallbackRow);
+        return [
+          {
+            label: selectedExamName ? `${selectedExamName} (Current)` : 'Current Exam',
+            score,
+            classAvg: classAvgValue,
+          },
+        ];
+      }
+      return [];
+    }
+    
     // Prefer real exam history if available
-    if (Array.isArray(subject.exams) && subject.exams.length > 0) {
+    if (Array.isArray(subject?.exams) && subject.exams.length > 0) {
       return subject.exams
         .filter(e => typeof e.score === 'number')
         .map(e => ({
           label: e.name,
           score: e.score,
-          classAvg: typeof fixedClassAvg === 'number' ? fixedClassAvg : 0,
+          classAvg: classAvgValue,
         }));
     }
 
     // No history available
-    return [] as { label: string; score: number; classAvg: number }[];
+    if (fallbackRow) {
+      const score = resolveMark(fallbackRow);
+      return [
+        {
+          label: selectedExamName ? `${selectedExamName} (Current)` : 'Current Exam',
+          score,
+          classAvg: classAvgValue,
+        },
+      ];
+    }
+
+    return [];
   };
 
+  const conductPercentages = React.useMemo(() => {
+    if (!student) {
+      return {
+        discipline: 0,
+        effort: 0,
+        participation: 0,
+        motivationalLevel: 0,
+        character: 0,
+        leadership: 0,
+      };
+    }
+    if (student.conductPercentages) {
+      return student.conductPercentages;
+    }
+    return {
+      discipline: (student.conduct.discipline || 0) * 20,
+      effort: (student.conduct.effort || 0) * 20,
+      participation: (student.conduct.participation || 0) * 20,
+      motivationalLevel: (student.conduct.motivationalLevel || 0) * 20,
+      character: (student.conduct.character || 0) * 20,
+      leadership: (student.conduct.leadership || 0) * 20,
+    };
+  }, [student]);
+
+  if (!student) return null;
+
   const conductData = [
-    { aspect: 'Discipline', score: student.conduct.discipline },
-    { aspect: 'Effort', score: student.conduct.effort },
-    { aspect: 'Participation', score: student.conduct.participation },
-    { aspect: 'Motivational Level', score: student.conduct.motivationalLevel },
-    { aspect: 'Character', score: student.conduct.character },
-    { aspect: 'Leadership', score: student.conduct.leadership },
+    { aspect: 'Discipline', score: conductPercentages.discipline },
+    { aspect: 'Effort', score: conductPercentages.effort },
+    { aspect: 'Participation', score: conductPercentages.participation },
+    { aspect: 'Motivational Level', score: conductPercentages.motivationalLevel },
+    { aspect: 'Character', score: conductPercentages.character },
+    { aspect: 'Leadership', score: conductPercentages.leadership },
   ];
 
   // Transform data for radar chart - use percentage values with 100% as perfect
@@ -172,7 +372,7 @@ export default function StudentDetailsPanel({
     .filter(item => item && item.aspect && !isNaN(item.score))
     .map(item => ({
       aspect: item.aspect,
-      score: Math.max(0, Math.min(100, item.score * 20)), // Convert 1-5 scale to percentage (5.0 = 100%)
+      score: Math.max(0, Math.min(100, item.score)),
     }));
 
   const overallTrend = student.overall.average >= 75 ? 'positive' : 
@@ -182,31 +382,31 @@ export default function StudentDetailsPanel({
     try {
       if (!student) return;
       const dateStr = new Date().toLocaleString();
-      const subjectsRows = Object.entries(student.subjects || {})
-        .map(([subject, data]) => {
-          const score = typeof (data as any)?.score === 'number' ? (data as any).score : '';
-          const grade = (data as any)?.grade ?? '';
-          const classAvg = typeof classAverages[subject] === 'number' ? classAverages[subject] : '';
+      const subjectsRows = filled
+        .map((row) => {
+          const score = resolveMark(row);
+          const classAvgValue = getClassAverage(row.subject_id);
+          const classAvgText = fmt(classAvgValue);
           return `<tr>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:left">${subject}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:center">${score !== '' ? score + '%' : '-'}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:center">${classAvg !== '' ? classAvg + '%' : '-'}</td>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:center">${grade || '-'}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:left">${row.subject_name}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:center">${fmt(score)}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:center">${classAvgText}</td>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:center">${row.grade || '-'}</td>
           </tr>`;
         })
         .join('');
 
       const conductRows = [
-        ['Discipline', student.conduct.discipline],
-        ['Effort', student.conduct.effort],
-        ['Participation', student.conduct.participation],
-        ['Motivational Level', student.conduct.motivationalLevel],
-        ['Character', student.conduct.character],
-        ['Leadership', student.conduct.leadership],
+        ['Discipline', conductPercentages.discipline],
+        ['Effort', conductPercentages.effort],
+        ['Participation', conductPercentages.participation],
+        ['Motivational Level', conductPercentages.motivationalLevel],
+        ['Character', conductPercentages.character],
+        ['Leadership', conductPercentages.leadership],
       ]
         .map(([label, v]) => `<tr>
           <td style="padding:8px;border:1px solid #e5e7eb;text-align:left">${label}</td>
-          <td style="padding:8px;border:1px solid #e5e7eb;text-align:center">${typeof v === 'number' ? Math.max(0, Math.min(100, v * 20)).toFixed(0) + '%' : '-'}</td>
+          <td style="padding:8px;border:1px solid #e5e7eb;text-align:center">${typeof v === 'number' ? Math.max(0, Math.min(100, v)).toFixed(0) + '%' : '-'}</td>
         </tr>`)
         .join('');
 
@@ -403,7 +603,7 @@ export default function StudentDetailsPanel({
                 <div className="flex items-center justify-between mb-4">
                   <h4 className="font-semibold text-gray-900 flex items-center gap-2">
                     {selectedSubject ? `${selectedSubject} - Performance Trend` : 'All Subject Marks'}
-                    {selectedSubject && student.subjects[selectedSubject]?.grade === 'TH' && (
+                    {selectedSubject && (selectedSubjectRow?.grade || student.subjects?.[selectedSubject]?.grade) === 'TH' && (
                       <span className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-700 border border-gray-200">Absent</span>
                     )}
                   </h4>
@@ -419,77 +619,98 @@ export default function StudentDetailsPanel({
                 </div>
 
                 {!selectedSubject ? (
-                  <>
-                    <div className="h-64">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart 
-                          data={Object.entries(student.subjects).map(([subject, data]) => ({
-                            subject,
-                            score: data.score,
-                            classAvg: (classAverages[subject] ?? 0),
-                            grade: data.grade
-                          }))}
-                          margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                          onClick={(data) => {
-                            if (data && data.activeLabel) {
-                              setSelectedSubject(data.activeLabel as string);
-                            }
-                          }}
-                        >
-                          <XAxis 
-                            dataKey="subject" 
-                            tick={{ fontSize: 12 }}
-                            angle={-45}
-                            textAnchor="end"
-                            height={80}
-                          />
-                          <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
-                          <Tooltip 
-                            formatter={(value, name, item: any) => {
-                              const grade = item && item.payload ? item.payload.grade : undefined;
-                              if (grade === 'TH' && name === 'score') {
-                                return ['Absent', 'Student'];
+                  subjectSummaries.length > 0 ? (
+                    <>
+                      <div className="h-64">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart 
+                            data={subjectSummaries.map((summary) => ({
+                              ...summary,
+                              classAvgForChart: summary.classAvg ?? undefined,
+                            }))}
+                            margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                            onClick={(data) => {
+                              if (data && data.activeLabel) {
+                                setSelectedSubject(data.activeLabel as string);
                               }
-                              if (name === 'score') {
-                                return [`${value}%`, 'Student Mark'];
-                              } else if (name === 'classAvg') {
-                                return [`${value}%`, 'Class Average'];
-                              }
-                              return [`${value}%`, name];
                             }}
-                            labelFormatter={(label) => `Subject: ${label}`}
-                            contentStyle={{
-                              backgroundColor: '#f8fafc',
-                              border: '1px solid #e2e8f0',
-                              borderRadius: '8px'
-                            }}
-                          />
-                          <Bar 
-                            dataKey="score" 
-                            fill="#3b82f6" 
-                            name="Student Mark"
-                            style={{ cursor: 'pointer' }}
-                            radius={[4, 4, 0, 0]}
-                          />
-                          <Bar 
-                            dataKey="classAvg" 
-                            fill="#9ca3af" 
-                            name="Class Average"
-                            radius={[4, 4, 0, 0]}
-                          />
-                        </BarChart>
-                      </ResponsiveContainer>
+                          >
+                            <XAxis 
+                              dataKey="subject" 
+                              tick={{ fontSize: 12 }}
+                              angle={-45}
+                              textAnchor="end"
+                              height={80}
+                            />
+                            <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
+                            <Tooltip 
+                              formatter={(value: number | string | null | undefined, name: string, item: { payload?: ChartDatum }) => {
+                                const payload = item?.payload;
+                                if (!payload) {
+                                  const numeric = typeof value === 'number' ? value : value == null ? null : Number(value);
+                                  return [fmt(numeric), name];
+                                }
+                                if (name === 'Student Mark') {
+                                  return [fmt(payload.score), name];
+                                }
+                                if (name === 'Class Average') {
+                                  return [fmt(payload.classAvg), name];
+                                }
+                                const numeric = typeof value === 'number' ? value : value == null ? null : Number(value);
+                                return [fmt(numeric), name];
+                              }}
+                              labelFormatter={(label) => `Subject: ${label}`}
+                              contentStyle={{
+                                backgroundColor: '#f8fafc',
+                                border: '1px solid #e2e8f0',
+                                borderRadius: '8px'
+                              }}
+                            />
+                            <Bar 
+                              dataKey="score" 
+                              fill="#3b82f6" 
+                              name="Student Mark"
+                              style={{ cursor: 'pointer' }}
+                              radius={[4, 4, 0, 0]}
+                            />
+                            <Bar 
+                              dataKey="classAvgForChart" 
+                              fill="#9ca3af" 
+                              name="Class Average"
+                              radius={[4, 4, 0, 0]}
+                            />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <p className="text-sm text-gray-600 mt-2">
+                        Click a bar or subject name to view the trend
+                      </p>
+                    </>
+                  ) : (
+                    <div className="h-64 flex items-center justify-center text-gray-400 text-sm">
+                      {subjectsLoading ? 'Loading subjects…' : 'No subject data available'}
                     </div>
-                    <p className="text-sm text-gray-600 mt-2">
-                      Click a bar or subject name to view the trend
-                    </p>
-                  </>
+                  )
                 ) : (
                   (() => {
-                    const subjectData = student.subjects[selectedSubject];
-                    const classAvg = (classAverages[selectedSubject] ?? 0);
-                    const historicalData = buildChartData(subjectData, classAvg);
-                    
+                    const subjectData = student.subjects?.[selectedSubject];
+                    const selectedSummary = subjectSummaries.find(
+                      (summary) => summary.subject === selectedSubject
+                    );
+                    const classAvgValue = selectedSummary?.classAvg ?? null;
+                    const historicalData = buildChartData(
+                      subjectData,
+                      selectedSubjectRow,
+                      classAvgValue ?? undefined
+                    );
+                    const scoreValue =
+                      typeof subjectData?.score === 'number'
+                        ? subjectData.score
+                        : selectedSubjectRow
+                          ? resolveMark(selectedSubjectRow)
+                          : undefined;
+                    const gradeValue = subjectData?.grade ?? selectedSubjectRow?.grade ?? '';
+
                     return (
                       <>
                         {historicalData.length > 0 ? (
@@ -498,7 +719,18 @@ export default function StudentDetailsPanel({
                               <LineChart data={historicalData} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
                                 <XAxis dataKey="label" tick={{ fontSize: 12 }} />
                                 <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
-                                <Tooltip />
+                                <Tooltip
+                                  formatter={(value: number | string | null | undefined, name: string) => {
+                                    const numeric = typeof value === 'number' ? value : value == null ? null : Number(value);
+                                    if (name === 'Student') {
+                                      return [fmt(numeric), 'Student Mark'];
+                                    }
+                                    if (name === 'Class Avg') {
+                                      return [fmt(numeric), 'Class Average'];
+                                    }
+                                    return [fmt(numeric), name];
+                                  }}
+                                />
                                 <Line
                                   type="monotone"
                                   dataKey="score"
@@ -521,32 +753,57 @@ export default function StudentDetailsPanel({
                           </div>
                         ) : (
                           <div className="h-64 flex items-center justify-center text-gray-400 text-sm">
-                            No exam data yet for this subject
+                            {subjectsLoading ? 'Loading subject details…' : 'No exam data yet for this subject'}
                           </div>
                         )}
-                        
-                        <div className="flex items-center justify-between mt-4">
-                          <div className="flex items-center gap-4">
-                            <span className="text-lg font-semibold">{subjectData.score}%</span>
-                            <span className={`text-sm px-3 py-1 rounded-full ${
-                              subjectData.grade === 'A' ? 'bg-blue-100 text-blue-800' :
-                              subjectData.grade === 'B' ? 'bg-blue-50 text-blue-700' :
-                              subjectData.grade === 'C' ? 'bg-blue-50 text-blue-600' :
-                              'bg-blue-50 text-blue-500'
-                            }`}>
-                              Grade {subjectData.grade}
-                            </span>
+
+                        {(subjectData || selectedSubjectRow) && (
+                          <div className="mt-4 space-y-4">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-4">
+                                {typeof scoreValue === 'number' && Number.isFinite(scoreValue) && (
+                                  <span className="text-lg font-semibold">{scoreValue}%</span>
+                                )}
+                                {gradeValue && (
+                                  <span className={`text-sm px-3 py-1 rounded-full ${
+                                    gradeValue === 'A' || gradeValue === 'A+' || gradeValue === 'A-' ? 'bg-blue-100 text-blue-800' :
+                                    gradeValue === 'B' || gradeValue === 'B+' || gradeValue === 'B-' ? 'bg-blue-50 text-blue-700' :
+                                    gradeValue === 'C' || gradeValue === 'C+' || gradeValue === 'C-' ? 'bg-blue-50 text-blue-600' :
+                                    gradeValue === 'TH' ? 'bg-gray-100 text-gray-700' :
+                                    'bg-blue-50 text-blue-500'
+                                  }`}>
+                                    {gradeValue === 'TH' ? 'Absent' : `Grade ${gradeValue}`}
+                                  </span>
+                                )}
+                              </div>
+                              {typeof scoreValue === 'number' && Number.isFinite(scoreValue) && classAvgValue != null && Number.isFinite(classAvgValue) && (
+                                <div className="text-sm text-gray-600">
+                                  vs Class Avg: {fmt(classAvgValue)}
+                                  <span className={`ml-2 ${
+                                    scoreValue > classAvgValue ? 'text-green-600' : 
+                                    scoreValue === classAvgValue ? 'text-gray-600' : 'text-red-600'
+                                  }`}>
+                                    ({scoreValue > classAvgValue ? '+' : ''}{(scoreValue - classAvgValue).toFixed(1)}%)
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                            <div className="grid grid-cols-2 gap-4 text-sm text-gray-600">
+                              <div>
+                                <span className="font-medium text-gray-900">Grade:</span> {gradeValue || '—'}
+                              </div>
+                              <div>
+                                <span className="font-medium text-gray-900">Class Avg:</span> {fmt(classAvgValue)}
+                              </div>
+                              <div>
+                                <span className="font-medium text-gray-900">Trend:</span> {subjectData?.trend ? `${subjectData.trend[subjectData.trend.length - 1] ?? 0}%` : 'Not available'}
+                              </div>
+                              <div>
+                                <span className="font-medium text-gray-900">Exams Recorded:</span> {subjectData?.exams?.length ?? 0}
+                              </div>
+                            </div>
                           </div>
-                          <div className="text-sm text-gray-600">
-                            vs Class Avg: {classAvg.toFixed(1)}%
-                            <span className={`ml-2 ${
-                              subjectData.score > classAvg ? 'text-green-600' : 
-                              subjectData.score === classAvg ? 'text-gray-600' : 'text-red-600'
-                            }`}>
-                              ({subjectData.score > classAvg ? '+' : ''}{(subjectData.score - classAvg).toFixed(1)}%)
-                            </span>
-                          </div>
-                        </div>
+                        )}
                       </>
                     );
                   })()
@@ -554,30 +811,37 @@ export default function StudentDetailsPanel({
 
                 {/* Minimalist Subjects and Marks Summary */}
                 <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                  {Object.entries(student.subjects).map(([subject, data]) => {
-                    const isSelected = subject === selectedSubject;
-                    return (
-                      <button
-                        key={subject}
-                        type="button"
-                        onClick={() => setSelectedSubject(prev => (prev === subject ? null : subject))}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            setSelectedSubject(prev => (prev === subject ? null : subject));
-                          }
-                        }}
-                        className={`flex justify-between items-center px-3 py-2 rounded-lg shadow-sm border transition-colors ${
-                          isSelected ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-100 hover:bg-gray-50'
-                        }`}
-                        title="View trend"
-                        aria-pressed={isSelected}
-                      >
-                        <span className="text-gray-600 font-medium text-left">{subject}</span>
-                        <span className="text-gray-900 font-semibold">{data.score}%</span>
-                      </button>
-                    );
-                  })}
+                  {subjectSummaries.length > 0 ? (
+                    subjectSummaries.map(({ subject, score, grade }) => {
+                      const isSelected = subject === selectedSubject;
+                      const displayValue = grade === 'TH' ? 'TH' : fmt(score);
+                      return (
+                        <button
+                          key={subject}
+                          type="button"
+                          onClick={() => setSelectedSubject(prev => (prev === subject ? null : subject))}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setSelectedSubject(prev => (prev === subject ? null : subject));
+                            }
+                          }}
+                          className={`flex justify-between items-center px-3 py-2 rounded-lg shadow-sm border transition-colors ${
+                            isSelected ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-100 hover:bg-gray-50'
+                          }`}
+                          title="View trend"
+                          aria-pressed={isSelected}
+                        >
+                          <span className="text-gray-600 font-medium text-left">{subject}</span>
+                          <span className="text-gray-900 font-semibold">{displayValue}</span>
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <div className="col-span-full text-center text-sm text-gray-400">
+                      {subjectsLoading ? 'Loading subjects…' : 'No subjects recorded yet'}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -635,7 +899,7 @@ export default function StudentDetailsPanel({
                   {conductData.map(item => (
                     <div key={item.aspect} className="flex justify-between items-center px-3 py-2 bg-white rounded-lg shadow-sm">
                       <span className="text-gray-600 font-medium">{item.aspect}</span>
-                      <span className="text-gray-900 font-semibold">{(item.score * 20).toFixed(0)}%</span>
+                      <span className="text-gray-900 font-semibold">{Math.round(item.score)}%</span>
                     </div>
                   ))}
                 </div>

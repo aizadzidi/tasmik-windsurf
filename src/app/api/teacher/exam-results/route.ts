@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
 
 export async function POST(request: Request) {
@@ -61,5 +61,34 @@ export async function POST(request: Request) {
         stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
       }
     }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const examId = body?.examId ? String(body.examId) : null;
+    const subjectId = body?.subjectId ? String(body.subjectId) : null;
+    const studentIdsInput = body?.studentIds;
+    if (!examId || !subjectId || !Array.isArray(studentIdsInput) || studentIdsInput.length === 0) {
+      return NextResponse.json({ error: 'Missing examId, subjectId, or studentIds[]' }, { status: 400 });
+    }
+    const studentIds = studentIdsInput.map((id: unknown) => String(id));
+
+    await adminOperationSimple(async (client) => {
+      const { error } = await client
+        .from('exam_results')
+        .delete()
+        .eq('exam_id', examId)
+        .eq('subject_id', subjectId)
+        .in('student_id', studentIds);
+      if (error) throw error;
+      return null;
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    console.error('Exam results delete error:', error);
+    return NextResponse.json({ error: 'Failed to delete exam results' }, { status: 500 });
   }
 }

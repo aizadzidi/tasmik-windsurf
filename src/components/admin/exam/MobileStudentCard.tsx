@@ -27,21 +27,32 @@ export default function MobileStudentCard({ student, onViewDetails }: MobileStud
     }
   };
 
-  const getConductColor = (score: number) => {
-    if (score >= 4) return 'bg-blue-600';
-    if (score >= 3) return 'bg-blue-400';
+  const getConductColor = (percent: number) => {
+    if (percent >= 80) return 'bg-blue-600';
+    if (percent >= 60) return 'bg-blue-400';
     return 'bg-blue-300';
   };
 
   const subjects = Object.entries(student.subjects);
+  const conductPercentages = student.conductPercentages ?? {
+    discipline: (student.conduct.discipline || 0) * 20,
+    effort: (student.conduct.effort || 0) * 20,
+    participation: (student.conduct.participation || 0) * 20,
+    motivationalLevel: (student.conduct.motivationalLevel || 0) * 20,
+    character: (student.conduct.character || 0) * 20,
+    leadership: (student.conduct.leadership || 0) * 20,
+  };
   const conductItems = [
-    { label: 'Discipline', value: student.conduct.discipline },
-    { label: 'Effort', value: student.conduct.effort },
-    { label: 'Participation', value: student.conduct.participation },
-    { label: 'Motivational Level', value: student.conduct.motivationalLevel },
-    { label: 'Character', value: student.conduct.character },
-    { label: 'Leadership', value: student.conduct.leadership },
+    { label: 'Discipline', percent: conductPercentages.discipline },
+    { label: 'Effort', percent: conductPercentages.effort },
+    { label: 'Participation', percent: conductPercentages.participation },
+    { label: 'Motivational Level', percent: conductPercentages.motivationalLevel },
+    { label: 'Character', percent: conductPercentages.character },
+    { label: 'Leadership', percent: conductPercentages.leadership },
   ];
+  const conductAveragePercent = conductItems.length > 0
+    ? conductItems.reduce((sum, item) => sum + item.percent, 0) / conductItems.length
+    : 0;
 
   return (
     <div className="bg-white backdrop-blur-sm border border-gray-100 rounded-3xl p-6 shadow-sm transition-all duration-150 ease-out">
@@ -155,7 +166,7 @@ export default function MobileStudentCard({ student, onViewDetails }: MobileStud
           <div className="flex items-center gap-2">
             <span className="font-semibold text-gray-900">Conduct</span>
             <span className="text-sm text-gray-500">
-              (Avg: {((student.conduct.discipline + student.conduct.effort + student.conduct.participation + student.conduct.motivationalLevel + student.conduct.character + student.conduct.leadership) / 6).toFixed(1)}/5.0)
+              (Avg: {Math.round(conductAveragePercent)}% ≈ {(conductAveragePercent / 20).toFixed(1)}/5)
             </span>
           </div>
           {expandedConduct ? (
@@ -182,8 +193,8 @@ export default function MobileStudentCard({ student, onViewDetails }: MobileStud
                     </span>
                     <div className="flex-1 h-3 bg-gray-200 rounded-full relative overflow-hidden">
                       <div
-                        className={`h-full rounded-full transition-all ${getConductColor(item.value)}`}
-                        style={{ width: `${(item.value / 5) * 100}%` }}
+                        className={`h-full rounded-full transition-all ${getConductColor(item.percent)}`}
+                        style={{ width: `${Math.max(0, Math.min(100, item.percent))}%` }}
                       />
                       {/* Target indicator */}
                       <div 
@@ -191,8 +202,8 @@ export default function MobileStudentCard({ student, onViewDetails }: MobileStud
                         style={{ left: '80%' }}
                       />
                     </div>
-                    <span className="text-sm font-semibold text-gray-900 min-w-[30px]">
-                      {item.value.toFixed(1)}
+                    <span className="text-sm font-semibold text-gray-900 min-w-[40px] text-right">
+                      {Math.round(item.percent)}%
                     </span>
                   </div>
                 ))}

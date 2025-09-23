@@ -65,18 +65,32 @@ export default function ParentExamPage() {
           const subjectsObj: StudentData['subjects'] = {};
           subjectNames.forEach((name) => {
             const sd = d?.subjects?.[name];
+            if (!sd) return;
+            const grade = typeof sd?.grade === 'string' ? sd.grade : '';
+            const isTH = grade.toUpperCase() === 'TH';
+            const hasScore = typeof sd?.score === 'number';
+            if (!hasScore && !isTH) return;
             subjectsObj[name] = {
-              score: typeof sd?.score === 'number' ? sd.score : 0,
+              score: hasScore ? sd.score : 0,
               trend: Array.isArray(sd?.trend) ? sd.trend : [],
-              grade: typeof sd?.grade === 'string' ? sd.grade : ''
+              grade,
             };
           });
           return {
             id: String(c.id),
             name: c.name,
             class: String(d?.class || ''),
+            classId: typeof d?.classId === 'string' ? d.classId : undefined,
             subjects: subjectsObj,
             conduct: d?.conduct || { discipline: 0, effort: 0, participation: 0, motivationalLevel: 0, character: 0, leadership: 0 },
+            conductPercentages: d?.conductPercentages || (d?.conduct ? {
+              discipline: (d.conduct.discipline || 0) * 20,
+              effort: (d.conduct.effort || 0) * 20,
+              participation: (d.conduct.participation || 0) * 20,
+              motivationalLevel: (d.conduct.motivationalLevel || 0) * 20,
+              character: (d.conduct.character || 0) * 20,
+              leadership: (d.conduct.leadership || 0) * 20,
+            } : undefined),
             overall: d?.overall || { average: 0, rank: 0, needsAttention: false }
           } as StudentData;
         });
@@ -137,13 +151,21 @@ export default function ParentExamPage() {
           const avg: Record<string, number> = {};
           subjects.forEach(name => {
             let total = 0, count = 0;
-            sameClass.forEach(s => { const sd = s.subjects?.[name]; if (sd && typeof sd.score === 'number') { total += sd.score; count++; } });
+            sameClass.forEach(s => {
+              const sd = s.subjects?.[name];
+              if (sd && typeof sd.score === 'number' && String(sd.grade || '').toUpperCase() !== 'TH') {
+                total += sd.score;
+                count++;
+              }
+            });
             avg[name] = count>0 ? Math.round(total / count) : 0;
           });
           return avg;
         }, [selectedStudent, studentRows, subjects])}
         isMobile={isMobile}
         selectedExamName={exams.find(e=>e.id===selectedExam)?.name || ''}
+        examId={selectedExam || ''}
+        classId={selectedStudent?.classId || ''}
         reportButtonLabel="View / Export"
       />
     </div>
