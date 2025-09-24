@@ -313,7 +313,7 @@ export default function StudentDetailsPanel({
       y = (doc as any).lastAutoTable.finalY + 18;
 
       // Conduct table
-      const toPct = (v?: number) => (typeof v === 'number' ? `${Math.max(0, Math.min(100, v)).toFixed(0)}%` : '-');
+      const toPct = (v: number | null | undefined) => (typeof v === 'number' ? `${Math.max(0, Math.min(100, v)).toFixed(0)}%` : '--');
       doc.text('Conduct', margin, y); y += 6;
       autoTable(doc, {
         startY: y + 6,
