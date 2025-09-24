@@ -58,19 +58,30 @@ export async function rpcUpsertConductPerSubject(
   examId: string,
   studentId: string,
   subjectId: string,
-  scores: Partial<Record<keyof ConductScores, number | null>>
+  scores: ConductScores
 ): Promise<string> {
   const { data, error } = await supabase.rpc('upsert_conduct_per_subject', {
     p_exam_id: examId,
     p_student_id: studentId,
     p_subject_id: subjectId,
-    p_discipline: scores.discipline ?? null,
-    p_effort: scores.effort ?? null,
-    p_participation: scores.participation ?? null,
-    p_motivational_level: scores.motivational_level ?? null,
-    p_character_score: scores.character_score ?? null,
-    p_leadership: scores.leadership ?? null,
+    p_discipline: scores.discipline,
+    p_effort: scores.effort,
+    p_participation: scores.participation,
+    p_motivational_level: scores.motivational_level,
+    p_character_score: scores.character_score,
+    p_leadership: scores.leadership,
   });
   if (error) throw error;
   return data;
+}
+
+export async function rpcDeleteConductOverride(
+  examId: string,
+  studentId: string
+): Promise<void> {
+  const { error } = await supabase.rpc('delete_conduct_override', {
+    p_exam_id: examId,
+    p_student_id: studentId,
+  });
+  if (error) throw error;
 }

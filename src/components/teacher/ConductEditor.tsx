@@ -9,6 +9,7 @@ import {
   rpcGetConductSummary,
   rpcUpsertConductOverride,
   rpcUpsertConductPerSubject,
+  rpcDeleteConductOverride,
 } from '@/data/conduct';
 
 const FIELD_DEFS: Array<{ key: keyof ConductScores; label: string }> = [
@@ -35,6 +36,31 @@ const clamp = (value: number) => {
   if (value > 100) return 100;
   return Math.round(value);
 };
+
+const toNumOrNull = (s: string) => {
+  const t = String(s ?? '').trim();
+  if (t === '') return null;
+  const n = Math.round(Number(t));
+  if (Number.isNaN(n)) return null;
+  return Math.max(0, Math.min(100, n));
+};
+
+const FIELD_KEYS = [
+  'discipline',
+  'effort',
+  'participation',
+  'motivational_level',
+  'character_score',
+  'leadership',
+] as const;
+
+type FieldKey = typeof FIELD_KEYS[number];
+
+const overrideAllBlank = (vals: Record<FieldKey, string>) =>
+  FIELD_KEYS.every((k) => (vals[k] ?? '').trim() === '');
+
+const overrideAllFilled = (vals: Record<FieldKey, string>) =>
+  FIELD_KEYS.every((k) => toNumOrNull(vals[k]) !== null);
 
 const fmt = (value: number | null | undefined) =>
   value == null || Number.isNaN(value) ? '—' : String(Math.round(Number(value)));
@@ -208,70 +234,58 @@ function ConductEditor({
       return;
     }
 
-    const toNumOrNull = (s: string) => (s.trim() === '' ? null : Math.max(0, Math.min(100, Math.round(Number(s)))));
+    // Build payload (blank => null)
+    const payload = {
+      discipline: toNumOrNull(formValues.discipline),
+      effort: toNumOrNull(formValues.effort),
+      participation: toNumOrNull(formValues.participation),
+      motivational_level: toNumOrNull(formValues.motivational_level),
+      character_score: toNumOrNull(formValues.character_score),
+      leadership: toNumOrNull(formValues.leadership),
+    } as const;
 
     try {
       setSaving(true);
 
       if (mode === 'override') {
-        // All fields required in override mode
-        const parsed: Required<ConductScores> = {
-          discipline: 0,
-          effort: 0,
-          participation: 0,
-          motivational_level: 0,
-          character_score: 0,
-          leadership: 0,
-        };
-        for (const { key } of FIELD_DEFS) {
-          const value = formValues[key]?.trim();
-          if (!value) {
-            showToast?.('All conduct scores are required.', 'error');
-            setSaving(false);
-            return;
-          }
-          const numeric = Number(value);
-          if (Number.isNaN(numeric)) {
-            showToast?.('Conduct scores must be numbers between 0 and 100.', 'error');
-            setSaving(false);
-            return;
-          }
-          parsed[key] = clamp(numeric);
+        const allBlank = overrideAllBlank(formValues as Record<FieldKey, string>);
+        const allFilled = overrideAllFilled(formValues as Record<FieldKey, string>);
+
+        if (allBlank) {
+          // Always attempt delete; safe no-op if no override exists
+          await rpcDeleteConductOverride(examId, studentId);
+        } else if (allFilled) {
+          await rpcUpsertConductOverride(
+            examId,
+            studentId,
+            payload as unknown as Required<ConductScores>
+          );
+        } else {
+          showToast?.('Fill all fields or clear all to remove override.', 'error');
+          return;
         }
-        await rpcUpsertConductOverride(examId, studentId, parsed);
-      } else if (subjectId) {
-        // Per-subject: allow partials; blank means NULL
-        const payload: Partial<Record<keyof ConductScores, number | null>> = {
-          discipline: toNumOrNull(formValues.discipline),
-          effort: toNumOrNull(formValues.effort),
-          participation: toNumOrNull(formValues.participation),
-          motivational_level: toNumOrNull(formValues.motivational_level),
-          character_score: toNumOrNull(formValues.character_score),
-          leadership: toNumOrNull(formValues.leadership),
-        };
-        await rpcUpsertConductPerSubject(examId, studentId, subjectId, payload);
       } else {
-        throw new Error('Subject is required for per-subject conduct.');
+        // per-subject: allow nulls
+        if (!subjectId) {
+          showToast?.('Subject is required for per-subject conduct.', 'error');
+          return;
+        }
+        await rpcUpsertConductPerSubject(examId, studentId, subjectId, payload as ConductScores);
       }
 
+      // success UX
       showToast?.('Conduct saved.', 'success');
       setDirty(false);
       setSavedAt(new Date());
       setJustSaved(true);
       setTimeout(() => setJustSaved(false), 2600);
-      loadSummary({ resetForm: true });
-      if (mode === 'perSubject') {
-        // Refresh prefill info after successful save so form mirrors DB state
-        loadPerSubjectPrefill();
-      }
+      await loadSummary({ resetForm: true });
+
+      // notify admin panel
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
           new CustomEvent('conduct-summary-updated', {
-            detail: {
-              examId,
-              studentId,
-              subjectId: mode === 'perSubject' ? subjectId : null,
-            },
+            detail: { examId, studentId, subjectId: mode === 'perSubject' ? subjectId : null },
           })
         );
       }
@@ -288,6 +302,9 @@ function ConductEditor({
   const chipTooltip = summary?.source === 'override'
     ? 'These values were entered at “All subjects” and override any per-subject entries.'
     : 'These values are the average of per-subject conduct entries.';
+
+  const canDeleteOverride = overrideAllBlank(formValues as Record<FieldKey, string>);
+  const canSaveOverride = overrideAllFilled(formValues as Record<FieldKey, string>);
 
   const relativeTime = React.useCallback((date: Date) => {
     const deltaSec = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -339,7 +356,7 @@ function ConductEditor({
         )}
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} noValidate className="space-y-4">
         <div className="rounded-lg border bg-white p-4 shadow-sm">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -351,6 +368,9 @@ function ConductEditor({
                   ? 'Class teacher override: This sets the conduct scores for this student in this exam and takes precedence over per-subject entries. Per-subject scores remain saved but are ignored while an override exists.'
                   : 'Subject-level conduct: Saved for this subject. If an override exists, admin views will use the override instead of the averaged per-subject scores.'}
               </p>
+              {mode === 'override' && (
+                <p className="mt-1 text-xs text-gray-500">Leave all fields empty and click Remove override to switch back to averaged per-subject scores.</p>
+              )}
             </div>
             {saving && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
           </div>
@@ -372,6 +392,7 @@ function ConductEditor({
                     value={formValues[key]}
                     onChange={(event) => handleChange(key, event.target.value)}
                     onBlur={(event) => handleBlur(key, event.target.value)}
+                    onInvalid={(e) => e.preventDefault()}
                     className="w-full rounded-md border px-3 py-2 pr-10 text-right focus:outline-none focus:ring-2 focus:ring-primary/60"
                   />
                   <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-xs text-gray-400">/100</span>
@@ -380,24 +401,32 @@ function ConductEditor({
             ))}
           </div>
 
-          <div className="mt-4 flex justify-end">
+          <div className="mt-4 flex flex-col items-end">
             <button
               type="submit"
-              disabled={!canSubmit || saving || !dirty}
+              disabled={
+                !canSubmit ||
+                saving ||
+                (mode === 'perSubject' && !dirty) ||
+                (mode === 'override' && !(canSaveOverride || canDeleteOverride))
+              }
               className={`inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium shadow-sm transition-colors ${
-                !canSubmit || saving || !dirty
+                !canSubmit || saving || (mode === 'perSubject' && !dirty) || (mode === 'override' && !(canSaveOverride || canDeleteOverride))
                   ? 'cursor-not-allowed bg-gray-200 text-gray-500'
                   : 'bg-primary text-white hover:bg-primary/90'
               }`}
             >
-              {saving ? (
-                <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Saving…</span>
-              ) : justSaved ? (
-                <span className="inline-flex items-center gap-2">✓ Saved</span>
-              ) : (
-                'Save conduct'
-              )}
+              {saving
+                ? 'Saving…'
+                : mode === 'override' && canDeleteOverride
+                  ? 'Remove override'
+                  : dirty
+                    ? 'Save conduct'
+                    : 'Saved ✓'}
             </button>
+            {!dirty && !saving && (
+              <p className="mt-2 text-xs text-gray-500">Saved ✓</p>
+            )}
           </div>
         </div>
       </form>
