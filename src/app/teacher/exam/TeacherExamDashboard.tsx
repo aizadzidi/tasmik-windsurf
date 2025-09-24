@@ -10,6 +10,7 @@ import { getGradingScale, computeGrade, type GradingScale } from "@/lib/gradingU
 import ConductEditor from "@/components/teacher/ConductEditor";
 import type { ConductSummary } from "@/data/conduct";
 import { fetchGradeSummary } from "@/lib/db/exams";
+import type { GradeSummaryRow } from "@/lib/db/exams";
 
 // Dynamically import charts to avoid SSR issues
 const LineChart = dynamic(() => import("@/components/teacher/ExamLineChart"), { ssr: false });
@@ -430,14 +431,14 @@ export default function TeacherExamDashboard() {
       setLoadingGradeSummary(true);
       setGradeSummaryError(null);
       try {
-        const entries = await Promise.all(
-          studentRows.map(async (row) => {
+        const entries: [string, GradeSummaryRow[]][] = await Promise.all(
+          studentRows.map(async (row): Promise<[string, GradeSummaryRow[]]> => {
             try {
               const rows = await fetchGradeSummary(String(selectedExamId), String(selectedClassId), String(row.id));
-              return [String(row.id), rows] as const;
+              return [String(row.id), rows as GradeSummaryRow[]];
             } catch (err: any) {
               console.warn('grade summary RPC failed for student', row.id, err?.message || err);
-              return [String(row.id), []] as const;
+              return [String(row.id), [] as GradeSummaryRow[]];
             }
           })
         );
