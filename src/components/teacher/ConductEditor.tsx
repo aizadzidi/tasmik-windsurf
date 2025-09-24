@@ -62,6 +62,8 @@ function ConductEditor({
   const [saving, setSaving] = React.useState(false);
   const [dirty, setDirty] = React.useState(false);
   const [prefillError, setPrefillError] = React.useState<string | null>(null);
+  const [savedAt, setSavedAt] = React.useState<Date | null>(null);
+  const [justSaved, setJustSaved] = React.useState(false);
 
   const onSummaryChangeRef = React.useRef(onSummaryChange);
   React.useEffect(() => {
@@ -104,18 +106,20 @@ function ConductEditor({
       let alive = true;
       setLoadingSummary(true);
       rpcGetConductSummary(examId, studentId)
-        .then((data) => {
-          if (alive) {
-            mergeSummary(data, !!opts?.resetForm);
+        .then(
+          (data) => {
+            if (alive) {
+              mergeSummary(data, !!opts?.resetForm);
+            }
+          },
+          (error) => {
+            if (alive) {
+              mergeSummary(null, !!opts?.resetForm);
+              console.error('Failed to load conduct summary:', error instanceof Error ? error.message : error);
+            }
           }
-        })
-        .catch((error) => {
-          if (alive) {
-            mergeSummary(null, !!opts?.resetForm);
-            console.error('Failed to load conduct summary:', error instanceof Error ? error.message : error);
-          }
-        })
-        .finally(() => {
+        )
+        .then(() => {
           if (alive) {
             setLoadingSummary(false);
           }
@@ -143,25 +147,27 @@ function ConductEditor({
       .eq('student_id', studentId)
       .eq('subject_id', subjectId)
       .maybeSingle()
-      .then(({ data, error }) => {
-        if (error) throw error;
-        if (alive) {
-          setPrefillError(null);
+      .then(
+        ({ data, error }) => {
+          if (error) throw error;
+          if (alive) {
+            setPrefillError(null);
+          }
+          if (!dirty && alive) {
+            setFormValues(data ? mapScoresToForm(data) : emptyScores());
+          }
+        },
+        (error) => {
+          const message = error instanceof Error ? error.message : error;
+          console.warn('Conduct per-subject prefill failed:', message);
+          if (alive) {
+            setPrefillError('Unable to load subject-level scores yet. Enter new values to update.');
+          }
+          if (!dirty && alive) {
+            setFormValues(emptyScores());
+          }
         }
-        if (!dirty && alive) {
-          setFormValues(data ? mapScoresToForm(data) : emptyScores());
-        }
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : error;
-        console.warn('Conduct per-subject prefill failed:', message);
-        if (alive) {
-          setPrefillError('Unable to load subject-level scores yet. Enter new values to update.');
-        }
-        if (!dirty && alive) {
-          setFormValues(emptyScores());
-        }
-      });
+      );
     return () => {
       alive = false;
     };
@@ -201,39 +207,58 @@ function ConductEditor({
       showToast?.('Select exam and student before saving.', 'error');
       return;
     }
-    const parsed: Required<ConductScores> = {
-      discipline: 0,
-      effort: 0,
-      participation: 0,
-      motivational_level: 0,
-      character_score: 0,
-      leadership: 0,
-    };
-    for (const { key } of FIELD_DEFS) {
-      const value = formValues[key]?.trim();
-      if (!value) {
-        showToast?.('All conduct scores are required.', 'error');
-        return;
-      }
-      const numeric = Number(value);
-      if (Number.isNaN(numeric)) {
-        showToast?.('Conduct scores must be numbers between 0 and 100.', 'error');
-        return;
-      }
-      parsed[key] = clamp(numeric);
-    }
+
+    const toNumOrNull = (s: string) => (s.trim() === '' ? null : Math.max(0, Math.min(100, Math.round(Number(s)))));
 
     try {
       setSaving(true);
+
       if (mode === 'override') {
+        // All fields required in override mode
+        const parsed: Required<ConductScores> = {
+          discipline: 0,
+          effort: 0,
+          participation: 0,
+          motivational_level: 0,
+          character_score: 0,
+          leadership: 0,
+        };
+        for (const { key } of FIELD_DEFS) {
+          const value = formValues[key]?.trim();
+          if (!value) {
+            showToast?.('All conduct scores are required.', 'error');
+            setSaving(false);
+            return;
+          }
+          const numeric = Number(value);
+          if (Number.isNaN(numeric)) {
+            showToast?.('Conduct scores must be numbers between 0 and 100.', 'error');
+            setSaving(false);
+            return;
+          }
+          parsed[key] = clamp(numeric);
+        }
         await rpcUpsertConductOverride(examId, studentId, parsed);
       } else if (subjectId) {
-        await rpcUpsertConductPerSubject(examId, studentId, subjectId, parsed);
+        // Per-subject: allow partials; blank means NULL
+        const payload: Partial<Record<keyof ConductScores, number | null>> = {
+          discipline: toNumOrNull(formValues.discipline),
+          effort: toNumOrNull(formValues.effort),
+          participation: toNumOrNull(formValues.participation),
+          motivational_level: toNumOrNull(formValues.motivational_level),
+          character_score: toNumOrNull(formValues.character_score),
+          leadership: toNumOrNull(formValues.leadership),
+        };
+        await rpcUpsertConductPerSubject(examId, studentId, subjectId, payload);
       } else {
         throw new Error('Subject is required for per-subject conduct.');
       }
+
       showToast?.('Conduct saved.', 'success');
       setDirty(false);
+      setSavedAt(new Date());
+      setJustSaved(true);
+      setTimeout(() => setJustSaved(false), 2600);
       loadSummary({ resetForm: true });
       if (mode === 'perSubject') {
         // Refresh prefill info after successful save so form mirrors DB state
@@ -260,6 +285,21 @@ function ConductEditor({
 
   const chipLabel = summary?.source === 'override' ? 'Override' : 'Average';
   const chipColor = summary?.source === 'override' ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-blue-100 text-blue-800 border-blue-200';
+  const chipTooltip = summary?.source === 'override'
+    ? 'These values were entered at “All subjects” and override any per-subject entries.'
+    : 'These values are the average of per-subject conduct entries.';
+
+  const relativeTime = React.useCallback((date: Date) => {
+    const deltaSec = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (deltaSec < 5) return 'just now';
+    if (deltaSec < 60) return `${deltaSec}s ago`;
+    const min = Math.floor(deltaSec / 60);
+    if (min < 60) return `${min}m ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr}h ago`;
+    const d = Math.floor(hr / 24);
+    return `${d}d ago`;
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -269,12 +309,17 @@ function ConductEditor({
             <h4 className="text-base font-semibold text-gray-900">Current summary</h4>
             <p className="text-xs text-gray-500">Based on {summary?.subjects_count ?? 0} subject{(summary?.subjects_count ?? 0) === 1 ? '' : 's'} recorded.</p>
           </div>
-          <span
-            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${chipColor}`}
-            title={summary?.source === 'override' ? 'Class teacher override currently applies.' : 'Average of per-subject conduct entries.'}
-          >
-            {chipLabel}
-          </span>
+          <div className="flex items-center gap-3">
+            {savedAt && (
+              <span className="text-xs text-gray-500">Last saved {relativeTime(savedAt)}</span>
+            )}
+            <span
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${chipColor}`}
+              title={chipTooltip}
+            >
+              {chipLabel}
+            </span>
+          </div>
         </div>
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
           {FIELD_DEFS.map(({ key, label }) => (
@@ -324,7 +369,6 @@ function ConductEditor({
                     min={0}
                     max={100}
                     step={1}
-                    required
                     value={formValues[key]}
                     onChange={(event) => handleChange(key, event.target.value)}
                     onBlur={(event) => handleBlur(key, event.target.value)}
@@ -339,14 +383,20 @@ function ConductEditor({
           <div className="mt-4 flex justify-end">
             <button
               type="submit"
-              disabled={!canSubmit || saving}
+              disabled={!canSubmit || saving || !dirty}
               className={`inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium shadow-sm transition-colors ${
-                !canSubmit || saving
+                !canSubmit || saving || !dirty
                   ? 'cursor-not-allowed bg-gray-200 text-gray-500'
                   : 'bg-primary text-white hover:bg-primary/90'
               }`}
             >
-              {saving ? 'Saving…' : 'Save conduct'}
+              {saving ? (
+                <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Saving…</span>
+              ) : justSaved ? (
+                <span className="inline-flex items-center gap-2">✓ Saved</span>
+              ) : (
+                'Save conduct'
+              )}
             </button>
           </div>
         </div>
