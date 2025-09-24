@@ -9,6 +9,7 @@ import Navbar from "@/components/Navbar";
 import { getGradingScale, computeGrade, type GradingScale } from "@/lib/gradingUtils";
 import ConductEditor from "@/components/teacher/ConductEditor";
 import type { ConductSummary } from "@/data/conduct";
+import { fetchGradeSummary } from "@/lib/db/exams";
 
 // Dynamically import charts to avoid SSR issues
 const LineChart = dynamic(() => import("@/components/teacher/ExamLineChart"), { ssr: false });
@@ -86,6 +87,11 @@ export default function TeacherExamDashboard() {
   const [expandedRows, setExpandedRows] = React.useState<number[]>([]);
   const [saving, setSaving] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState<string>("");
+  // RPC-backed grade summary per student (filtered to allowed subjects)
+  const [gradeSummaryMap, setGradeSummaryMap] = React.useState<Map<string, Array<{ grade: string; cnt: number }>>>(new Map());
+  const [gradeSubjectsMap, setGradeSubjectsMap] = React.useState<Map<string, Record<string, string[]>>>(new Map());
+  const [loadingGradeSummary, setLoadingGradeSummary] = React.useState(false);
+  const [gradeSummaryError, setGradeSummaryError] = React.useState<string | null>(null);
   const [sortBy, setSortBy] = React.useState<{ key: 'name' | 'mark' | 'grade' | 'missing' | null; dir: 'asc' | 'desc' | null }>({ key: null, dir: null });
   // Aggregate per-student across all subjects for the selected exam (used when no subject selected)
   const [aggregateByStudent, setAggregateByStudent] = React.useState<Map<string, { avg: number | null; gradeCounts: Record<string, number> }>>(new Map());
@@ -387,6 +393,24 @@ export default function TeacherExamDashboard() {
           outSubject.set(sid, { completed: perSubjectCompleted.get(sid) || 0, total, th: perSubjectTH.get(sid) || 0 });
         });
         setSubjectCompletion(outSubject);
+
+        // Build grade -> subjects map for tooltips using allowed subjects and current exam results
+        const allowedSet = new Set(allSubjectIds.map(String));
+        const idToName = new Map(subjectsForUI.map(s => [String(s.id), s.name]));
+        const gradeSubjectsByStudent = new Map<string, Record<string, string[]>>();
+        (data || []).forEach((r: any) => {
+          const sid = String(r.student_id);
+          const subId = String(r.subject_id);
+          const grade = (r.grade || '').toUpperCase();
+          if (!grade || !allowedSet.has(subId)) return;
+          if (!gradeSubjectsByStudent.has(sid)) gradeSubjectsByStudent.set(sid, {});
+          const m = gradeSubjectsByStudent.get(sid)!;
+          const arr = m[grade] || [];
+          const name = idToName.get(subId) || subId;
+          if (!arr.includes(name)) arr.push(name);
+          m[grade] = arr;
+        });
+        setGradeSubjectsMap(gradeSubjectsByStudent);
       } catch (e) {
         console.error('Aggregate compute failed', e);
         setAggregateByStudent(new Map());
@@ -395,6 +419,38 @@ export default function TeacherExamDashboard() {
       }
     })();
   }, [selectedExamId, studentRows, subjectsForUI, subjectOptOutMap]);
+
+  // Load RPC grade summaries for each student (filtered to allowed subjects)
+  React.useEffect(() => {
+    const load = async () => {
+      if (!selectedExamId || !selectedClassId || studentRows.length === 0) {
+        setGradeSummaryMap(new Map());
+        return;
+      }
+      setLoadingGradeSummary(true);
+      setGradeSummaryError(null);
+      try {
+        const entries = await Promise.all(
+          studentRows.map(async (row) => {
+            try {
+              const rows = await fetchGradeSummary(String(selectedExamId), String(selectedClassId), String(row.id));
+              return [String(row.id), rows] as const;
+            } catch (err: any) {
+              console.warn('grade summary RPC failed for student', row.id, err?.message || err);
+              return [String(row.id), []] as const;
+            }
+          })
+        );
+        setGradeSummaryMap(new Map(entries));
+      } catch (err: any) {
+        setGradeSummaryError(err?.message || 'Failed to load grade summaries');
+        setGradeSummaryMap(new Map());
+      } finally {
+        setLoadingGradeSummary(false);
+      }
+    };
+    load();
+  }, [selectedExamId, selectedClassId, studentRows]);
 
   // Compute conduct categories from dynamic criteria or use defaults
   const conductCategories = React.useMemo(() => {
@@ -1095,15 +1151,16 @@ export default function TeacherExamDashboard() {
         }
         if (sortBy.key === 'grade') {
           if (!selectedSubjectId) {
-            // For aggregated view, sort by number of best grades descending/ascending using grade order
+            // For aggregated (no subject selected), sort by RPC-backed grade summary
             const scoreSummary = (s: StudentRow) => {
-              const counts = aggregateByStudent.get(s.id)?.gradeCounts || {};
-              const order = gradeOrder;
+              const rows = gradeSummaryMap.get(s.id) || [];
+              const order = ['A+','A','A-','B+','B','C+','C','D','E','G'] as const;
+              const counts = new Map<string, number>();
+              rows.forEach(r => counts.set(r.grade, r.cnt));
               let score = 0;
               for (let i = 0; i < order.length; i++) {
-                const g = order[i];
-                const c = counts[g] || 0;
-                // Higher weight for better grades
+                const g = order[i] as string;
+                const c = counts.get(g) || 0;
                 score += (order.length - i) * c;
               }
               return score;
@@ -1484,22 +1541,39 @@ export default function TeacherExamDashboard() {
                             ) : (
                               <div className="flex flex-wrap gap-1">
                                 {(() => {
-                                  const gradeCounts = agg?.gradeCounts || {};
-                                  const order = ['A+','A','A-','B+','B','B-','C+','C','C-','D','E','F','G','TH'];
-                                  const entries = Object.entries(gradeCounts).filter(([g,c]) => (c as number) > 0);
-                                  entries.sort((a,b) => {
-                                    const ia = order.indexOf(a[0]);
-                                    const ib = order.indexOf(b[0]);
-                                    if (ia !== -1 && ib !== -1) return ia - ib;
-                                    if (ia !== -1) return -1;
-                                    if (ib !== -1) return 1;
-                                    return (b[1] as number) - (a[1] as number);
-                                  });
-                                  return entries.length ? entries.map(([grade, count]) => (
-                                    <span key={grade} className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-800 border border-gray-200">
-                                      {grade}: {count as number}
-                                    </span>
-                                  )) : <span className="text-gray-400">—</span>;
+                                  const rows = gradeSummaryMap.get(student.id) || [];
+                                  // Sort by preferred grade order when present; unknown grades after
+                                  const orderIndex = (g: string) => {
+                                    const order = ['A+','A','A-','B+','B','C+','C','D','E','G'] as const;
+                                    const idx = (order as readonly string[]).indexOf(g);
+                                    return idx === -1 ? 999 : idx;
+                                  };
+                                  const sorted = [...rows].sort((a, b) => orderIndex(a.grade) - orderIndex(b.grade));
+                                  const total = sorted.reduce((s, r) => s + (r.cnt || 0), 0);
+                                  const tooltipFor = (grade: string) => {
+                                    const names = gradeSubjectsMap.get(student.id)?.[grade] || [];
+                                    return names.length ? names.join(", ") : "";
+                                  };
+                                  return (
+                                    <>
+                                      {sorted.length ? (
+                                        sorted.map(({ grade, cnt }) => (
+                                          <span
+                                            key={grade}
+                                            className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-800 border border-gray-200"
+                                            title={tooltipFor(grade)}
+                                          >
+                                            {grade}: {cnt}
+                                          </span>
+                                        ))
+                                      ) : (
+                                        <span className="text-gray-400">—</span>
+                                      )}
+                                      <span className="px-2 py-0.5 text-xs rounded-full bg-gray-50 text-gray-600 border border-gray-200">
+                                        Total: {total}
+                                      </span>
+                                    </>
+                                  );
                                 })()}
                               </div>
                             )}
