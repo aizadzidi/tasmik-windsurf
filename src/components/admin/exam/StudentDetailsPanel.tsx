@@ -3,7 +3,7 @@
 import React, { useRef, useState } from 'react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { X, TrendingUp, TrendingDown, Award, AlertCircle, FileText } from 'lucide-react';
+import { X, TrendingUp, TrendingDown, Award, AlertCircle, FileText, Loader2 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, BarChart, Bar } from 'recharts';
 import { ResponsiveRadar } from '@nivo/radar';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -13,6 +13,7 @@ import {
   rpcGetStudentSubjects,
   type StudentSubjectRow,
 } from '@/data/exams';
+import { rpcGetConductSummary, type ConductSummary } from '@/data/conduct';
 import { supabase } from '@/lib/supabaseClient';
 
 interface StudentDetailsPanelProps {
@@ -54,6 +55,8 @@ export default function StudentDetailsPanel({
   const [subjectRows, setSubjectRows] = useState<StudentSubjectRow[]>([]);
   const [subjectsLoading, setSubjectsLoading] = useState(false);
   const [avgMap, setAvgMap] = useState<Map<string, number | null>>(new Map());
+  const [conductSummary, setConductSummary] = useState<ConductSummary | null>(null);
+  const [conductSummaryLoading, setConductSummaryLoading] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   React.useEffect(() => {
@@ -122,6 +125,43 @@ export default function StudentDetailsPanel({
       cancelled = true;
     };
   }, [examId, classId]);
+
+  const refreshConductSummary = React.useCallback(async () => {
+    if (!examId || !student?.id) {
+      setConductSummary(null);
+      return;
+    }
+    setConductSummaryLoading(true);
+    try {
+      const summary = await rpcGetConductSummary(examId, student.id);
+      setConductSummary(summary);
+    } catch (error) {
+      console.error('rpcGetConductSummary failed:', error);
+      setConductSummary(null);
+    } finally {
+      setConductSummaryLoading(false);
+    }
+  }, [examId, student?.id]);
+
+  React.useEffect(() => {
+    refreshConductSummary();
+  }, [refreshConductSummary]);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!examId || !student?.id) return;
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent)?.detail as { examId?: string; studentId?: string } | undefined;
+      if (!detail) return;
+      if (detail.examId && String(detail.examId) !== String(examId)) return;
+      if (detail.studentId && String(detail.studentId) !== String(student.id)) return;
+      refreshConductSummary();
+    };
+    window.addEventListener('conduct-summary-updated', handler as EventListener);
+    return () => {
+      window.removeEventListener('conduct-summary-updated', handler as EventListener);
+    };
+  }, [examId, student?.id, refreshConductSummary]);
 
   const resolveMark = (row: StudentSubjectRow) => {
     if (typeof row.mark === 'number' && Number.isFinite(row.mark)) return row.mark;
@@ -348,14 +388,24 @@ export default function StudentDetailsPanel({
   };
 
   const conductPercentages = React.useMemo(() => {
+    if (conductSummary) {
+      return {
+        discipline: conductSummary.discipline,
+        effort: conductSummary.effort,
+        participation: conductSummary.participation,
+        motivationalLevel: conductSummary.motivational_level,
+        character: conductSummary.character_score,
+        leadership: conductSummary.leadership,
+      };
+    }
     if (!student) {
       return {
-        discipline: 0,
-        effort: 0,
-        participation: 0,
-        motivationalLevel: 0,
-        character: 0,
-        leadership: 0,
+        discipline: null,
+        effort: null,
+        participation: null,
+        motivationalLevel: null,
+        character: null,
+        leadership: null,
       };
     }
     if (student.conductPercentages) {
@@ -369,26 +419,37 @@ export default function StudentDetailsPanel({
       character: (student.conduct.character || 0) * 20,
       leadership: (student.conduct.leadership || 0) * 20,
     };
-  }, [student]);
+  }, [conductSummary, student]);
 
   if (!student) return null;
 
-  const conductData = [
-    { aspect: 'Discipline', score: conductPercentages.discipline },
-    { aspect: 'Effort', score: conductPercentages.effort },
-    { aspect: 'Participation', score: conductPercentages.participation },
-    { aspect: 'Motivational Level', score: conductPercentages.motivationalLevel },
-    { aspect: 'Character', score: conductPercentages.character },
-    { aspect: 'Leadership', score: conductPercentages.leadership },
+  const conductDisplayItems = [
+    { aspect: 'Discipline', value: conductPercentages.discipline },
+    { aspect: 'Effort', value: conductPercentages.effort },
+    { aspect: 'Participation', value: conductPercentages.participation },
+    { aspect: 'Motivational Level', value: conductPercentages.motivationalLevel },
+    { aspect: 'Character', value: conductPercentages.character },
+    { aspect: 'Leadership', value: conductPercentages.leadership },
   ];
 
+  const fmtConduct = (value: number | null | undefined) =>
+    value == null || Number.isNaN(value) ? '—' : `${Math.round(value)}%`;
+
+  const conductChipLabel = conductSummary?.source === 'override' ? 'Override' : 'Average';
+  const conductChipTooltip = conductSummary?.source === 'override'
+    ? 'These values were entered by the class teacher at “All subjects” and override any per-subject entries.'
+    : 'These values are the average of per-subject conduct entries.';
+  const conductChipClass = conductSummary?.source === 'override'
+    ? 'bg-amber-100 text-amber-800 border-amber-200'
+    : 'bg-blue-100 text-blue-800 border-blue-200';
+
+  const hasConductData = conductDisplayItems.some((item) => typeof item.value === 'number' && Number.isFinite(item.value));
+
   // Transform data for radar chart - use percentage values with 100% as perfect
-  const radarData = conductData
-    .filter(item => item && item.aspect && !isNaN(item.score))
-    .map(item => ({
-      aspect: item.aspect,
-      score: Math.max(0, Math.min(100, item.score)),
-    }));
+  const radarData = conductDisplayItems.map(({ aspect, value }) => ({
+    aspect,
+    score: Math.max(0, Math.min(100, typeof value === 'number' && Number.isFinite(value) ? value : 0)),
+  }));
 
   const overallTrend = student.overall.average >= 75 ? 'positive' : 
                        student.overall.average >= 60 ? 'stable' : 'concerning';
@@ -861,10 +922,23 @@ export default function StudentDetailsPanel({
 
             {/* Conduct Profile */}
             <div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Conduct Profile</h3>
+              <div className="mb-4 flex items-center justify-between gap-2">
+                <h3 className="text-lg font-semibold text-gray-900">Conduct Profile</h3>
+                <div className="flex items-center gap-2">
+                  {conductSummaryLoading && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
+                  {conductSummary && (
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold ${conductChipClass}`}
+                      title={conductChipTooltip}
+                    >
+                      {conductChipLabel}
+                    </span>
+                  )}
+                </div>
+              </div>
               <div className="bg-gray-50 rounded-xl p-6">
                 <div className="h-64">
-                  {radarData.length > 0 ? (
+                  {hasConductData ? (
                     <ResponsiveRadar
                       key={`student-radar-${student.id}-${radarData.length}`}
                       data={radarData}
@@ -908,10 +982,10 @@ export default function StudentDetailsPanel({
                 
                 {/* Minimalist Conduct Summary */}
                 <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
-                  {conductData.map(item => (
+                  {conductDisplayItems.map(item => (
                     <div key={item.aspect} className="flex justify-between items-center px-3 py-2 bg-white rounded-lg shadow-sm">
                       <span className="text-gray-600 font-medium">{item.aspect}</span>
-                      <span className="text-gray-900 font-semibold">{Math.round(item.score)}%</span>
+                      <span className="text-gray-900 font-semibold">{fmtConduct(item.value)}</span>
                     </div>
                   ))}
                 </div>

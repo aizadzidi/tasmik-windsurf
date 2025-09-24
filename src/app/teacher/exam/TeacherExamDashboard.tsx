@@ -2,11 +2,13 @@
 import React from "react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { ChevronDown, ChevronUp, AlertTriangle, Info, Users, FileText, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Info, Users } from "lucide-react";
 import dynamic from "next/dynamic";
 import { supabase } from "@/lib/supabaseClient";
 import Navbar from "@/components/Navbar";
 import { getGradingScale, computeGrade, type GradingScale } from "@/lib/gradingUtils";
+import ConductEditor from "@/components/teacher/ConductEditor";
+import type { ConductSummary } from "@/data/conduct";
 
 // Dynamically import charts to avoid SSR issues
 const LineChart = dynamic(() => import("@/components/teacher/ExamLineChart"), { ssr: false });
@@ -20,16 +22,29 @@ interface ConductCriteria {
   max_score: number;
 }
 
-type ConductKey = 'discipline' | 'effort' | 'participation' | 'motivational_level' | 'character' | 'leadership';
+const FIELD_KEYS = ['discipline','effort','participation','motivational_level','character_score','leadership'] as const;
+type ConductKey = typeof FIELD_KEYS[number];
+
+const CRITERIA_KEY_BY_NAME: Record<string, ConductKey> = {
+  discipline: 'discipline',
+  effort: 'effort',
+  participation: 'participation',
+  'motivational level': 'motivational_level',
+  motivational: 'motivational_level',
+  motivation: 'motivational_level',
+  character: 'character_score',
+  'character score': 'character_score',
+  leadership: 'leadership',
+};
 
 // Default conduct categories (fallback)
-const defaultConductCategories: { key: ConductKey; label: string }[] = [
-  { key: 'discipline', label: 'Discipline' },
-  { key: 'effort', label: 'Effort' },
-  { key: 'participation', label: 'Participation' },
-  { key: 'motivational_level', label: 'Motivational Level' },
-  { key: 'character', label: 'Character' },
-  { key: 'leadership', label: 'Leadership' },
+const defaultConductCategories: { key: ConductKey; label: string; maxScore: number }[] = [
+  { key: 'discipline', label: 'Discipline', maxScore: 100 },
+  { key: 'effort', label: 'Effort', maxScore: 100 },
+  { key: 'participation', label: 'Participation', maxScore: 100 },
+  { key: 'motivational_level', label: 'Motivational Level', maxScore: 100 },
+  { key: 'character_score', label: 'Character', maxScore: 100 },
+  { key: 'leadership', label: 'Leadership', maxScore: 100 },
 ];
 
 // Note: grade is computed by the DB trigger using the selected grading system
@@ -70,7 +85,6 @@ export default function TeacherExamDashboard() {
   const [studentRows, setStudentRows] = React.useState<StudentRow[]>([]);
   const [expandedRows, setExpandedRows] = React.useState<number[]>([]);
   const [saving, setSaving] = React.useState(false);
-  const [statusMsg, setStatusMsg] = React.useState<string>("");
   const [searchQuery, setSearchQuery] = React.useState<string>("");
   const [sortBy, setSortBy] = React.useState<{ key: 'name' | 'mark' | 'grade' | 'missing' | null; dir: 'asc' | 'desc' | null }>({ key: null, dir: null });
   // Aggregate per-student across all subjects for the selected exam (used when no subject selected)
@@ -84,7 +98,6 @@ export default function TeacherExamDashboard() {
   // Toggle to filter only students with missing subjects (when no subject is selected)
   const [showOnlyMissing, setShowOnlyMissing] = React.useState(false);
   // Metadata readiness to avoid UI flicker while initial selections are being computed
-  const [metaReady, setMetaReady] = React.useState(false);
   // Toast state for quick popup notifications
   const [toast, setToast] = React.useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -126,7 +139,6 @@ export default function TeacherExamDashboard() {
       }
 
       // Do not auto-select exam/class/subject on first load; leave filters empty by default
-      setMetaReady(true);
     })();
   }, []);
 
@@ -387,23 +399,29 @@ export default function TeacherExamDashboard() {
   // Compute conduct categories from dynamic criteria or use defaults
   const conductCategories = React.useMemo(() => {
     if (conductCriterias.length > 0) {
-      // Map dynamic criteria to legacy format for backward compatibility
-      return conductCriterias
-        .slice(0, 6) // Limit to 6 criteria to match current UI
-        .map((criteria, index) => {
-          // Map to existing keys for backward compatibility
-          const keyMap: ConductKey[] = [
-            'discipline', 'effort', 'participation', 
-            'motivational_level', 'character', 'leadership'
-          ];
+      const mapped = conductCriterias
+        .map((criteria) => {
+          const name = (criteria.name || '').toLowerCase().trim();
+          const key = CRITERIA_KEY_BY_NAME[name];
+          if (!key) return null;
           return {
-            key: keyMap[index] || 'discipline',
-            label: criteria.name,
-            maxScore: criteria.max_score
+            key,
+            label: criteria.name || defaultConductCategories.find((c) => c.key === key)?.label || 'Conduct',
+            maxScore: Number(criteria.max_score) > 0 ? Number(criteria.max_score) : 100,
           };
-        });
+        })
+        .filter((item): item is { key: ConductKey; label: string; maxScore: number } => Boolean(item));
+
+      if (mapped.length === defaultConductCategories.length) {
+        return mapped;
+      }
+
+      if (mapped.length > 0) {
+        const byKey = new Map(mapped.map((item) => [item.key, item]));
+        return defaultConductCategories.map((cat) => byKey.get(cat.key) ?? cat);
+      }
     }
-    return defaultConductCategories.map(cat => ({ ...cat, maxScore: 100 }));
+    return defaultConductCategories;
   }, [conductCriterias]);
 
   // Cache data when selections change
@@ -499,9 +517,9 @@ export default function TeacherExamDashboard() {
             effort: Number(e.effort) || 0,
             participation: Number(e.participation) || 0,
             motivational_level: Number(e.motivational_level) || 0,
-            character: Number(e.character) || 0,
+            character_score: Number(e.character) || 0,
             leadership: Number(e.leadership) || 0,
-          });
+          } as Record<ConductKey, number>);
         });
 
         const optOutEntriesRaw = Array.isArray(optOutJson?.entries) ? optOutJson.entries : [];
@@ -769,23 +787,6 @@ export default function TeacherExamDashboard() {
       showToast('Failed to update N/A status', 'error');
     }
   };
-  const handleConductChange = (idx: number, key: ConductKey, value: string) => {
-    setStudentRows((prev) => {
-      const updated = [...prev];
-      updated[idx] = {
-        ...updated[idx],
-        conduct: { ...updated[idx].conduct, [key]: value },
-      };
-      return updated;
-    });
-    
-    // Auto-save after a short delay to prevent losing conduct changes on refresh
-    setTimeout(() => {
-      if (!saving && hasUnsavedChanges()) {
-        handleSaveAll();
-      }
-    }, 500);
-  };
   const handleExpand = (idx: number) => {
     setExpandedRows((prev) => (prev.includes(idx) ? prev.filter((i) => i !== idx) : [...prev, idx]));
   };
@@ -797,6 +798,22 @@ export default function TeacherExamDashboard() {
     }
     setSelectedClassId(newClassId);
   };
+
+  const handleConductSummaryUpdate = React.useCallback((studentId: string, summary: ConductSummary | null) => {
+    const nextConduct = FIELD_KEYS.reduce((acc, key) => {
+      const value = summary?.[key] as number | null | undefined;
+      acc[key] = value == null || Number.isNaN(value) ? '' : String(value);
+      return acc;
+    }, {} as Record<ConductKey, string>);
+
+    setStudentRows((prev) =>
+      prev.map((row) => (row.id === studentId ? { ...row, conduct: nextConduct } : row))
+    );
+
+    initialRowsRef.current = initialRowsRef.current.map((row) =>
+      row.id === studentId ? { ...row, conduct: { ...nextConduct } } : row
+    );
+  }, []);
 
   const handleSubjectChange = async (newSubjectId: string) => {
     if (hasUnsavedChanges()) {
@@ -838,10 +855,7 @@ export default function TeacherExamDashboard() {
       if (statusChanged) return true;
       const optOutChanged = Boolean(curr.optedOut) !== Boolean(init.optedOut);
       if (optOutChanged) return true;
-      // Compare conduct fields (string compare, trimmed)
-      const conductChanged = (['discipline','effort','participation','motivational_level','character','leadership'] as ConductKey[])
-        .some((key) => String(curr.conduct?.[key] ?? '').trim() !== String(init.conduct?.[key] ?? '').trim());
-      return conductChanged;
+      return false;
     });
   };
 
@@ -863,10 +877,8 @@ export default function TeacherExamDashboard() {
   // Save all rows using new single-endpoint API
   const handleSaveAll = async () => {
     setSaving(true);
-    setStatusMsg('');
     try {
       if (!selectedExamId || !selectedSubjectId) {
-        setStatusMsg('Select class, subject, and exam first');
         setSaving(false);
         return;
       }
@@ -879,9 +891,7 @@ export default function TeacherExamDashboard() {
         if (!init) return true;
         const markChanged = String(r.mark ?? '').trim() !== String(init.mark ?? '').trim();
         const statusChanged = Boolean(r.isAbsent) !== Boolean(init.isAbsent);
-        const conductChanged = (['discipline','effort','participation','motivational_level','character','leadership'] as ConductKey[])
-          .some((key) => String(r.conduct?.[key] ?? '').trim() !== String(init.conduct?.[key] ?? '').trim());
-        return markChanged || statusChanged || conductChanged;
+        return markChanged || statusChanged;
       });
 
       // Prepare exam results for the new single-endpoint API
@@ -946,7 +956,6 @@ export default function TeacherExamDashboard() {
             `Code: ${data.details.code || 'Unknown'}\nHint: ${data.details.hint || 'No additional info'}` :
             'No additional details available';
           
-          setStatusMsg(`Error: ${errorMessage}`);
           showToast(`Save failed: ${errorMessage}`, 'error');
           console.error('Save error details:', data.details);
           throw new Error(`${errorMessage}\n${errorDetails}`);
@@ -985,69 +994,12 @@ export default function TeacherExamDashboard() {
         }
       }
 
-      // Upsert conduct_entries for current teacher
-      if (!userId) throw new Error('No user');
-      const conductRows = changedRows
-        .map((r) => {
-          const parsed: Record<ConductKey, number> = {
-            discipline: 0,
-            effort: 0,
-            participation: 0,
-            motivational_level: 0,
-            character: 0,
-            leadership: 0,
-          };
-          // Use dynamic max scores from conduct categories
-          conductCategories.forEach((cat) => {
-            const rawValue = r.conduct[cat.key];
-            const value = rawValue === '' || rawValue === undefined || rawValue === null ? 0 : parseFloat(rawValue);
-            parsed[cat.key] = Math.min(cat.maxScore, Math.max(0, isNaN(value) ? 0 : value));
-          });
-          // Only include if conduct actually changed vs baseline
-          const init = initialMap.get(r.id);
-          const conductChanged = (['discipline','effort','participation','motivational_level','character','leadership'] as ConductKey[])
-            .some((key) => String(r.conduct?.[key] ?? '').trim() !== String(init?.conduct?.[key] ?? '').trim());
-          // Always submit if conduct changed (even if all values are 0 - this allows clearing conduct marks)
-          if (!conductChanged) return null;
-          return {
-            exam_id: selectedExamId,
-            student_id: r.id,
-            teacher_id: userId,
-            ...parsed,
-          };
-        })
-        .filter(Boolean) as any[];
-
-      if (conductRows.length > 0) {
-        // Prefer explicit conflict target for broader schema compatibility
-        let { error: cr } = await supabase
-          .from('conduct_entries')
-          .upsert(conductRows, { onConflict: 'exam_id,student_id,teacher_id' });
-        if (cr) {
-          const msg = String(cr.message || '');
-          if (msg.includes('there is no unique or exclusion constraint matching')) {
-            // Fallback for schemas without teacher dimension in unique key
-            const res2 = await supabase
-              .from('conduct_entries')
-              .upsert(conductRows, { onConflict: 'exam_id,student_id' });
-            cr = res2.error;
-          }
-        }
-        if (cr) {
-          // Final fallback: insert to avoid hard failure; better to save something than nothing
-          const { error: insertErr } = await supabase.from('conduct_entries').insert(conductRows);
-          if (insertErr) throw insertErr;
-        }
-      }
-
-      setStatusMsg('Saved');
       showToast('Saved', 'success');
       
       // Update baseline with successfully saved changes
-      if (examResults.length > 0 || conductRows.length > 0) {
+      if (examResults.length > 0) {
         const baseMap = new Map(initialRowsRef.current.map(r => [r.id, { ...r }]));
         const markIds = new Set((examResults as any[]).map((r) => String(r.studentId)));
-        const conductIds = new Set((conductRows as any[]).map((r) => String(r.student_id)));
         studentRows.forEach((r) => {
           const base = baseMap.get(r.id);
           if (!base) return;
@@ -1055,9 +1007,6 @@ export default function TeacherExamDashboard() {
             base.mark = r.mark;
             base.grade = r.grade;
             base.isAbsent = r.isAbsent;
-          }
-          if (conductIds.has(r.id)) {
-            base.conduct = { ...r.conduct };
           }
         });
         initialRowsRef.current = Array.from(baseMap.values());
@@ -1088,7 +1037,6 @@ export default function TeacherExamDashboard() {
         displayMessage = 'You do not have permission to perform this action.';
       }
       
-      setStatusMsg(`Error: ${displayMessage}`);
       showToast(`Save failed: ${displayMessage}`, 'error');
       
       // Log detailed error for debugging
@@ -1595,35 +1543,14 @@ export default function TeacherExamDashboard() {
                         {expanded && (
                           <tr className="bg-muted/40">
                             <td colSpan={6} className="px-3 py-2">
-                              <div className="flex flex-col md:flex-row gap-4">
-                                <div className="flex-1">
-                                  <h4 className="font-semibold mb-2">Conduct Breakdown</h4>
-                                  <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-1 text-sm">
-                                    {conductCategories.map((cat) => (
-                                      <li key={cat.key} className="flex items-center gap-2">
-                                        <span className="font-medium w-32">{cat.label}:</span>
-                                        <div className="relative">
-                                          <input
-                                            type="number"
-                                            className="w-20 border rounded pl-6 pr-2 py-1 text-right"
-                                            value={student.conduct[cat.key]}
-                                            onChange={(e) => handleConductChange(idx, cat.key, e.target.value)}
-                                            min={0}
-                                            max={cat.maxScore}
-                                            step={1}
-                                          />
-                                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-500">%</span>
-                                        </div>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                                <div className="flex-1 min-w-[200px]">
-                                  <RadarChart data={Object.fromEntries(
-                                    Object.entries(student.conduct).map(([k, v]) => [k, parseFloat(v as string) || 0])
-                                  )} />
-                                </div>
-                              </div>
+                              <ConductEditor
+                                examId={selectedExamId}
+                                studentId={student.id}
+                                subjectId={selectedSubjectId || null}
+                                mode={selectedSubjectId ? 'perSubject' : 'override'}
+                                onSummaryChange={(summary) => handleConductSummaryUpdate(student.id, summary)}
+                                showToast={showToast}
+                              />
                             </td>
                           </tr>
                         )}

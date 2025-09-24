@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { GradeCode } from '@/core/grades';
 
 export type StudentSubjectRow = {
   subject_id: string;
@@ -18,7 +19,7 @@ export type ClassAvg = {
 
 export type GradeSummaryRow = {
   student_id: string;
-  grade: string;
+  grade: GradeCode;
   cnt: number;
   absent_cnt: number;
   total_present: number;
@@ -41,8 +42,14 @@ export async function rpcGetStudentSubjects(
   return (data ?? []) as StudentSubjectRow[];
 }
 
+type ClassAvgRow = {
+  subject_id: string;
+  class_avg: number | string | null;
+  n: number | string;
+};
+
 export async function rpcGetClassSubjectAverages(
-  supabase: any,
+  supabase: SupabaseClient,
   examId: string,
   classId: string
 ): Promise<ClassAvg[]> {
@@ -53,8 +60,8 @@ export async function rpcGetClassSubjectAverages(
 
   if (error) throw error;
 
-  return (data ?? []).map((a: any) => ({
-    subject_id: a.subject_id as string,
+  return ((data ?? []) as ClassAvgRow[]).map((a) => ({
+    subject_id: a.subject_id,
     class_avg: a.class_avg === null ? null : Number(a.class_avg),
     n: Number(a.n),
   }));
@@ -73,3 +80,5 @@ export async function rpcGetGradeSummaryPerClass(
   if (error) throw error;
   return (data ?? []) as GradeSummaryRow[];
 }
+
+export type { GradeCode } from '@/core/grades';

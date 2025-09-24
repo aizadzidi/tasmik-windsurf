@@ -13,6 +13,16 @@ import {
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 import { GradeSummaryRow, rpcGetGradeSummaryPerClass } from '@/data/exams';
+import { compareGrade, gradeChipTitle, GRADE_COLOR } from '@/core/grades';
+
+const GRADE_TONE_CLASS: Record<string, string> = {
+  emerald: 'text-emerald-700',
+  sky: 'text-sky-700',
+  amber: 'text-amber-700',
+  orange: 'text-orange-700',
+  rose: 'text-rose-700',
+  zinc: 'text-zinc-600',
+};
 
 export interface StudentData {
   id: string;
@@ -95,16 +105,11 @@ export default function StudentTable({ data, onRowClick, loading, selectedSubjec
           byStudent.get(r.student_id)!.push(r);
         }
 
-        for (const [, arr] of byStudent) {
-          arr.sort((a, b) => a.grade_rank - b.grade_rank || a.grade.localeCompare(b.grade));
-        }
-
         if (!cancelled) {
           setGradeCache((prev) => ({
             ...prev,
             [key]: byStudent,
           }));
-          console.debug('[grade-summary]', examId, classId, 'rows=', rows.length, 'students=', byStudent.size);
         }
       } catch (error) {
         if (!cancelled) {
@@ -170,9 +175,9 @@ export default function StudentTable({ data, onRowClick, loading, selectedSubjec
       header: 'Grade',
       size: 260,
       cell: ({ row }) => {
-        const rows = gradeMap.get(row.original.id);
+        const rows = gradeMap.get(row.original.id) ?? [];
 
-        if (!rows || rows.length === 0) {
+        if (rows.length === 0) {
           return (
             <span className={gradeLoading ? "text-muted-foreground animate-pulse" : "text-muted-foreground"}>
               —
@@ -180,18 +185,31 @@ export default function StudentTable({ data, onRowClick, loading, selectedSubjec
           );
         }
 
-        const absent = rows[0]?.absent_cnt ?? 0;
+        const sortedRows = rows
+          .slice()
+          .sort((a, b) => (a.grade_rank ?? 999) - (b.grade_rank ?? 999) || compareGrade(a.grade, b.grade));
+
+        const absent = sortedRows[0]?.absent_cnt ?? 0;
+        const totalPresent = sortedRows[0]?.total_present;
 
         return (
           <div className="flex flex-wrap gap-1">
-            {rows.map((r) => (
-              <span
-                key={`${r.grade}-${r.grade_rank}`}
-                className="inline-flex items-center rounded-full px-2 py-0.5 text-xs bg-muted"
-              >
-                {r.grade}: {r.cnt}
-              </span>
-            ))}
+            {sortedRows.map((r) => {
+              const tone = GRADE_COLOR[r.grade];
+              const colorClass = tone ? GRADE_TONE_CLASS[tone] : undefined;
+              const baseChipClass = 'inline-flex items-center rounded-full px-2 py-0.5 text-xs bg-muted';
+              const chipClass = colorClass ? `${baseChipClass} ${colorClass}` : baseChipClass;
+
+              return (
+                <span
+                  key={`${r.grade}-${r.grade_rank}`}
+                  title={gradeChipTitle(r.grade, r.cnt, totalPresent)}
+                  className={chipClass}
+                >
+                  {r.grade}: {r.cnt}
+                </span>
+              );
+            })}
             {absent > 0 && (
               <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs bg-muted/60">
                 Abs: {absent}
