@@ -11,6 +11,7 @@ import ConductEditor from "@/components/teacher/ConductEditor";
 import type { ConductSummary } from "@/data/conduct";
 import { fetchGradeSummary } from "@/lib/db/exams";
 import type { GradeSummaryRow } from "@/lib/db/exams";
+import StudentDetailsPanelTeacher from "@/components/teacher/StudentDetailsPanelTeacher";
 
 // Dynamically import charts to avoid SSR issues
 const LineChart = dynamic(() => import("@/components/teacher/ExamLineChart"), { ssr: false });
@@ -1109,6 +1110,9 @@ export default function TeacherExamDashboard() {
   };
 
   // Section 3: Graph Data
+  // Drawer panel state
+  const [panelStudent, setPanelStudent] = React.useState<any>(null);
+
   // Visible rows based on search (map indexes back to original array)
   const visibleRows = React.useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -1474,7 +1478,17 @@ export default function TeacherExamDashboard() {
                     };
                     return (
                       <React.Fragment key={student.id}>
-                        <tr className="border-b">
+                        <tr className="border-b" onClick={() => {
+                          const clsName = classes.find(c => c.id === selectedClassId)?.name || '';
+                          setPanelStudent({
+                            id: student.id,
+                            name: student.name,
+                            class: clsName,
+                            subjects: {},
+                            conduct: { discipline: 0, effort: 0, participation: 0, motivationalLevel: 0, character: 0, leadership: 0 },
+                            overall: { average: 0, rank: 0, needsAttention: false },
+                          });
+                        }}>
                           <td className="px-3 py-2">{displayIdx + 1}</td>
                           <td className="px-3 py-2">{student.name}</td>
                           <td className="px-3 py-2">
@@ -1487,6 +1501,7 @@ export default function TeacherExamDashboard() {
                                 value={student.mark}
                                 onChange={(e) => handleMarkChange(idx, e.target.value)}
                                 onPaste={(e) => handleMarkPasteFromInput(e, displayIdx)}
+                                onClick={(e) => e.stopPropagation()}
                                 placeholder=""
                                 disabled={!!student.isAbsent || student.optedOut}
                               />
@@ -1583,7 +1598,7 @@ export default function TeacherExamDashboard() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => handleExpand(idx)}
+                              onClick={(e) => { e.stopPropagation(); handleExpand(idx); }}
                               aria-label={expanded ? "Hide Conduct" : "Show Conduct"}
                             >
                               {expanded ? <ChevronUp /> : <ChevronDown />}
@@ -1598,6 +1613,7 @@ export default function TeacherExamDashboard() {
                                   className="h-4 w-4"
                                   checked={!!student.isAbsent}
                                   onChange={(e) => handleAbsentToggle(idx, e.target.checked)}
+                                  onClick={(e) => e.stopPropagation()}
                                   disabled={!selectedSubjectId || student.optedOut}
                                 />
                                 <span>Absent</span>
@@ -1608,6 +1624,7 @@ export default function TeacherExamDashboard() {
                                   className="h-4 w-4"
                                   checked={!!student.optedOut}
                                   onChange={(e) => handleOptOutToggle(idx, e.target.checked)}
+                                  onClick={(e) => e.stopPropagation()}
                                   disabled={!selectedSubjectId}
                                 />
                                 <span>N/A</span>
@@ -1655,6 +1672,14 @@ export default function TeacherExamDashboard() {
           </div>
         </div>
       </div>
+      {/* Drawer */}
+      <StudentDetailsPanelTeacher
+        student={panelStudent}
+        onClose={() => setPanelStudent(null)}
+        examId={selectedExamId}
+        classId={selectedClassId}
+        selectedExamName={exams.find(e => String(e.id) === String(selectedExamId))?.name}
+      />
     </div>
   );
 }

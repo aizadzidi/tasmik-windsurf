@@ -1,0 +1,1053 @@
+"use client";
+
+import React, { useRef, useState } from 'react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { X, TrendingUp, TrendingDown, Award, AlertCircle, FileText, Loader2 } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, BarChart, Bar } from 'recharts';
+import { ResponsiveRadar } from '@nivo/radar';
+import { motion, AnimatePresence } from 'framer-motion';
+import { StudentData } from '@/components/admin/exam/StudentTable';
+import {
+  rpcGetClassSubjectAverages,
+  rpcGetStudentSubjects,
+  type StudentSubjectRow,
+} from '@/data/exams';
+import { rpcGetConductSummary, type ConductSummary } from '@/data/conduct';
+import { supabase } from '@/lib/supabaseClient';
+
+// Null-safe number helper
+const nn = (n: number | null | undefined) => (n ?? 0);
+
+export type StudentPanelMode = 'admin' | 'teacher';
+
+interface StudentDetailsPanelProps {
+  student: StudentData | null;
+  onClose: () => void;
+  classAverages?: {
+    [subject: string]: number;
+  };
+  isMobile?: boolean;
+  selectedExamName?: string;
+  reportButtonLabel?: string;
+  examId?: string;
+  classId?: string;
+  mode?: StudentPanelMode;
+}
+
+export default function StudentDetailsPanelShared({ 
+  student, 
+  onClose, 
+  classAverages = {},
+  isMobile = false,
+  selectedExamName = '',
+  reportButtonLabel = 'Generate Report',
+  examId,
+  classId,
+  mode = 'admin'
+}: StudentDetailsPanelProps) {
+  const isAdmin = (mode ?? 'admin') === 'admin';
+
+  // Derived locals to match legacy usage in this panel
+  const studentId = student?.id;
+  const studentName = student?.name ?? '';
+  const className = student?.class ?? '';
+  const overallAverage = student?.overall?.average ?? 0;
+  const overallRank = student?.overall?.rank;
+  const examName = selectedExamName;
+  const open = Boolean(student);
+  const parentMeetMode = false;
+
+  // Local responsive flag (to preserve identical animation behavior)
+  const [isMobileView, setIsMobileView] = useState(false);
+  React.useEffect(() => {
+    const update = () => setIsMobileView(window.innerWidth < 1024);
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
+  const [reportHtml, setReportHtml] = useState<string | null>(null);
+  const [showReportPreview, setShowReportPreview] = useState(false);
+  const [subjectRows, setSubjectRows] = useState<StudentSubjectRow[]>([]);
+  const [subjectsLoading, setSubjectsLoading] = useState(false);
+  const [avgMap, setAvgMap] = useState<Map<string, number | null>>(new Map());
+  const [conductSummary, setConductSummary] = useState<ConductSummary | null>(null);
+  const [conductSummaryLoading, setConductSummaryLoading] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  // Load subject rows for student/exam/class
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!open || !studentId || !examId || !classId) {
+      setSubjectRows([]);
+      setSubjectsLoading(false);
+      return;
+    }
+    setSubjectsLoading(true);
+    (async () => {
+      try {
+        const data = await rpcGetStudentSubjects(supabase, examId, classId, studentId);
+        if (cancelled) return;
+        setSubjectRows(data);
+      } catch (error) {
+        if (!cancelled) {
+          console.error("RPC get_exam_student_subjects failed:", error);
+          setSubjectRows([]);
+        }
+      } finally {
+        if (!cancelled) setSubjectsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, studentId, examId, classId]);
+
+  React.useEffect(() => {
+    setSelectedSubject(null);
+  }, [studentId]);
+
+  const filled = React.useMemo(
+    () => subjectRows.filter((row) => row.result_id !== null),
+    [subjectRows]
+  );
+
+  React.useEffect(() => {
+    if (!student?.id || !examId || !classId) {
+      setSubjectRows([]);
+      setSubjectsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setSubjectsLoading(true);
+
+    (async () => {
+      try {
+        const data = await rpcGetStudentSubjects(supabase, examId!, classId!, student.id);
+        if (cancelled) return;
+        setSubjectRows(data);
+      } catch (error) {
+        if (!cancelled) {
+          console.error('RPC get_exam_student_subjects failed:', error);
+          setSubjectRows([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setSubjectsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [student?.id, examId, classId]);
+
+  React.useEffect(() => {
+    setSelectedSubject(null);
+  }, [student?.id]);
+
+  const filledRows = React.useMemo(
+    () => subjectRows.filter((row) => row.result_id !== null),
+    [subjectRows]
+  );
+
+  React.useEffect(() => {
+    if (!examId || !classId) {
+      setAvgMap(new Map());
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const avgs = await rpcGetClassSubjectAverages(supabase, examId!, classId!);
+        if (cancelled) return;
+        setAvgMap(new Map(avgs.map((a) => [a.subject_id, a.class_avg])));
+      } catch (e) {
+        console.error('get_class_subject_averages failed', e);
+        if (!cancelled) {
+          setAvgMap(new Map());
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [examId, classId]);
+
+  const refreshConductSummary = React.useCallback(async () => {
+    if (!examId || !student?.id) {
+      setConductSummary(null);
+      return;
+    }
+    setConductSummaryLoading(true);
+    try {
+      const summary = await rpcGetConductSummary(examId!, student.id);
+      setConductSummary(summary);
+    } catch (error) {
+      console.error('rpcGetConductSummary failed:', error);
+      setConductSummary(null);
+    } finally {
+      setConductSummaryLoading(false);
+    }
+  }, [examId, student?.id]);
+
+  React.useEffect(() => {
+    refreshConductSummary();
+  }, [refreshConductSummary]);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!examId || !student?.id) return;
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent)?.detail as { examId?: string; studentId?: string } | undefined;
+      if (!detail) return;
+      if (detail.examId && String(detail.examId) !== String(examId)) return;
+      if (detail.studentId && String(detail.studentId) !== String(student.id)) return;
+      refreshConductSummary();
+    };
+    window.addEventListener('conduct-summary-updated', handler as EventListener);
+    return () => {
+      window.removeEventListener('conduct-summary-updated', handler as EventListener);
+    };
+  }, [examId, student?.id, refreshConductSummary]);
+
+  const resolveMark = (row: StudentSubjectRow) => {
+    if (typeof row.mark === "number" && Number.isFinite(row.mark)) return row.mark;
+    if (row.mark !== null && row.mark !== undefined) {
+      const parsed = Number(row.mark);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    if (typeof row.final_score === "number" && Number.isFinite(row.final_score)) {
+      return Number(row.final_score);
+    }
+    if (row.final_score !== null && row.final_score !== undefined) {
+      const parsed = Number(row.final_score);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return 0;
+  };
+
+  const selectedSubjectRow = React.useMemo(() => {
+    if (!selectedSubject) return undefined;
+    return filledRows.find((row) => row.subject_name === selectedSubject);
+  }, [filledRows, selectedSubject]);
+
+  const getClassAverage = React.useCallback(
+    (subjectId: string) => {
+      if (!avgMap.has(subjectId)) {
+        return null;
+      }
+      return avgMap.get(subjectId) ?? null;
+    },
+    [avgMap]
+  );
+
+  const subjectSummaries = React.useMemo(
+    () =>
+      filledRows.map((row) => ({
+        subject: row.subject_name,
+        subjectId: row.subject_id,
+        score: resolveMark(row),
+        classAvg: getClassAverage(row.subject_id),
+        grade: row.grade ?? "",
+      })),
+    [filledRows, getClassAverage]
+  );
+
+  const fmt = (value: number | null | undefined) =>
+    value == null || Number.isNaN(value) ? "—" : `${value}%`;
+
+  const toNumeric = (value: unknown): number | null => {
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? value : null;
+    }
+    if (typeof value === "string") {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    if (Array.isArray(value) && value.length > 0) {
+      const parsed = Number(value[0]);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  };
+
+  React.useEffect(() => {
+    if (selectedSubject && !filledRows.some((row) => row.subject_name === selectedSubject)) {
+      setSelectedSubject(null);
+    }
+  }, [filledRows, selectedSubject]);
+
+
+  const conductPercentages = React.useMemo(() => {
+    if (conductSummary) {
+      return {
+        discipline: conductSummary.discipline,
+        effort: conductSummary.effort,
+        participation: conductSummary.participation,
+        motivationalLevel: conductSummary.motivational_level,
+        character: conductSummary.character_score,
+        leadership: conductSummary.leadership,
+      };
+    }
+    return {
+      discipline: null,
+      effort: null,
+      participation: null,
+      motivationalLevel: null,
+      character: null,
+      leadership: null,
+    } as Record<string, number | null> as {
+      discipline: number | null;
+      effort: number | null;
+      participation: number | null;
+      motivationalLevel: number | null;
+      character: number | null;
+      leadership: number | null;
+    };
+  }, [conductSummary]);
+
+  const handleDownloadPdf = async () => {
+    try {
+      if (!studentId) return;
+      const doc = new jsPDF({ unit: "pt", format: "a4" });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 36;
+      let y = 40;
+
+      try {
+        const res = await fetch("/logo-akademi.png");
+        const blob = await res.blob();
+        const reader = new FileReader();
+        const dataUrl: string = await new Promise((resolve, reject) => {
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+        doc.addImage(dataUrl, "PNG", margin, y, 42, 42);
+      } catch {}
+
+      doc.setFontSize(14);
+      doc.setTextColor("#0f172a");
+      doc.text("Al Khayr Class", margin + 54, y + 16);
+      doc.setFontSize(10);
+      doc.setTextColor("#475569");
+      doc.text("Student Performance Report", margin + 54, y + 32);
+      doc.text(`Generated: ${new Date().toLocaleString()}`, pageWidth - margin, y + 10, { align: "right" });
+
+      y += 56;
+      doc.setTextColor("#0f172a");
+      doc.setFontSize(10);
+      const chips = [
+        `Name: ${studentName}`,
+        `Class: ${className}`,
+        ...(examName ? [`Exam: ${examName}`] : []),
+        `Overall: ${overallAverage ?? 0}%`,
+        `Rank ${overallRank != null ? `#${overallRank}` : "—"}`,
+      ];
+      let x = margin;
+      const pad = 6,
+        gap = 6;
+      let cy = y;
+      chips.forEach((c) => {
+        const w = doc.getTextWidth(c) + pad * 2;
+        if (x + w > pageWidth - margin) {
+          x = margin;
+          cy += 20;
+        }
+        doc.setDrawColor("#e2e8f0");
+        doc.setFillColor("#f8fafc");
+        doc.roundedRect(x, cy - 12, w, 18, 3, 3, "FD");
+        doc.setTextColor("#0f172a");
+        doc.text(c, x + pad, cy + 2);
+        x += w + gap;
+      });
+      y = cy + 26;
+
+      // Summary table
+      doc.setFontSize(12);
+      doc.text("Summary", margin, y);
+      y += 6;
+      autoTable(doc, {
+        startY: y + 6,
+        head: [["Overall Average", "Rank"]],
+        body: [[`${overallAverage ?? 0}%`, `${overallRank != null ? `#${overallRank}` : "—"}`]],
+        styles: { fontSize: 10 },
+        headStyles: { fillColor: [241, 245, 249], textColor: 15 },
+        margin: { left: margin, right: margin },
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      y = (doc as any).lastAutoTable.finalY + 18;
+
+      // Subjects table
+      doc.text("Subjects", margin, y);
+      y += 6;
+      const subjectsBody = filledRows.map((row) => {
+        const score = resolveMark(row);
+        const scoreText = fmt(score);
+        const avgValue = getClassAverage(row.subject_id);
+        const avgText = fmt(avgValue);
+        return [row.subject_name, scoreText, avgText, row.grade || "-"];
+      });
+      autoTable(doc, {
+        startY: y + 6,
+        head: [["Subject", "Score", "Class Avg", "Grade"]],
+        body: subjectsBody,
+        styles: { fontSize: 10 },
+        headStyles: { fillColor: [241, 245, 249], textColor: 15 },
+        margin: { left: margin, right: margin },
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      y = (doc as any).lastAutoTable.finalY + 18;
+
+      // Conduct table
+      const toPct = (v: number | null | undefined) =>
+        typeof v === "number" ? `${Math.max(0, Math.min(100, v)).toFixed(0)}%` : "--";
+      doc.text("Conduct", margin, y);
+      y += 6;
+      autoTable(doc, {
+        startY: y + 6,
+        head: [["Aspect", "Score"]],
+        body: [
+          ["Discipline", toPct(nn(conductPercentages.discipline))],
+          ["Effort", toPct(nn(conductPercentages.effort))],
+          ["Participation", toPct(nn(conductPercentages.participation))],
+          ["Motivational Level", toPct(nn(conductPercentages.motivationalLevel))],
+          ["Character", toPct(nn(conductPercentages.character))],
+          ["Leadership", toPct(nn(conductPercentages.leadership))],
+        ],
+        styles: { fontSize: 10 },
+        headStyles: { fillColor: [241, 245, 249], textColor: 15 },
+        margin: { left: margin, right: margin },
+      });
+
+      const nameSlug = (studentName || "student").replace(/\s+/g, "-").toLowerCase();
+      doc.save(`student-report-${nameSlug}.pdf`);
+    } catch (e) {
+      console.error("PDF export failed", e);
+      alert("Failed to generate PDF. You can still use Print in the preview.");
+    }
+  };
+
+  // Build chart points
+  const buildChartData = (
+    subject: { score: number; trend?: number[]; grade: string; exams?: { name: string; score: number }[] } | null | undefined,
+    fallbackRow?: StudentSubjectRow,
+    fixedClassAvg?: number
+  ): Array<{ label: string; score: number; classAvg: number | null }> => {
+    const classAvgValue = typeof fixedClassAvg === "number" ? fixedClassAvg : null;
+    if (!subject) {
+      if (fallbackRow) {
+        const score = resolveMark(fallbackRow);
+        return [
+          {
+            label: examName ? `${examName} (Current)` : "Current Exam",
+            score,
+            classAvg: classAvgValue,
+          },
+        ];
+      }
+      return [];
+    }
+    if (Array.isArray(subject?.exams) && subject.exams.length > 0) {
+      return subject.exams
+        .filter((e) => typeof e.score === "number")
+        .map((e) => ({ label: e.name, score: e.score, classAvg: classAvgValue }));
+    }
+    if (fallbackRow) {
+      const score = resolveMark(fallbackRow);
+      return [
+        {
+          label: examName ? `${examName} (Current)` : "Current Exam",
+          score,
+          classAvg: classAvgValue,
+        },
+      ];
+    }
+    return [];
+  };
+
+  const overallTrend = overallAverage >= 75 ? "positive" : overallAverage >= 60 ? "stable" : "concerning";
+
+  const conductDisplayItems = [
+    { aspect: "Discipline", value: conductPercentages.discipline },
+    { aspect: "Effort", value: conductPercentages.effort },
+    { aspect: "Participation", value: conductPercentages.participation },
+    { aspect: "Motivational Level", value: conductPercentages.motivationalLevel },
+    { aspect: "Character", value: conductPercentages.character },
+    { aspect: "Leadership", value: conductPercentages.leadership },
+  ];
+  const fmtConduct = (value: number | null | undefined) => (value == null || Number.isNaN(value) ? "—" : `${Math.round(value)}%`);
+  const conductChipLabel = conductSummary?.source === "override" ? "Override" : "Average";
+  const conductChipTooltip =
+    conductSummary?.source === "override"
+      ? "These values were entered by the class teacher at “All subjects” and override any per-subject entries."
+      : "These values are the average of per-subject conduct entries.";
+  const conductChipClass =
+    conductSummary?.source === "override" ? "bg-amber-100 text-amber-800 border-amber-200" : "bg-blue-100 text-blue-800 border-blue-200";
+  const hasConductData = conductDisplayItems.some((item) => typeof item.value === "number" && Number.isFinite(item.value));
+  const radarData = conductDisplayItems.map(({ aspect, value }) => ({
+    aspect,
+    score: Math.max(0, Math.min(100, typeof value === "number" && Number.isFinite(value) ? value : 0)),
+  }));
+
+  const handleGenerateReport = () => {
+    try {
+      const dateStr = new Date().toLocaleString();
+      const subjectsRows = filledRows
+        .map((row) => {
+          const score = resolveMark(row);
+          const classAvgValue = getClassAverage(row.subject_id);
+          const classAvgText = fmt(classAvgValue);
+          return `<tr>
+            <td style="padding:8px;border:1px solid #e5e7eb;text-align:left">${row.subject_name}</td>
+            <td style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">${fmt(score)}</td>
+            <td style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">${classAvgText}</td>
+            <td style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">${row.grade || '-'}</td>
+          </tr>`;
+        })
+        .join("");
+
+      const conductRows = [
+        ["Discipline", conductPercentages.discipline],
+        ["Effort", conductPercentages.effort],
+        ["Participation", conductPercentages.participation],
+        ["Motivational Level", conductPercentages.motivationalLevel],
+        ["Character", conductPercentages.character],
+        ["Leadership", conductPercentages.leadership],
+      ]
+        .map(
+          ([label, v]) => `<tr>
+          <td style=\"padding:8px;border:1px solid #e5e7eb;text-align:left\">${label}</td>
+          <td style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">${
+            typeof v === "number" ? Math.max(0, Math.min(100, v)).toFixed(0) + "%" : "-"
+          }</td>
+        </tr>`
+        )
+        .join("");
+
+      const attentionBlock = ""; // No redesign; teacher mode may not have attention flag
+
+      const html = `<!doctype html>
+<html>
+  <head>
+    <meta charset=\"utf-8\" />
+    <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\" />
+    <title>Report - ${studentName}</title>
+    <style>
+      body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,'Apple Color Emoji','Segoe UI Emoji';color:#111827;margin:24px}
+      h1{font-size:22px;margin:0}
+      h2{font-size:18px;margin:18px 0 8px}
+      .muted{color:#6b7280}
+      .row{display:flex;justify-content:space-between;align-items:center}
+      table{border-collapse:collapse;width:100%;font-size:13px}
+      @media print{button{display:none} body{margin:0}}
+    </style>
+  </head>
+  <body>
+    <div class=\"row\">
+      <div>
+        <h1>${studentName}</h1>
+        <div class=\"muted\">${className}${examName ? " • " + examName : ""}</div>
+      </div>
+      <div class=\"muted\">Generated: ${dateStr}</div>
+    </div>
+    ${attentionBlock}
+    <h2>Summary</h2>
+    <table style=\"margin-bottom:16px\">
+      <tr>
+        <td style=\"padding:8px;border:1px solid #e5e7eb\">Overall Average</td>
+        <td style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">${overallAverage}%</td>
+      </tr>
+      <tr>
+        <td style=\"padding:8px;border:1px solid #e5e7eb\">Rank</td>
+        <td style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">${overallRank != null ? `#${overallRank}` : "—"}</td>
+      </tr>
+    </table>
+    <h2>Subjects</h2>
+    <table>
+      <thead>
+        <tr>
+          <th style=\"padding:8px;border:1px solid #e5e7eb;text-align:left\">Subject</th>
+          <th style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">Score</th>
+          <th style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">Class Avg</th>
+          <th style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">Grade</th>
+        </tr>
+      </thead>
+      <tbody>${subjectsRows}</tbody>
+    </table>
+    <h2 style=\"margin-top:16px\">Conduct</h2>
+    <table>
+      <thead>
+        <tr>
+          <th style=\"padding:8px;border:1px solid #e5e7eb;text-align:left\">Aspect</th>
+          <th style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">Score</th>
+        </tr>
+      </thead>
+      <tbody>${conductRows}</tbody>
+    </table>
+    <div style=\"margin-top:24px\"><em class=\"muted\">Open Print from the viewer to save as PDF.</em></div>
+  </body>
+</html>`;
+      setReportHtml(html);
+      setShowReportPreview(true);
+    } catch (e) {
+      console.error("Failed to generate report", e);
+      alert("Failed to generate report. Please try again.");
+    }
+  };
+
+  // Wrapper font-size bump for parentMeetMode
+  const wrapperFontClass = parentMeetMode ? "text-[15px]" : undefined;
+
+  if (!open || !studentId) return null;
+
+  return (
+    <div className={wrapperFontClass}>
+      <AnimatePresence>
+        <motion.div
+          key="student-panel-overlay"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50"
+          onClick={() => onClose()}
+        >
+          <motion.div
+            initial={isMobileView ? { y: "100%" } : { x: "100%" }}
+            animate={isMobileView ? { y: 0 } : { x: 0 }}
+            exit={isMobileView ? { y: "100%" } : { x: "100%" }}
+            transition={{ type: "spring", damping: 25, stiffness: 200 }}
+            className={
+              isMobileView
+                ? "fixed inset-4 bg-white shadow-2xl overflow-y-auto rounded-2xl"
+                : "fixed right-0 top-0 bottom-0 w-full max-w-2xl bg-white shadow-2xl overflow-y-auto"
+            }
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="sticky top-0 bg-white/95 backdrop-blur-sm border-b border-gray-200 p-6 z-10">
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-16 h-16 bg-blue-500 rounded-xl flex items-center justify-center text-white text-xl font-semibold">
+                    {(studentName || "S").charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-semibold text-gray-900">{studentName || "Student"}</h2>
+                    <p className="text-gray-600">
+                      {className}
+                      {examName ? ` • ${examName}` : ""}
+                    </p>
+                    <div className="flex items-center gap-4 mt-2">
+                      <span
+                        className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-semibold ${
+                          overallTrend === "positive"
+                            ? "bg-blue-100 text-blue-700"
+                            : overallTrend === "stable"
+                            ? "bg-blue-50 text-blue-600"
+                            : "bg-blue-50 text-blue-500"
+                        }`}
+                      >
+                        {overallTrend === "positive" ? (
+                          <TrendingUp className="w-4 h-4" />
+                        ) : overallTrend === "concerning" ? (
+                          <TrendingDown className="w-4 h-4" />
+                        ) : (
+                          <Award className="w-4 h-4" />
+                        )}
+                        {overallTrend === "positive"
+                          ? "Performing Well"
+                          : overallTrend === "stable"
+                          ? "Average Performance"
+                          : "Needs Attention"}
+                      </span>
+                      <span className="text-2xl font-semibold text-gray-900">{overallAverage}%</span>
+                      <span className="text-sm text-gray-500">{overallRank != null ? `Rank #${overallRank}` : "Rank —"}</span>
+                    </div>
+                  </div>
+                </div>
+                <button onClick={() => onClose()} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              {/* Quick Actions */}
+              <div className="flex gap-3 mt-4">
+                <button
+                  onClick={handleGenerateReport}
+                  className="flex items-center gap-2 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm"
+                >
+                  <FileText className="w-4 h-4" />
+                  Generate Report
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-8">
+              {showReportPreview && reportHtml && (
+                <div
+                  className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4"
+                  role="dialog"
+                  aria-modal="true"
+                  onClick={() => setShowReportPreview(false)}
+                >
+                  <div
+                    className="bg-white w-full max-w-5xl max-h-[90vh] rounded-xl shadow-2xl overflow-hidden flex flex-col"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
+                      <div className="text-sm text-gray-700 font-medium">Report Preview</div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleDownloadPdf}
+                          className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+                        >
+                          Download PDF
+                        </button>
+                        <button
+                          onClick={() => {
+                            try {
+                              const win = iframeRef.current?.contentWindow;
+                              win?.focus();
+                              win?.print();
+                            } catch (e) {
+                              console.error(e);
+                            }
+                          }}
+                          className="px-3 py-1.5 text-sm rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-100"
+                        >
+                          Print
+                        </button>
+                        <button
+                          onClick={() => setShowReportPreview(false)}
+                          className="px-3 py-1.5 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200"
+                        >
+                          Close
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex-1 overflow-auto bg-gray-100">
+                      <iframe ref={iframeRef} title="Report Preview" className="w-full h-[75vh] bg-white" srcDoc={reportHtml || ""} />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Alerts (teacher mode doesn’t compute attention; preserve layout) */}
+              {/* no attention block here unless added later */}
+
+              {/* Subject Performance */}
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                  {examName ? `${examName} - Subject Marks` : "Subject Performance Overview"}
+                </h3>
+
+                <div className="bg-gray-50 rounded-xl p-6 mb-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+                      {selectedSubject ? `${selectedSubject} - Performance Trend` : "All Subject Marks"}
+                      {selectedSubject && (selectedSubjectRow?.grade) === "TH" && (
+                        <span className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-700 border border-gray-200">Absent</span>
+                      )}
+                    </h4>
+                    {selectedSubject && (
+                      <button
+                        onClick={() => setSelectedSubject(null)}
+                        className="px-3 py-1.5 text-sm rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-100"
+                        aria-label="Back to all subjects"
+                      >
+                        Back
+                      </button>
+                    )}
+                  </div>
+
+                  {!selectedSubject ? (
+                    subjectSummaries.length > 0 ? (
+                      <>
+                        <div className="h-64">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart
+                              data={subjectSummaries.map((summary) => ({
+                                ...summary,
+                                classAvgForChart: summary.classAvg ?? undefined,
+                              }))}
+                              margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                              onClick={(data) => {
+                                if (data && (data as any).activeLabel) {
+                                  setSelectedSubject((data as any).activeLabel as string);
+                                }
+                              }}
+                            >
+                              <XAxis dataKey="subject" tick={{ fontSize: 12 }} angle={-45} textAnchor="end" height={80} />
+                              <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
+                              <Tooltip
+                                formatter={(value: unknown, name: string, item: unknown) => {
+                                  const payload = (item as { payload?: any })?.payload;
+                                  if (!payload) {
+                                    return [fmt(toNumeric(value)), name];
+                                  }
+                                  if (name === "Student Mark") {
+                                    return [fmt(payload.score), name];
+                                  }
+                                  if (name === "Class Average") {
+                                    return [fmt(payload.classAvg), name];
+                                  }
+                                  return [fmt(toNumeric(value)), name];
+                                }}
+                                labelFormatter={(label) => `Subject: ${label}`}
+                                contentStyle={{ backgroundColor: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px" }}
+                              />
+                              <Bar dataKey="score" fill="#3b82f6" name="Student Mark" style={{ cursor: "pointer" }} radius={[4, 4, 0, 0]} />
+                              <Bar dataKey="classAvgForChart" fill="#9ca3af" name="Class Average" radius={[4, 4, 0, 0]} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                        <p className="text-sm text-gray-600 mt-2">Click a bar or subject name to view the trend</p>
+                      </>
+                    ) : (
+                      <div className="h-64 flex items-center justify-center text-gray-400 text-sm">
+                        {subjectsLoading ? "Loading subjects…" : "No subject data available"}
+                      </div>
+                    )
+                  ) : (
+                    (() => {
+                      const selectedSummary = subjectSummaries.find((summary) => summary.subject === selectedSubject);
+                      const classAvgValue = selectedSummary?.classAvg ?? null;
+                      const historicalData = buildChartData(undefined, selectedSubjectRow, classAvgValue ?? undefined);
+                      const scoreValue = selectedSubjectRow ? resolveMark(selectedSubjectRow) : undefined;
+                      const gradeValue = selectedSubjectRow?.grade ?? "";
+                      return (
+                        <>
+                          {historicalData.length > 0 ? (
+                            <div className="h-64">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={historicalData} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
+                                  <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                                  <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
+                                  <Tooltip
+                                    formatter={(value: unknown, name: string) => {
+                                      if (name === "Student") {
+                                        return [fmt(toNumeric(value)), "Student Mark"];
+                                      }
+                                      if (name === "Class Avg") {
+                                        return [fmt(toNumeric(value)), "Class Average"];
+                                      }
+                                      return [fmt(toNumeric(value)), name];
+                                    }}
+                                  />
+                                  <Line type="monotone" dataKey="score" stroke="#3b82f6" strokeWidth={3} name="Student" dot={{ fill: "#3b82f6", strokeWidth: 2, r: 4 }} />
+                                  <Line type="monotone" dataKey="classAvg" stroke="#9ca3af" strokeWidth={2} strokeDasharray="5 5" name="Class Avg" dot={{ fill: "#9ca3af", strokeWidth: 2, r: 3 }} />
+                                </LineChart>
+                              </ResponsiveContainer>
+                            </div>
+                          ) : (
+                            <div className="h-64 flex items-center justify-center text-gray-400 text-sm">
+                              {subjectsLoading ? "Loading subject details…" : "No exam data yet for this subject"}
+                            </div>
+                          )}
+                          {(selectedSubjectRow) && (
+                            <div className="mt-4 space-y-4">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-4">
+                                  {typeof scoreValue === "number" && Number.isFinite(scoreValue) && (
+                                    <span className="text-lg font-semibold">{scoreValue}%</span>
+                                  )}
+                                  {gradeValue && (
+                                    <span
+                                      className={`text-sm px-3 py-1 rounded-full ${
+                                        gradeValue === "A" || gradeValue === "A+" || gradeValue === "A-"
+                                          ? "bg-blue-100 text-blue-800"
+                                          : gradeValue === "B" || gradeValue === "B+" || gradeValue === "B-"
+                                          ? "bg-blue-50 text-blue-700"
+                                          : gradeValue === "C" || gradeValue === "C+" || gradeValue === "C-"
+                                          ? "bg-blue-50 text-blue-600"
+                                          : gradeValue === "TH"
+                                          ? "bg-gray-100 text-gray-700"
+                                          : "bg-blue-50 text-blue-500"
+                                      }`}
+                                    >
+                                      {gradeValue === "TH" ? "Absent" : `Grade ${gradeValue}`}
+                                    </span>
+                                  )}
+                                </div>
+                                {typeof scoreValue === "number" && Number.isFinite(scoreValue) && classAvgValue != null && Number.isFinite(classAvgValue) && (
+                                  <div className="text-sm text-gray-600">
+                                    vs Class Avg: {fmt(classAvgValue)}
+                                    <span
+                                      className={`ml-2 ${scoreValue > classAvgValue ? "text-green-600" : scoreValue === classAvgValue ? "text-gray-600" : "text-red-600"}`}
+                                    >
+                                      ({scoreValue > classAvgValue ? "+" : ""}
+                                      {(scoreValue - classAvgValue).toFixed(1)}%)
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="grid grid-cols-2 gap-4 text-sm text-gray-600">
+                                <div>
+                                  <span className="font-medium text-gray-900">Grade:</span> {gradeValue || "—"}
+                                </div>
+                                <div>
+                                  <span className="font-medium text-gray-900">Class Avg:</span> {fmt(classAvgValue)}
+                                </div>
+                                <div>
+                                  <span className="font-medium text-gray-900">Trend:</span> Not available
+                                </div>
+                                <div>
+                                  <span className="font-medium text-gray-900">Exams Recorded:</span> {1}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()
+                  )}
+
+                  {/* Subjects and Marks Summary */}
+                  <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                    {subjectSummaries.length > 0 ? (
+                      subjectSummaries.map(({ subject, score, grade }) => {
+                        const isSelected = subject === selectedSubject;
+                        const displayValue = grade === "TH" ? "TH" : fmt(score);
+                        return (
+                          <button
+                            key={subject}
+                            type="button"
+                            onClick={() => setSelectedSubject((prev) => (prev === subject ? null : subject))}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                setSelectedSubject((prev) => (prev === subject ? null : subject));
+                              }
+                            }}
+                            className={`flex justify-between items-center px-3 py-2 rounded-lg shadow-sm border transition-colors ${
+                              isSelected ? "bg-blue-50 border-blue-200" : "bg-white border-gray-100 hover:bg-gray-50"
+                            }`}
+                            title="View trend"
+                            aria-pressed={isSelected}
+                          >
+                            <span className="text-gray-600 font-medium text-left">{subject}</span>
+                            <span className="text-gray-900 font-semibold">{displayValue}</span>
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <div className="col-span-full text-center text-sm text-gray-400">
+                        {subjectsLoading ? "Loading subjects…" : "No subjects recorded yet"}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Conduct Profile */}
+              <div>
+                <div className="mb-4 flex items-center justify-between gap-2">
+                  <h3 className="text-lg font-semibold text-gray-900">Conduct Profile</h3>
+                  <div className="flex items-center gap-2">
+                    {conductSummaryLoading && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
+                    {conductSummary && (
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold ${conductChipClass}`}
+                        title={conductChipTooltip}
+                      >
+                        {conductChipLabel}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="bg-gray-50 rounded-xl p-6">
+                  <div className="h-64">
+                    {hasConductData ? (
+                      <ResponsiveRadar
+                        key={`student-radar-${studentId}-${radarData.length}`}
+                        data={radarData}
+                        keys={["score"]}
+                        indexBy="aspect"
+                        maxValue={100}
+                        margin={{ top: 30, right: 40, bottom: 30, left: 40 }}
+                        curve="linearClosed"
+                        borderWidth={2}
+                        borderColor={{ from: "color" }}
+                        gridLevels={5}
+                        gridShape="circular"
+                        gridLabelOffset={16}
+                        enableDots={true}
+                        dotSize={8}
+                        dotColor={{ theme: "background" }}
+                        dotBorderWidth={2}
+                        dotBorderColor={{ from: "color" }}
+                        enableDotLabel={false}
+                        colors={["#3b82f6"]}
+                        fillOpacity={0.25}
+                        blendMode="multiply"
+                        animate={false}
+                        isInteractive={true}
+                        legends={[]}
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center h-full text-gray-400 text-sm">No conduct data available</div>
+                    )}
+                  </div>
+
+                  {/* Manual Legend */}
+                  <div className="mt-4 flex justify-center gap-6 text-sm">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+                      <span className="text-gray-600">Current Score</span>
+                    </div>
+                  </div>
+
+                  {/* Conduct Summary */}
+                  <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                    {conductDisplayItems.map((item) => (
+                      <div key={item.aspect} className="flex justify-between items-center px-3 py-2 bg-white rounded-lg shadow-sm">
+                        <span className="text-gray-600 font-medium">{item.aspect}</span>
+                        <span className="text-gray-900 font-semibold">{fmtConduct(item.value)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Benchmarks */}
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Benchmarks</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-blue-50 rounded-xl p-4 text-center">
+                    <div className="text-2xl font-semibold text-blue-900">{overallAverage}%</div>
+                    <div className="text-sm text-blue-700">Current Average</div>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-4 text-center">
+                    <div className="text-2xl font-semibold text-gray-900">
+                      {(() => {
+                        const vals = Array.from(avgMap.values())
+                          .map((v) => (typeof v === "number" ? v : null))
+                          .filter((v): v is number => v != null);
+                        const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+                        return avg.toFixed(1);
+                      })()}%
+                    </div>
+                    <div className="text-sm text-gray-700">Class Average</div>
+                  </div>
+                  <div className="bg-blue-50 rounded-xl p-4 text-center">
+                    <div className="text-2xl font-semibold text-blue-900">{overallRank != null ? `#${overallRank}` : "—"}</div>
+                    <div className="text-sm text-green-700">Class Rank</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </motion.div>
+      </AnimatePresence>
+    </div>
+  );
+}
