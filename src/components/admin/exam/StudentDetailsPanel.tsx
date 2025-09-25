@@ -7,6 +7,7 @@ import { X, TrendingUp, TrendingDown, Award, AlertCircle, FileText, Loader2 } fr
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, BarChart, Bar } from 'recharts';
 import { ResponsiveRadar } from '@nivo/radar';
 import { motion, AnimatePresence } from 'framer-motion';
+import Portal from '@/components/Portal';
 import { StudentData } from './StudentTable';
 import {
   rpcGetClassSubjectAverages,
@@ -248,7 +249,7 @@ export default function StudentDetailsPanel({
       } catch {}
 
       doc.setFontSize(14); doc.setTextColor('#0f172a');
-      doc.text('Al Khayr Class', margin + 54, y + 16);
+doc.text('Akademi Al Khayr', margin + 54, y + 16);
       doc.setFontSize(10); doc.setTextColor('#475569');
       doc.text('Student Performance Report', margin + 54, y + 32);
       doc.text(`Generated: ${new Date().toLocaleString()}`, pageWidth - margin, y + 10, { align: 'right' });
@@ -291,18 +292,15 @@ export default function StudentDetailsPanel({
       const subjectsBody = filled.map((row) => {
         const score = resolveMark(row);
         const scoreText = fmt(score);
-        const avgValue = getClassAverage(row.subject_id);
-        const avgText = fmt(avgValue);
         return [
           row.subject_name,
           scoreText,
-          avgText,
           row.grade || '-',
         ];
       });
       autoTable(doc, {
         startY: y + 6,
-        head: [['Subject', 'Score', 'Class Avg', 'Grade']],
+        head: [['Subject', 'Score', 'Grade']],
         body: subjectsBody,
         styles: { fontSize: 10 },
         headStyles: { fillColor: [241, 245, 249], textColor: 15 },
@@ -499,7 +497,7 @@ export default function StudentDetailsPanel({
     <title>Report - ${student.name}</title>
     <style>
       body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,'Apple Color Emoji','Segoe UI Emoji';color:#111827;margin:24px}
-      h1{font-size:22px;margin:0}
+h1{font-size:26px;margin:0}
       h2{font-size:18px;margin:18px 0 8px}
       .muted{color:#6b7280}
       .row{display:flex;justify-content:space-between;align-items:center}
@@ -508,12 +506,21 @@ export default function StudentDetailsPanel({
     </style>
   </head>
   <body>
+<div class=\"row\" style=\"margin-bottom:12px;padding:12px 16px;border:1px solid #e5e7eb;background:#f8fafc;border-radius:12px\">
+      <div style="display:flex;align-items:center;gap:12px">
+        <img src="/logo-akademi.png" alt="Akademi Al Khayr" width="36" height="36" style="object-fit:contain" />
+        <div>
+          <div style="font-weight:700;font-size:18px">Akademi Al Khayr</div>
+          <div class="muted" style="font-size:12px">Student Performance Report</div>
+        </div>
+      </div>
+      <div class="muted">Generated: ${dateStr}</div>
+    </div>
     <div class="row">
       <div>
         <h1>${student.name}</h1>
         <div class="muted">${student.class}${selectedExamName ? ' • ' + selectedExamName : ''}</div>
       </div>
-      <div class="muted">Generated: ${dateStr}</div>
     </div>
     ${attentionBlock}
     <h2>Summary</h2>
@@ -629,22 +636,24 @@ export default function StudentDetailsPanel({
 
           {/* Content */}
           <div className="p-6 space-y-8">
-            {showReportPreview && reportHtml && (
-              <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true" onClick={()=>setShowReportPreview(false)}>
-                <div className="bg-white w-full max-w-5xl max-h-[90vh] rounded-xl shadow-2xl overflow-hidden flex flex-col" onClick={e=>e.stopPropagation()}>
-                  <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
-                    <div className="text-sm text-gray-700 font-medium">Report Preview</div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={handleDownloadPdf} className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700">Download PDF</button>
-                      <button onClick={() => { try { const win = iframeRef.current?.contentWindow; win?.focus(); win?.print(); } catch (e) { console.error(e); } }} className="px-3 py-1.5 text-sm rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-100">Print</button>
-                      <button onClick={()=>setShowReportPreview(false)} className="px-3 py-1.5 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Close</button>
+{showReportPreview && reportHtml && (
+              <Portal>
+                <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4 md:p-6" role="dialog" aria-modal="true" onClick={()=>setShowReportPreview(false)}>
+                  <div className="bg-white w-full max-w-5xl max-h-[92vh] rounded-xl shadow-2xl overflow-hidden flex flex-col" onClick={e=>e.stopPropagation()}>
+                    <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
+                      <div className="text-sm text-gray-700 font-medium">Report Preview</div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={handleDownloadPdf} className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700">Download PDF</button>
+                        <button onClick={() => { try { const win = iframeRef.current?.contentWindow; win?.focus(); win?.print(); } catch (e) { console.error(e); } }} className="px-3 py-1.5 text-sm rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-100">Print</button>
+                        <button onClick={()=>setShowReportPreview(false)} className="px-3 py-1.5 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Close</button>
+                      </div>
+                    </div>
+                    <div className="flex-1 overflow-auto bg-gray-100">
+                      <iframe ref={iframeRef} title="Report Preview" className="w-full h-[80vh] bg-white" srcDoc={reportHtml || ''} />
                     </div>
                   </div>
-                  <div className="flex-1 overflow-auto bg-gray-100">
-                    <iframe ref={iframeRef} title="Report Preview" className="w-full h-[75vh] bg-white" srcDoc={reportHtml || ''} />
-                  </div>
                 </div>
-              </div>
+              </Portal>
             )}
             {/* Alerts */}
             {student.overall.needsAttention && (

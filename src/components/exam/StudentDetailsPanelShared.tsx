@@ -7,6 +7,7 @@ import { X, TrendingUp, TrendingDown, Award, AlertCircle, FileText, Loader2 } fr
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, BarChart, Bar } from 'recharts';
 import { ResponsiveRadar } from '@nivo/radar';
 import { motion, AnimatePresence } from 'framer-motion';
+import Portal from '@/components/Portal';
 import { StudentData } from '@/components/admin/exam/StudentTable';
 import {
   rpcGetClassSubjectAverages,
@@ -351,7 +352,7 @@ export default function StudentDetailsPanelShared({
 
       doc.setFontSize(14);
       doc.setTextColor("#0f172a");
-      doc.text("Al Khayr Class", margin + 54, y + 16);
+doc.text("Akademi Al Khayr", margin + 54, y + 16);
       doc.setFontSize(10);
       doc.setTextColor("#475569");
       doc.text("Student Performance Report", margin + 54, y + 32);
@@ -406,13 +407,11 @@ export default function StudentDetailsPanelShared({
       const subjectsBody = filledRows.map((row) => {
         const score = resolveMark(row);
         const scoreText = fmt(score);
-        const avgValue = getClassAverage(row.subject_id);
-        const avgText = fmt(avgValue);
-        return [row.subject_name, scoreText, avgText, row.grade || "-"];
+        return [row.subject_name, scoreText, row.grade || "-"];
       });
       autoTable(doc, {
         startY: y + 6,
-        head: [["Subject", "Score", "Class Avg", "Grade"]],
+        head: [["Subject", "Score", "Grade"]],
         body: subjectsBody,
         styles: { fontSize: 10 },
         headStyles: { fillColor: [241, 245, 249], textColor: 15 },
@@ -557,7 +556,7 @@ export default function StudentDetailsPanelShared({
     <title>Report - ${studentName}</title>
     <style>
       body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,'Apple Color Emoji','Segoe UI Emoji';color:#111827;margin:24px}
-      h1{font-size:22px;margin:0}
+h1{font-size:26px;margin:0}
       h2{font-size:18px;margin:18px 0 8px}
       .muted{color:#6b7280}
       .row{display:flex;justify-content:space-between;align-items:center}
@@ -566,14 +565,12 @@ export default function StudentDetailsPanelShared({
     </style>
   </head>
   <body>
-    <div class=\"row\">
+    <div class=\"row\" style=\"margin-bottom:12px\">\n      <div style=\"display:flex;align-items:center;gap:12px\">\n        <img src=\"/logo-akademi.png\" alt=\"Akademi Al Khayr\" width=\"36\" height=\"36\" style=\"object-fit:contain\" />\n        <div>\n          <div style=\"font-weight:700;font-size:18px\">Akademi Al Khayr</div>\n          <div class=\"muted\" style=\"font-size:12px\">Student Performance Report</div>\n        </div>\n      </div>\n      <div class=\"muted\">Generated: ${dateStr}</div>\n    </div>\n    <div class=\"row\">
       <div>
         <h1>${studentName}</h1>
         <div class=\"muted\">${className}${examName ? " • " + examName : ""}</div>
       </div>
-      <div class=\"muted\">Generated: ${dateStr}</div>
-    </div>
-    ${attentionBlock}
+    </div>\n    ${attentionBlock}
     <h2>Summary</h2>
     <table style=\"margin-bottom:16px\">
       <tr>
@@ -702,14 +699,15 @@ export default function StudentDetailsPanelShared({
             {/* Content */}
             <div className="p-6 space-y-8">
               {showReportPreview && reportHtml && (
+                <Portal>
                 <div
-                  className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4"
+className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4 md:p-6"
                   role="dialog"
                   aria-modal="true"
                   onClick={() => setShowReportPreview(false)}
                 >
                   <div
-                    className="bg-white w-full max-w-5xl max-h-[90vh] rounded-xl shadow-2xl overflow-hidden flex flex-col"
+className="bg-white w-full max-w-5xl max-h-[92vh] rounded-xl shadow-2xl overflow-hidden flex flex-col"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
@@ -744,10 +742,11 @@ export default function StudentDetailsPanelShared({
                       </div>
                     </div>
                     <div className="flex-1 overflow-auto bg-gray-100">
-                      <iframe ref={iframeRef} title="Report Preview" className="w-full h-[75vh] bg-white" srcDoc={reportHtml || ""} />
+                      <iframe ref={iframeRef} title="Report Preview" className="w-full h-[80vh] bg-white" srcDoc={reportHtml || ""} />
                     </div>
                   </div>
                 </div>
+                </Portal>
               )}
 
               {/* Alerts (teacher mode doesn’t compute attention; preserve layout) */}
