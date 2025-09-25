@@ -3,24 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { X, Plus, Edit2, Trash2, Award, Save } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
-
-interface GradingSystem {
-  id: string;
-  name: string;
-  description: string | null;
-  grading_scale: {
-    type: 'letter' | 'percentage' | 'pass_fail';
-    grades: Array<{
-      letter?: string;
-      grade?: string;
-      min: number;
-      max: number;
-      gpa?: number;
-    }>;
-  };
-  is_default: boolean;
-  created_at: string;
-}
+import { useGradingSystems } from '@/hooks/useGradingSystems';
+import type { GradingSystem } from '@/lib/data/getGradingSystems';
 
 interface ManageGradingModalProps {
   isOpen: boolean;
@@ -44,8 +28,7 @@ interface CreateGradingForm {
 }
 
 export default function ManageGradingModal({ isOpen, onClose, onRefresh }: ManageGradingModalProps) {
-  const [gradingSystems, setGradingSystems] = useState<GradingSystem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: gradingSystems, loading, error, refetch } = useGradingSystems();
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [editingSystem, setEditingSystem] = useState<GradingSystem | null>(null);
   const [usageCounts, setUsageCounts] = useState<Record<string, number>>({});
@@ -60,11 +43,7 @@ export default function ManageGradingModal({ isOpen, onClose, onRefresh }: Manag
 
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
 
-  useEffect(() => {
-    if (isOpen) {
-      fetchGradingSystems();
-    }
-  }, [isOpen]);
+// initial data load is handled by useGradingSystems hook on mount when modal is open
 
   useEffect(() => {
     if (!banner) return;
@@ -72,37 +51,28 @@ export default function ManageGradingModal({ isOpen, onClose, onRefresh }: Manag
     return () => clearTimeout(t);
   }, [banner]);
 
-  const fetchGradingSystems = async () => {
-    try {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from('grading_systems')
-        .select('*')
-        .order('is_default', { ascending: false })
-        .order('name');
-
-      if (error) throw error;
-      setGradingSystems(data || []);
-
-      // Fetch usage counts from exams table
-      const { data: exData, error: exErr } = await supabase
-        .from('exams')
-        .select('id, grading_system_id');
-      if (exErr) throw exErr;
-      const counts: Record<string, number> = {};
-      const examRows = (exData || []) as Array<{ id: string; grading_system_id: string | null }>;
-      examRows.forEach((e) => {
-        const key = e.grading_system_id;
-        if (!key) return;
-        counts[key] = (counts[key] || 0) + 1;
-      });
-      setUsageCounts(counts);
-    } catch (error) {
-      console.error('Error fetching grading systems:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+// Fetch usage counts from exams table
+  useEffect(() => {
+    if (!isOpen) return;
+    (async () => {
+      try {
+        const { data: exData, error: exErr } = await supabase
+          .from('exams')
+          .select('id, grading_system_id');
+        if (exErr) throw exErr;
+        const counts: Record<string, number> = {};
+        const examRows = (exData || []) as Array<{ id: string; grading_system_id: string | null }>;
+        examRows.forEach((e) => {
+          const key = e.grading_system_id;
+          if (!key) return;
+          counts[key] = (counts[key] || 0) + 1;
+        });
+        setUsageCounts(counts);
+      } catch (error) {
+        console.error('Error fetching grading system usage:', error);
+      }
+    })();
+  }, [isOpen]);
 
   const populateFormFromSystem = (system: GradingSystem) => {
     const type = system.grading_scale.type;
@@ -181,7 +151,7 @@ export default function ManageGradingModal({ isOpen, onClose, onRefresh }: Manag
         throw new Error(json?.error || 'Failed to create grading system');
       }
 
-      setShowCreateForm(false);
+setShowCreateForm(false);
       setCreateForm({
         name: '',
         description: '',
@@ -189,7 +159,7 @@ export default function ManageGradingModal({ isOpen, onClose, onRefresh }: Manag
         grades: [{ letter: '', min: 0, max: 100 }]
       });
       setErrors({});
-      fetchGradingSystems();
+      refetch();
     } catch (error) {
       console.error('Error creating grading system:', error);
       setErrors({ general: 'Failed to create grading system' });
@@ -241,10 +211,10 @@ export default function ManageGradingModal({ isOpen, onClose, onRefresh }: Manag
         console.warn('Recalc RPC unavailable or failed; grades will update on next result change.');
       }
 
-      setEditingSystem(null);
+setEditingSystem(null);
       setErrors({});
       setBanner(bannerText);
-      fetchGradingSystems();
+      refetch();
     } catch (error) {
       console.error('Error updating grading system:', error);
       setErrors({ general: 'Failed to update grading system' });
@@ -259,7 +229,7 @@ export default function ManageGradingModal({ isOpen, onClose, onRefresh }: Manag
         if (!res.ok || !json?.success) {
           throw new Error(json?.error || 'Failed to delete grading system');
         }
-        fetchGradingSystems();
+refetch();
       } catch (error) {
         console.error('Error deleting grading system:', error);
         const msg = error instanceof Error ? error.message : String(error);
@@ -277,8 +247,8 @@ export default function ManageGradingModal({ isOpen, onClose, onRefresh }: Manag
       // Use atomic RPC to avoid transient states where no default exists
       const { error } = await supabase.rpc('set_default_grading_system', { p_id: id });
 
-      if (error) throw error;
-      fetchGradingSystems();
+if (error) throw error;
+      refetch();
     } catch (error) {
       console.error('Error setting default grading system:', error);
     }
@@ -511,12 +481,16 @@ export default function ManageGradingModal({ isOpen, onClose, onRefresh }: Manag
                 </button>
               </div>
 
-              {loading ? (
+{loading ? (
                 <div className="animate-pulse space-y-4">
                   {[1, 2, 3].map(i => (
                     <div key={i} className="h-20 bg-gray-200 rounded-lg"></div>
                   ))}
                 </div>
+              ) : error ? (
+                <div className="p-3 rounded border border-red-200 bg-red-50 text-red-700">Failed to load grading systems.</div>
+              ) : !gradingSystems || gradingSystems.length === 0 ? (
+                <div className="p-3 rounded border border-gray-200 bg-white text-gray-600">No grading systems yet</div>
               ) : (
                 <div className="space-y-4">
                   {gradingSystems.map((system) => (

@@ -5,6 +5,7 @@ import { X, FileText, Users, CheckSquare, ChevronDown, Calendar, Award } from 'l
 import { DateRangePicker } from "@/components/ui/date-picker";
 import { DateRange } from "react-day-picker";
 import { supabase } from '@/lib/supabaseClient';
+import { useGradingSystems } from '@/hooks/useGradingSystems';
 
 interface GradingSystem {
   id: string;
@@ -46,7 +47,7 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
     subjectConfigByClass: {},
   });
 
-  const [gradingSystems, setGradingSystems] = useState<GradingSystem[]>([]);
+const { data: gradingSystems, loading: loadingGrading, error: gradingError } = useGradingSystems();
 
   const [errors, setErrors] = useState<ExamFormErrors>({});
   const [isSubjectDropdownOpen, setIsSubjectDropdownOpen] = useState(false);
@@ -57,34 +58,16 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
   const subjectDropdownRef = useRef<HTMLDivElement>(null);
   const classDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Fetch grading systems when modal opens
+// When grading systems are loaded, auto-select default if none chosen yet
   useEffect(() => {
-    if (isOpen) {
-      fetchGradingSystems();
-    }
-  }, [isOpen]);
-
-  const fetchGradingSystems = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('grading_systems')
-        .select('id, name, description, is_default')
-        .order('is_default', { ascending: false })
-        .order('name');
-
-      if (error) throw error;
-      
-      setGradingSystems(data || []);
-      
-      // Auto-select default grading system if available
-      const defaultSystem = data?.find(system => system.is_default);
-      if (defaultSystem && !formData.gradingSystemId) {
+    if (!isOpen) return;
+    if (!formData.gradingSystemId && Array.isArray(gradingSystems)) {
+      const defaultSystem = gradingSystems.find(system => system.is_default);
+      if (defaultSystem) {
         setFormData(prev => ({ ...prev, gradingSystemId: defaultSystem.id }));
       }
-    } catch (error) {
-      console.error('Error fetching grading systems:', error);
     }
-  };
+  }, [isOpen, gradingSystems, formData.gradingSystemId]);
 
   const handleInputChange = (field: keyof ExamFormData, value: string | number | string[] | Date | DateRange | { [key: string]: number } | undefined) => {
     setFormData(prev => ({
@@ -599,23 +582,34 @@ export default function CreateExamModal({ isOpen, onClose, onSubmit, classes, su
               <label className="block text-sm font-semibold text-gray-700 mb-1">
                 Select Grading System *
               </label>
-              <select
+<select
                 value={formData.gradingSystemId}
                 onChange={(e) => handleInputChange('gradingSystemId', e.target.value)}
                 className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
                   errors.gradingSystemId ? 'border-red-300 bg-red-50' : 'border-gray-300'
                 }`}
+                disabled={!!gradingError}
               >
-                <option value="">Choose a grading system...</option>
-                {gradingSystems.map((system) => (
-                  <option key={system.id} value={system.id}>
-                    {system.name} {system.is_default ? '(Default)' : ''}
-                  </option>
-                ))}
+                {gradingError ? (
+                  <option value="">Failed to load grading systems</option>
+                ) : loadingGrading ? (
+                  <option value="">Loading grading systems…</option>
+                ) : !gradingSystems || gradingSystems.length === 0 ? (
+                  <option value="">No grading systems yet</option>
+                ) : (
+                  <>
+                    <option value="">Choose a grading system...</option>
+                    {gradingSystems.map((system) => (
+                      <option key={system.id} value={system.id}>
+                        {system.name} {system.is_default ? '(Default)' : ''}
+                      </option>
+                    ))}
+                  </>
+                )}
               </select>
               {errors.gradingSystemId && <p className="text-red-500 text-xs mt-1">{errors.gradingSystemId}</p>}
               
-              {formData.gradingSystemId && (
+              {formData.gradingSystemId && gradingSystems && (
                 <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                   {(() => {
                     const selectedSystem = gradingSystems.find(s => s.id === formData.gradingSystemId);
