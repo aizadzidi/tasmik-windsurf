@@ -114,8 +114,8 @@ export default function StudentDetailsPanel({
         if (cancelled) return;
         setAvgMap(new Map(avgs.map((a) => [a.subject_id, a.class_avg])));
       } catch (e) {
-        console.error('get_class_subject_averages failed', e);
         if (!cancelled) {
+          // Gracefully handle missing RPC or permissions by using empty averages
           setAvgMap(new Map());
         }
       }
@@ -259,7 +259,6 @@ export default function StudentDetailsPanel({
         `Class: ${student.class}`,
         ...(selectedExamName ? [`Exam: ${selectedExamName}`] : []),
         `Overall: ${student.overall?.average ?? 0}%`,
-        `Rank #${student.overall?.rank ?? 0}`,
       ];
       let x = margin; const pad = 6, gap = 6; let cy = y;
       chips.forEach(c => { const w = doc.getTextWidth(c) + pad * 2; if (x + w > pageWidth - margin) { x = margin; cy += 20; } doc.setDrawColor('#e2e8f0'); doc.setFillColor('#f8fafc'); doc.roundedRect(x, cy - 12, w, 18, 3, 3, 'FD'); doc.setTextColor('#0f172a'); doc.text(c, x + pad, cy + 2); x += w + gap; });
@@ -278,8 +277,8 @@ export default function StudentDetailsPanel({
       doc.setFontSize(12); doc.text('Summary', margin, y); y += 6;
       autoTable(doc, {
         startY: y + 6,
-        head: [['Overall Average', 'Rank']],
-        body: [[`${student.overall?.average ?? 0}%`, `#${student.overall?.rank ?? 0}`]],
+        head: [['Overall Average']],
+        body: [[`${student.overall?.average ?? 0}%`]],
         styles: { fontSize: 10 },
         headStyles: { fillColor: [241, 245, 249], textColor: 15 },
         margin: { left: margin, right: margin },
@@ -523,10 +522,6 @@ export default function StudentDetailsPanel({
         <td style="padding:8px;border:1px solid #e5e7eb">Overall Average</td>
         <td style="padding:8px;border:1px solid #e5e7eb;text-align:center">${student.overall.average}%</td>
       </tr>
-      <tr>
-        <td style="padding:8px;border:1px solid #e5e7eb">Rank</td>
-        <td style="padding:8px;border:1px solid #e5e7eb;text-align:center">#${student.overall.rank}</td>
-      </tr>
     </table>
     <h2>Subjects</h2>
     <table>
@@ -608,9 +603,7 @@ export default function StudentDetailsPanel({
                     <span className="text-2xl font-semibold text-gray-900">
                       {student.overall.average}%
                     </span>
-                    <span className="text-sm text-gray-500">
-                      Rank #{student.overall.rank}
-                    </span>
+                    {/* Rank temporarily hidden */}
                   </div>
                 </div>
               </div>
@@ -995,7 +988,7 @@ export default function StudentDetailsPanel({
             {/* Benchmarks */}
             <div>
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Benchmarks</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="bg-blue-50 rounded-xl p-4 text-center">
                   <div className="text-2xl font-semibold text-blue-900">{student.overall.average}%</div>
                   <div className="text-sm text-blue-700">Current Average</div>
@@ -1007,10 +1000,6 @@ export default function StudentDetailsPanel({
                       : '0.0'}%
                   </div>
                   <div className="text-sm text-gray-700">Class Average</div>
-                </div>
-                <div className="bg-blue-50 rounded-xl p-4 text-center">
-                  <div className="text-2xl font-semibold text-blue-900">#{student.overall.rank}</div>
-                  <div className="text-sm text-green-700">Class Rank</div>
                 </div>
               </div>
             </div>

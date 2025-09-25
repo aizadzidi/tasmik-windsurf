@@ -69,7 +69,6 @@ export default function MobileStudentCard({ student, onViewDetails }: MobileStud
         </div>
         <div className="text-right">
           <div className="text-2xl font-semibold text-gray-900">{student.overall.average}%</div>
-          <div className="text-xs text-gray-500">Rank #{student.overall.rank}</div>
         </div>
       </div>
 

@@ -52,8 +52,7 @@ export default function StudentDetailsPanelShared({
   const studentId = student?.id;
   const studentName = student?.name ?? '';
   const className = student?.class ?? '';
-  const overallAverage = student?.overall?.average ?? 0;
-  const overallRank = student?.overall?.rank;
+  const overallAvgRaw = student?.overall?.average;
   const examName = selectedExamName;
   const open = Boolean(student);
   const parentMeetMode = false;
@@ -155,6 +154,7 @@ export default function StudentDetailsPanelShared({
     [subjectRows]
   );
 
+
   React.useEffect(() => {
     if (!examId || !classId) {
       setAvgMap(new Map());
@@ -169,8 +169,8 @@ export default function StudentDetailsPanelShared({
         if (cancelled) return;
         setAvgMap(new Map(avgs.map((a) => [a.subject_id, a.class_avg])));
       } catch (e) {
-        console.error('get_class_subject_averages failed', e);
         if (!cancelled) {
+          // Gracefully handle missing RPC or permissions by using empty averages
           setAvgMap(new Map());
         }
       }
@@ -261,6 +261,21 @@ export default function StudentDetailsPanelShared({
     [filledRows, getClassAverage]
   );
 
+  // Compute final (overall) average for teacher mode using available subject marks
+  const overallAverage = React.useMemo(() => {
+    if (mode === 'teacher') {
+      const valid = filledRows
+        .filter((row) => String(row.grade || '').toUpperCase() !== 'TH')
+        .map((row) => resolveMark(row))
+        .filter((n) => typeof n === 'number' && Number.isFinite(n));
+      if (valid.length > 0) {
+        return Math.round(valid.reduce((a, b) => a + b, 0) / valid.length);
+      }
+    }
+    const n = typeof overallAvgRaw === 'number' && Number.isFinite(overallAvgRaw) ? overallAvgRaw : 0;
+    return n;
+  }, [mode, filledRows, overallAvgRaw]);
+
   const fmt = (value: number | null | undefined) =>
     value == null || Number.isNaN(value) ? "—" : `${value}%`;
 
@@ -350,7 +365,6 @@ export default function StudentDetailsPanelShared({
         `Class: ${className}`,
         ...(examName ? [`Exam: ${examName}`] : []),
         `Overall: ${overallAverage ?? 0}%`,
-        `Rank ${overallRank != null ? `#${overallRank}` : "—"}`,
       ];
       let x = margin;
       const pad = 6,
@@ -377,8 +391,8 @@ export default function StudentDetailsPanelShared({
       y += 6;
       autoTable(doc, {
         startY: y + 6,
-        head: [["Overall Average", "Rank"]],
-        body: [[`${overallAverage ?? 0}%`, `${overallRank != null ? `#${overallRank}` : "—"}`]],
+        head: [["Overall Average"]],
+        body: [[`${overallAverage ?? 0}%`]],
         styles: { fontSize: 10 },
         headStyles: { fillColor: [241, 245, 249], textColor: 15 },
         margin: { left: margin, right: margin },
@@ -566,10 +580,6 @@ export default function StudentDetailsPanelShared({
         <td style=\"padding:8px;border:1px solid #e5e7eb\">Overall Average</td>
         <td style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">${overallAverage}%</td>
       </tr>
-      <tr>
-        <td style=\"padding:8px;border:1px solid #e5e7eb\">Rank</td>
-        <td style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">${overallRank != null ? `#${overallRank}` : "—"}</td>
-      </tr>
     </table>
     <h2>Subjects</h2>
     <table>
@@ -669,7 +679,6 @@ export default function StudentDetailsPanelShared({
                           : "Needs Attention"}
                       </span>
                       <span className="text-2xl font-semibold text-gray-900">{overallAverage}%</span>
-                      <span className="text-sm text-gray-500">{overallRank != null ? `Rank #${overallRank}` : "Rank —"}</span>
                     </div>
                   </div>
                 </div>
@@ -1021,7 +1030,7 @@ export default function StudentDetailsPanelShared({
               {/* Benchmarks */}
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Benchmarks</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="bg-blue-50 rounded-xl p-4 text-center">
                     <div className="text-2xl font-semibold text-blue-900">{overallAverage}%</div>
                     <div className="text-sm text-blue-700">Current Average</div>
@@ -1037,10 +1046,6 @@ export default function StudentDetailsPanelShared({
                       })()}%
                     </div>
                     <div className="text-sm text-gray-700">Class Average</div>
-                  </div>
-                  <div className="bg-blue-50 rounded-xl p-4 text-center">
-                    <div className="text-2xl font-semibold text-blue-900">{overallRank != null ? `#${overallRank}` : "—"}</div>
-                    <div className="text-sm text-green-700">Class Rank</div>
                   </div>
                 </div>
               </div>
