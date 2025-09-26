@@ -407,7 +407,32 @@ export async function GET(request: Request) {
       }
     }
 
-    const studentExamData: ExamStudent[] = (students || []).map((student: any) => {
+    // Preload conduct summaries per student (override/averaged per-subject) to use when there are no conduct_entries
+    const conductSummaryByStudent = new Map<string, any>();
+    try {
+      if (examId && Array.isArray(students) && students.length > 0) {
+        const summaries = await Promise.all(
+          (students as any[]).map(async (s: any) => {
+            try {
+              const rpcData = await adminOperationSimple(async (client) => {
+                const { data, error } = await client.rpc('get_conduct_summary', { p_exam_id: examId, p_student_id: s.id });
+                if (error) throw error;
+                return data as any[];
+              });
+              const row = Array.isArray(rpcData) ? rpcData[0] : null;
+              return [String(s.id), row] as const;
+            } catch {
+              return [String(s.id), null] as const;
+            }
+          })
+        );
+        summaries.forEach(([sid, row]) => conductSummaryByStudent.set(sid, row));
+      }
+    } catch (e) {
+      console.warn('Failed to preload conduct summaries; will rely on conduct_entries only');
+    }
+
+    const studentExamData: ExamStudent[] = await Promise.all((students || []).map(async (student: any) => {
       // Get student's exam results
       const studentResults = (examResults || []).filter((result: any) => result.student_id === student.id) || [];
       
@@ -524,7 +549,7 @@ export async function GET(request: Request) {
         const count = vals.filter((v) => !isNaN(v)).length;
         return count > 0 ? vals.reduce((a, b) => a + b, 0) / count : 0;
       });
-      const conductPercent = perTeacherAverages.length > 0
+      let conductPercent = perTeacherAverages.length > 0
         ? perTeacherAverages.reduce((a: number, b: number) => a + b, 0) / perTeacherAverages.length
         : 0;
 
@@ -559,8 +584,38 @@ export async function GET(request: Request) {
         return { percent, normalized };
       })();
 
-      const conductPercentages = avgByCategory.percent;
-      const conduct = avgByCategory.normalized;
+      let conductPercentages = avgByCategory.percent;
+      let conduct = avgByCategory.normalized;
+
+      // If no conduct_entries data, fall back to conduct summary (override/average) via RPC
+      if (entries.length === 0) {
+        const row = conductSummaryByStudent.get(String(student.id));
+        if (row) {
+          const values = [row.discipline, row.effort, row.participation, row.motivational_level, row.character_score, row.leadership]
+            .map((v: any) => (v == null ? null : Number(v)))
+            .filter((n: any): n is number => Number.isFinite(n));
+          if (values.length > 0) {
+            const avg = values.reduce((a: number, b: number) => a + b, 0) / values.length;
+            conductPercent = avg;
+            conductPercentages = {
+              discipline: Number(row.discipline) || 0,
+              effort: Number(row.effort) || 0,
+              participation: Number(row.participation) || 0,
+              motivationalLevel: Number(row.motivational_level) || 0,
+              character: Number(row.character_score) || 0,
+              leadership: Number(row.leadership) || 0,
+            } as any;
+            conduct = {
+              discipline: (Number(row.discipline) || 0) / 20,
+              effort: (Number(row.effort) || 0) / 20,
+              participation: (Number(row.participation) || 0) / 20,
+              motivationalLevel: (Number(row.motivational_level) || 0) / 20,
+              character: (Number(row.character_score) || 0) / 20,
+              leadership: (Number(row.leadership) || 0) / 20,
+            } as any;
+          }
+        }
+      }
 
       // Calculate overall average: academic average blended with conduct by weight
       // Only include subjects with numeric scores in the average calculation
@@ -605,7 +660,7 @@ export async function GET(request: Request) {
           attentionReason
         }
       };
-    });
+    }));
 
     // Calculate ranks based on overall average
     studentExamData.sort((a, b) => b.overall.average - a.overall.average);
