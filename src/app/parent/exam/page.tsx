@@ -26,7 +26,72 @@ export default function ParentExamPage() {
   const [selectedStudent, setSelectedStudent] = React.useState<StudentData | null>(null);
   const [isMobile, setIsMobile] = React.useState(false);
 
-  // Load user and base metadata
+  // Throttle refetches so bursts of updates don't spam the API
+  const lastRefetchAtRef = React.useRef<number>(0);
+  const throttleMs = 800;
+
+  const loadMetadata = React.useCallback(async () => {
+    const metaRes = await fetch("/api/admin/exam-metadata");
+    const meta = await metaRes.json();
+    const released = (meta.exams || []).filter((e: any) => e.released === true);
+    setExams(released);
+    if (!selectedExam && released.length > 0) setSelectedExam(released[0].id);
+  }, [selectedExam]);
+
+  const loadResults = React.useCallback(async (examId: string, kids: Child[]) => {
+    if (!examId || kids.length === 0) { setStudentRows([]); setSubjects([]); return; }
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/exams?examId=${examId}`);
+      const json = await res.json();
+      const subjectNames: string[] = Array.isArray(json.subjects) ? json.subjects : [];
+      setSubjects(subjectNames);
+      const byId = new Map<string, any>((json.students || []).map((s: any) => [String(s.id), s]));
+      // Only include children that appear in this exam (i.e., in exam classes)
+      const filtered = kids.filter(c => byId.has(String(c.id)));
+      const next: StudentData[] = filtered.map(c => {
+        const d = byId.get(String(c.id));
+        const subjectsObj: StudentData['subjects'] = {};
+        subjectNames.forEach((name) => {
+          const sd = d?.subjects?.[name];
+          if (!sd) return;
+          const grade = typeof sd?.grade === 'string' ? sd.grade : '';
+          const isTH = grade.toUpperCase() === 'TH';
+          const hasScore = typeof sd?.score === 'number';
+          if (!hasScore && !isTH) return;
+          subjectsObj[name] = {
+            score: hasScore ? sd.score : 0,
+            trend: Array.isArray(sd?.trend) ? sd.trend : [],
+            grade,
+          };
+        });
+        return {
+          id: String(c.id),
+          name: c.name,
+          class: String(d?.class || ''),
+          classId: typeof d?.classId === 'string' ? d.classId : undefined,
+          subjects: subjectsObj,
+          conduct: d?.conduct || { discipline: 0, effort: 0, participation: 0, motivationalLevel: 0, character: 0, leadership: 0 },
+          conductPercentages: d?.conductPercentages || (d?.conduct ? {
+            discipline: (d.conduct.discipline || 0) * 20,
+            effort: (d.conduct.effort || 0) * 20,
+            participation: (d.conduct.participation || 0) * 20,
+            motivationalLevel: (d.conduct.motivationalLevel || 0) * 20,
+            character: (d.conduct.character || 0) * 20,
+            leadership: (d.conduct.leadership || 0) * 20,
+          } : undefined),
+          overall: d?.overall || { average: 0, rank: 0, needsAttention: false }
+        } as StudentData;
+      });
+      setStudentRows(next);
+    } catch (e) {
+      console.error('Failed to load exam summary for parents', e);
+      setStudentRows([]);
+    }
+    setLoading(false);
+  }, []);
+
+  // Load user, children, and initial metadata
   React.useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getUser();
@@ -34,74 +99,69 @@ export default function ParentExamPage() {
       setParentId(uid);
       if (!uid) return;
 
-      const [{ data: kids }, metaRes] = await Promise.all([
-        supabase.from("students").select("id, name, class_id").eq("parent_id", uid).order("name"),
-        fetch("/api/admin/exam-metadata"),
-      ]);
+      const { data: kids } = await supabase
+        .from("students").select("id, name, class_id").eq("parent_id", uid).order("name");
       setChildren(kids || []);
 
-      const meta = await metaRes.json();
-      const released = (meta.exams || []).filter((e: any) => e.released === true);
-      setExams(released);
-      if (released.length > 0) setSelectedExam(released[0].id);
+      await loadMetadata();
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load results via admin aggregated endpoint to match admin final marks
+  // Load results when exam selection or children change
   React.useEffect(() => {
-    (async () => {
-      if (!selectedExam || children.length === 0) { setStudentRows([]); setSubjects([]); return; }
-      setLoading(true);
-      try {
-        const res = await fetch(`/api/admin/exams?examId=${selectedExam}`);
-        const json = await res.json();
-        const subjectNames: string[] = Array.isArray(json.subjects) ? json.subjects : [];
-        setSubjects(subjectNames);
-        const byId = new Map<string, any>((json.students || []).map((s: any) => [String(s.id), s]));
-        // Only include children that appear in this exam (i.e., in exam classes)
-        const filtered = children.filter(c => byId.has(String(c.id)));
-        const next: StudentData[] = filtered.map(c => {
-          const d = byId.get(String(c.id));
-          const subjectsObj: StudentData['subjects'] = {};
-          subjectNames.forEach((name) => {
-            const sd = d?.subjects?.[name];
-            if (!sd) return;
-            const grade = typeof sd?.grade === 'string' ? sd.grade : '';
-            const isTH = grade.toUpperCase() === 'TH';
-            const hasScore = typeof sd?.score === 'number';
-            if (!hasScore && !isTH) return;
-            subjectsObj[name] = {
-              score: hasScore ? sd.score : 0,
-              trend: Array.isArray(sd?.trend) ? sd.trend : [],
-              grade,
-            };
-          });
-          return {
-            id: String(c.id),
-            name: c.name,
-            class: String(d?.class || ''),
-            classId: typeof d?.classId === 'string' ? d.classId : undefined,
-            subjects: subjectsObj,
-            conduct: d?.conduct || { discipline: 0, effort: 0, participation: 0, motivationalLevel: 0, character: 0, leadership: 0 },
-            conductPercentages: d?.conductPercentages || (d?.conduct ? {
-              discipline: (d.conduct.discipline || 0) * 20,
-              effort: (d.conduct.effort || 0) * 20,
-              participation: (d.conduct.participation || 0) * 20,
-              motivationalLevel: (d.conduct.motivationalLevel || 0) * 20,
-              character: (d.conduct.character || 0) * 20,
-              leadership: (d.conduct.leadership || 0) * 20,
-            } : undefined),
-            overall: d?.overall || { average: 0, rank: 0, needsAttention: false }
-          } as StudentData;
-        });
-        setStudentRows(next);
-      } catch (e) {
-        console.error('Failed to load exam summary for parents', e);
-        setStudentRows([]);
-      }
-      setLoading(false);
-    })();
-  }, [selectedExam, children]);
+    if (!selectedExam) { setStudentRows([]); setSubjects([]); return; }
+    loadResults(selectedExam, children);
+  }, [selectedExam, children, loadResults]);
+
+  // Realtime subscriptions
+  React.useEffect(() => {
+    if (!selectedExam) return;
+
+    const maybeRefetchResults = () => {
+      const now = Date.now();
+      if (now - lastRefetchAtRef.current < throttleMs) return;
+      lastRefetchAtRef.current = now;
+      loadResults(selectedExam, children);
+    };
+
+    const chExamScoped = supabase
+      .channel(`parent-exam:${selectedExam}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'exam_results', filter: `exam_id=eq.${selectedExam}` }, () => {
+        maybeRefetchResults();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conduct_entries', filter: `exam_id=eq.${selectedExam}` }, () => {
+        // Conduct changes affect overall summary; refetch
+        maybeRefetchResults();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'exams', filter: `id=eq.${selectedExam}` }, () => {
+        // If the selected exam's metadata changes (e.g., release toggled), refresh both
+        loadMetadata();
+        maybeRefetchResults();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(chExamScoped);
+    };
+  }, [selectedExam, children, loadResults, loadMetadata]);
+
+  // Global subscription: when any exam gets released, refresh the list
+  React.useEffect(() => {
+    const chReleased = supabase
+      .channel('parent-exam:released')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'exams', filter: 'released=eq.true' }, () => {
+        loadMetadata();
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'exams', filter: 'released=eq.true' }, () => {
+        loadMetadata();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(chReleased);
+    };
+  }, [loadMetadata]);
 
   // Mobile breakpoint check
   React.useEffect(() => {
@@ -162,6 +222,14 @@ export default function ParentExamPage() {
           });
           return avg;
         }, [selectedStudent, studentRows, subjects])}
+        classOverallAvg={React.useMemo(() => {
+          if (!selectedStudent) return undefined;
+          const targetClass = selectedStudent.class;
+          const sameClass = studentRows.filter(s => s.class === targetClass);
+          const list = sameClass.map(s => (typeof s?.overall?.average === 'number' ? s.overall.average : null)).filter((n): n is number => n != null && Number.isFinite(n));
+          if (list.length === 0) return undefined;
+          return list.reduce((a, b) => a + b, 0) / list.length;
+        }, [selectedStudent, studentRows])}
         isMobile={isMobile}
         selectedExamName={exams.find(e=>e.id===selectedExam)?.name || ''}
         examId={selectedExam || ''}

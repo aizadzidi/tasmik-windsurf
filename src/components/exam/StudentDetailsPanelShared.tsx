@@ -1,8 +1,6 @@
 "use client";
 
 import React, { useRef, useState } from 'react';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import { X, TrendingUp, TrendingDown, Award, AlertCircle, FileText, Loader2 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, BarChart, Bar } from 'recharts';
 import { ResponsiveRadar } from '@nivo/radar';
@@ -16,6 +14,7 @@ import {
 } from '@/data/exams';
 import { rpcGetConductSummary, type ConductSummary } from '@/data/conduct';
 import { supabase } from '@/lib/supabaseClient';
+import { computeFinalMark, fetchSummaryForFinal } from '@/lib/finalScore';
 
 // Null-safe number helper
 const nn = (n: number | null | undefined) => (n ?? 0);
@@ -28,6 +27,7 @@ interface StudentDetailsPanelProps {
   classAverages?: {
     [subject: string]: number;
   };
+  classOverallAvg?: number; // blended overall average for the class, preferred for Benchmarks
   isMobile?: boolean;
   selectedExamName?: string;
   reportButtonLabel?: string;
@@ -40,6 +40,7 @@ export default function StudentDetailsPanelShared({
   student, 
   onClose, 
   classAverages = {},
+  classOverallAvg,
   isMobile = false,
   selectedExamName = '',
   reportButtonLabel = 'Generate Report',
@@ -77,6 +78,10 @@ export default function StudentDetailsPanelShared({
   const [conductSummaryLoading, setConductSummaryLoading] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
+  // Final mark (teacher mode): inputs and result
+  const [finalInputs, setFinalInputs] = useState<{ academicAvg: number | null; conductAvg: number | null; wConduct: number } | null>(null);
+  const [finalForTeacher, setFinalForTeacher] = useState<number | null>(null);
+
   // Load subject rows for student/exam/class
   React.useEffect(() => {
     let cancelled = false;
@@ -109,10 +114,6 @@ export default function StudentDetailsPanelShared({
     setSelectedSubject(null);
   }, [studentId]);
 
-  const filled = React.useMemo(
-    () => subjectRows.filter((row) => row.result_id !== null),
-    [subjectRows]
-  );
 
   React.useEffect(() => {
     if (!student?.id || !examId || !classId) {
@@ -262,20 +263,57 @@ export default function StudentDetailsPanelShared({
     [filledRows, getClassAverage]
   );
 
-  // Compute final (overall) average for teacher mode using available subject marks
-  const overallAverage = React.useMemo(() => {
-    if (mode === 'teacher') {
-      const valid = filledRows
-        .filter((row) => String(row.grade || '').toUpperCase() !== 'TH')
-        .map((row) => resolveMark(row))
-        .filter((n) => typeof n === 'number' && Number.isFinite(n));
-      if (valid.length > 0) {
-        return Math.round(valid.reduce((a, b) => a + b, 0) / valid.length);
+  // Fetch and compute final mark for teacher mode using shared RPCs and exact formula
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (mode !== 'teacher') return;
+      if (!examId || !studentId || !classId) {
+        setFinalInputs(null);
+        setFinalForTeacher(null);
+        return;
       }
-    }
-    const n = typeof overallAvgRaw === 'number' && Number.isFinite(overallAvgRaw) ? overallAvgRaw : 0;
-    return n;
-  }, [mode, filledRows, overallAvgRaw]);
+      try {
+        // Determine allowed subject ids exactly like Admin/Parent
+        const metaRes = await fetch('/api/admin/exam-metadata');
+        const meta = await metaRes.json();
+        const exam = (meta?.exams || []).find((e: any) => String(e?.id) === String(examId));
+        let allowedSubjectIds: string[] = [];
+        if (exam) {
+          const pairs: Array<{ classes?: { id: string }, subjects?: { id: string } }> = Array.isArray(exam?.exam_class_subjects)
+            ? exam.exam_class_subjects
+            : [];
+          if (pairs.length > 0) {
+            allowedSubjectIds = pairs
+              .filter((row) => String(row?.classes?.id || '') === String(classId))
+              .map((row) => String(row?.subjects?.id))
+              .filter((sid): sid is string => !!sid);
+          }
+          if (allowedSubjectIds.length === 0) {
+            // Fallback to exam_subjects when no per-class mapping exists
+            const subj = Array.isArray(exam?.exam_subjects) ? exam.exam_subjects : [];
+            allowedSubjectIds = subj
+              .map((row: any) => String(row?.subjects?.id))
+              .filter((sid: any): sid is string => typeof sid === 'string' && sid.length > 0);
+          }
+        }
+
+        const summary = await fetchSummaryForFinal({ supabase, examId, studentId, allowedSubjectIds });
+        if (cancelled) return;
+        setFinalInputs(summary);
+        const { final } = computeFinalMark(summary.academicAvg, summary.conductAvg, summary.wConduct);
+        setFinalForTeacher(final);
+        console.info('[Teacher Final]', { academicAvg: summary.academicAvg, conductAvg: summary.conductAvg, wConduct: summary.wConduct, final });
+      } catch (e) {
+        if (!cancelled) {
+          console.error('Failed to compute teacher final mark', e);
+          setFinalInputs(null);
+          setFinalForTeacher(null);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [mode, examId, studentId, classId]);
 
   const fmt = (value: number | null | undefined) =>
     value == null || Number.isNaN(value) ? "—" : `${value}%`;
@@ -332,120 +370,11 @@ export default function StudentDetailsPanelShared({
 
   const handleDownloadPdf = async () => {
     try {
-      if (!studentId) return;
-      const doc = new jsPDF({ unit: "pt", format: "a4" });
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const margin = 36;
-      let y = 40;
-
-      try {
-        const res = await fetch("/logo-akademi.png");
-        const blob = await res.blob();
-        const reader = new FileReader();
-        const dataUrl: string = await new Promise((resolve, reject) => {
-          reader.onload = () => resolve(String(reader.result));
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
-        doc.addImage(dataUrl, "PNG", margin, y, 42, 42);
-      } catch {}
-
-      doc.setFontSize(14);
-      doc.setTextColor("#0f172a");
-doc.text("Akademi Al Khayr", margin + 54, y + 16);
-      doc.setFontSize(10);
-      doc.setTextColor("#475569");
-      doc.text("Student Performance Report", margin + 54, y + 32);
-      doc.text(`Generated: ${new Date().toLocaleString()}`, pageWidth - margin, y + 10, { align: "right" });
-
-      y += 56;
-      doc.setTextColor("#0f172a");
-      doc.setFontSize(10);
-      const chips = [
-        `Name: ${studentName}`,
-        `Class: ${className}`,
-        ...(examName ? [`Exam: ${examName}`] : []),
-        `Overall: ${overallAverage ?? 0}%`,
-      ];
-      let x = margin;
-      const pad = 6,
-        gap = 6;
-      let cy = y;
-      chips.forEach((c) => {
-        const w = doc.getTextWidth(c) + pad * 2;
-        if (x + w > pageWidth - margin) {
-          x = margin;
-          cy += 20;
-        }
-        doc.setDrawColor("#e2e8f0");
-        doc.setFillColor("#f8fafc");
-        doc.roundedRect(x, cy - 12, w, 18, 3, 3, "FD");
-        doc.setTextColor("#0f172a");
-        doc.text(c, x + pad, cy + 2);
-        x += w + gap;
-      });
-      y = cy + 26;
-
-      // Summary table
-      doc.setFontSize(12);
-      doc.text("Summary", margin, y);
-      y += 6;
-      autoTable(doc, {
-        startY: y + 6,
-        head: [["Overall Average"]],
-        body: [[`${overallAverage ?? 0}%`]],
-        styles: { fontSize: 10 },
-        headStyles: { fillColor: [241, 245, 249], textColor: 15 },
-        margin: { left: margin, right: margin },
-      });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      y = (doc as any).lastAutoTable.finalY + 18;
-
-      // Subjects table
-      doc.text("Subjects", margin, y);
-      y += 6;
-      const subjectsBody = filledRows.map((row) => {
-        const score = resolveMark(row);
-        const scoreText = fmt(score);
-        return [row.subject_name, scoreText, row.grade || "-"];
-      });
-      autoTable(doc, {
-        startY: y + 6,
-        head: [["Subject", "Score", "Grade"]],
-        body: subjectsBody,
-        styles: { fontSize: 10 },
-        headStyles: { fillColor: [241, 245, 249], textColor: 15 },
-        margin: { left: margin, right: margin },
-      });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      y = (doc as any).lastAutoTable.finalY + 18;
-
-      // Conduct table
-      const toPct = (v: number | null | undefined) =>
-        typeof v === "number" ? `${Math.max(0, Math.min(100, v)).toFixed(0)}%` : "--";
-      doc.text("Conduct", margin, y);
-      y += 6;
-      autoTable(doc, {
-        startY: y + 6,
-        head: [["Aspect", "Score"]],
-        body: [
-          ["Discipline", toPct(nn(conductPercentages.discipline))],
-          ["Effort", toPct(nn(conductPercentages.effort))],
-          ["Participation", toPct(nn(conductPercentages.participation))],
-          ["Motivational Level", toPct(nn(conductPercentages.motivationalLevel))],
-          ["Character", toPct(nn(conductPercentages.character))],
-          ["Leadership", toPct(nn(conductPercentages.leadership))],
-        ],
-        styles: { fontSize: 10 },
-        headStyles: { fillColor: [241, 245, 249], textColor: 15 },
-        margin: { left: margin, right: margin },
-      });
-
-      const nameSlug = (studentName || "student").replace(/\s+/g, "-").toLowerCase();
-      doc.save(`student-report-${nameSlug}.pdf`);
+      if (!showReportPreview) setShowReportPreview(true);
+      setTimeout(() => { try { window.print(); } catch (e) { console.error(e); } }, 100);
     } catch (e) {
-      console.error("PDF export failed", e);
-      alert("Failed to generate PDF. You can still use Print in the preview.");
+      console.error('Print to PDF failed', e);
+      alert('Failed to open print dialog. Please use the Print button in the preview.');
     }
   };
 
@@ -487,7 +416,14 @@ doc.text("Akademi Al Khayr", margin + 54, y + 16);
     return [];
   };
 
-  const overallTrend = overallAverage >= 75 ? "positive" : overallAverage >= 60 ? "stable" : "concerning";
+  const displayOverall: number | null = React.useMemo(() => {
+    if (mode === 'teacher') {
+      return finalForTeacher != null && Number.isFinite(finalForTeacher) ? Math.round(finalForTeacher) : null;
+    }
+    return typeof overallAvgRaw === 'number' && Number.isFinite(overallAvgRaw) ? overallAvgRaw : null;
+  }, [mode, finalForTeacher, overallAvgRaw]);
+
+  const overallTrend = (displayOverall ?? 0) >= 75 ? "positive" : (displayOverall ?? 0) >= 60 ? "stable" : "concerning";
 
   const conductDisplayItems = [
     { aspect: "Discipline", value: conductPercentages.discipline },
@@ -514,21 +450,20 @@ doc.text("Akademi Al Khayr", margin + 54, y + 16);
   const handleGenerateReport = () => {
     try {
       const dateStr = new Date().toLocaleString();
-      const subjectsRows = filledRows
+      const wPct = typeof finalInputs?.wConduct === 'number' ? Math.round(finalInputs.wConduct * 100) : 0;
+      const aPct = Math.max(0, 100 - wPct);
+      const weightageHtml = `<div class=\"muted\" style=\"font-size:12px;margin-top:4px\">Weightage: Academic ${aPct}% • Conduct ${wPct}%</div>`;
+      const subjectsRowsVisual = filledRows
         .map((row) => {
           const score = resolveMark(row);
           const classAvgValue = getClassAverage(row.subject_id);
-          const classAvgText = fmt(classAvgValue);
-          return `<tr>
-            <td style="padding:8px;border:1px solid #e5e7eb;text-align:left">${row.subject_name}</td>
-            <td style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">${fmt(score)}</td>
-            <td style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">${classAvgText}</td>
-            <td style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">${row.grade || '-'}</td>
-          </tr>`;
+          const studentPct = Math.max(0, Math.min(100, typeof score === 'number' ? score : 0));
+          const classPct = typeof classAvgValue === 'number' ? Math.max(0, Math.min(100, classAvgValue)) : 0;
+          return `<div class=\"sub-row\">\n            <div class=\"name\">${row.subject_name}</div>\n            <div class=\"bar-wrap\">\n              <div class=\"bar class\" style=\"width:${classPct}%\"></div>\n              <div class=\"bar student\" style=\"width:${studentPct}%\"></div>\n            </div>\n            <div class=\"pill\">${fmt(score)}</div>\n          </div>`;
         })
         .join("");
 
-      const conductRows = [
+      const conductRowsVisual = [
         ["Discipline", conductPercentages.discipline],
         ["Effort", conductPercentages.effort],
         ["Participation", conductPercentages.participation],
@@ -536,17 +471,16 @@ doc.text("Akademi Al Khayr", margin + 54, y + 16);
         ["Character", conductPercentages.character],
         ["Leadership", conductPercentages.leadership],
       ]
-        .map(
-          ([label, v]) => `<tr>
-          <td style=\"padding:8px;border:1px solid #e5e7eb;text-align:left\">${label}</td>
-          <td style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">${
-            typeof v === "number" ? Math.max(0, Math.min(100, v)).toFixed(0) + "%" : "-"
-          }</td>
-        </tr>`
-        )
+        .map(([label, v]) => {
+          const pct = typeof v === 'number' ? Math.max(0, Math.min(100, v)) : 0;
+          const text = typeof v === 'number' ? `${pct.toFixed(0)}%` : '-';
+          return `<div class=\"sub-row\">\n            <div class=\"name\">${label}</div>\n            <div class=\"bar-wrap\"><div class=\"bar student\" style=\"width:${pct}%\"></div></div>\n            <div class=\"pill\">${text}</div>\n          </div>`;
+        })
         .join("");
 
-      const attentionBlock = ""; // No redesign; teacher mode may not have attention flag
+      const trendText = overallTrend === 'positive' ? 'Performing Well' : overallTrend === 'stable' ? 'Average Performance' : 'Needs Attention';
+      const chipBg = overallTrend === 'positive' ? '#dbeafe' : '#eff6ff';
+      const chipText = overallTrend === 'positive' ? '#1d4ed8' : overallTrend === 'stable' ? '#2563eb' : '#3b82f6';
 
       const html = `<!doctype html>
 <html>
@@ -556,51 +490,32 @@ doc.text("Akademi Al Khayr", margin + 54, y + 16);
     <title>Report - ${studentName}</title>
     <style>
       body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,'Apple Color Emoji','Segoe UI Emoji';color:#111827;margin:24px}
-h1{font-size:26px;margin:0}
+      h1{font-size:26px;margin:0}
       h2{font-size:18px;margin:18px 0 8px}
       .muted{color:#6b7280}
       .row{display:flex;justify-content:space-between;align-items:center}
+      .chip{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:9999px;font-weight:600;font-size:13px;border:1px solid #c7d2fe}
       table{border-collapse:collapse;width:100%;font-size:13px}
+      thead th{background:#f8fafc}
+      .card{background:#f8fafc;border:1px solid #e5e7eb;border-radius:16px;padding:16px}
+      .sub-row{display:flex;align-items:center;gap:12px;margin:10px 0}
+      .sub-row .name{width:220px;font-weight:500}
+      .bar-wrap{position:relative;flex:1;height:10px;background:#e5e7eb;border-radius:9999px;overflow:hidden}
+      .bar{position:absolute;top:0;bottom:0}
+      .bar.class{background:#9ca3af;opacity:.7}
+      .bar.student{background:#3b82f6}
+      .pill{min-width:64px;text-align:center;font-weight:600;border:1px solid #e5e7eb;border-radius:10px;padding:4px 8px;background:#fff}
       @media print{button{display:none} body{margin:0}}
     </style>
   </head>
   <body>
-    <div class=\"row\" style=\"margin-bottom:12px\">\n      <div style=\"display:flex;align-items:center;gap:12px\">\n        <img src=\"/logo-akademi.png\" alt=\"Akademi Al Khayr\" width=\"36\" height=\"36\" style=\"object-fit:contain\" />\n        <div>\n          <div style=\"font-weight:700;font-size:18px\">Akademi Al Khayr</div>\n          <div class=\"muted\" style=\"font-size:12px\">Student Performance Report</div>\n        </div>\n      </div>\n      <div class=\"muted\">Generated: ${dateStr}</div>\n    </div>\n    <div class=\"row\">
-      <div>
-        <h1>${studentName}</h1>
-        <div class=\"muted\">${className}${examName ? " • " + examName : ""}</div>
-      </div>
-    </div>\n    ${attentionBlock}
-    <h2>Summary</h2>
-    <table style=\"margin-bottom:16px\">
-      <tr>
-        <td style=\"padding:8px;border:1px solid #e5e7eb\">Overall Average</td>
-        <td style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">${overallAverage}%</td>
-      </tr>
-    </table>
-    <h2>Subjects</h2>
-    <table>
-      <thead>
-        <tr>
-          <th style=\"padding:8px;border:1px solid #e5e7eb;text-align:left\">Subject</th>
-          <th style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">Score</th>
-          <th style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">Class Avg</th>
-          <th style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">Grade</th>
-        </tr>
-      </thead>
-      <tbody>${subjectsRows}</tbody>
-    </table>
-    <h2 style=\"margin-top:16px\">Conduct</h2>
-    <table>
-      <thead>
-        <tr>
-          <th style=\"padding:8px;border:1px solid #e5e7eb;text-align:left\">Aspect</th>
-          <th style=\"padding:8px;border:1px solid #e5e7eb;text-align:center\">Score</th>
-        </tr>
-      </thead>
-      <tbody>${conductRows}</tbody>
-    </table>
-    <div style=\"margin-top:24px\"><em class=\"muted\">Open Print from the viewer to save as PDF.</em></div>
+    <div class=\"row\" style=\"margin-bottom:12px;padding:12px 16px;border:1px solid #e5e7eb;background:#f8fafc;border-radius:12px\">\n      <div style=\"display:flex;align-items:center;gap:12px\">\n        <img src=\"/logo-akademi.png\" alt=\"Akademi Al Khayr\" width=\"36\" height=\"36\" style=\"object-fit:contain\" />\n        <div>\n          <div style=\"font-weight:700;font-size:18px\">Akademi Al Khayr</div>\n          <div class=\"muted\" style=\"font-size:12px\">Student Performance Report</div>\n        </div>\n      </div>\n      <div class=\"muted\">Generated: ${dateStr}</div>\n    </div>
+    <div style=\"display:flex;justify-content:space-between;align-items:center;margin:16px 0 8px\">\n      <div style=\"display:flex;align-items:center;gap:16px\">\n        <div style=\"width:64px;height:64px;background:#3b82f6;border-radius:12px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:22px;\">${(studentName || 'S').charAt(0).toUpperCase()}</div>\n        <div>\n          <h1>${studentName}</h1>\n          <div class=\"muted\">${className}${examName ? ' • ' + examName : ''}</div>\n          ${weightageHtml}\n          <div style=\"margin-top:8px\">\n            <span class=\"chip\" style=\"background:${chipBg};color:${chipText}\">${trendText}</span>\n          </div>\n        </div>\n      </div>\n      <div style=\"font-size:32px;font-weight:700;color:#0f172a\">${fmt(displayOverall)}</div>\n    </div>
+    <h2>${examName || ''} - Subject Marks</h2>
+    <div class=\"card\">\n      <div style=\"font-weight:600;margin-bottom:8px\">All Subject Marks</div>\n      ${subjectsRowsVisual}\n      <p class=\"muted\" style=\"margin-top:8px\">Click a bar or subject name to view the trend</p>\n    </div>
+    <h2 style=\"margin-top:16px\">Conduct Profile <span class=\"chip\" style=\"margin-left:8px;background:#e0e7ff;color:#1e3a8a\">Average</span></h2>
+    <div class=\"card\">\n      ${conductRowsVisual}\n    </div>
+    <div style=\"margin-top:24px\"><em class=\"muted\">Use the Print button to save this as a PDF.</em></div>
   </body>
 </html>`;
       setReportHtml(html);
@@ -652,6 +567,9 @@ h1{font-size:26px;margin:0}
                       {className}
                       {examName ? ` • ${examName}` : ""}
                     </p>
+                    {typeof finalInputs?.wConduct === 'number' && (
+                      <p className="text-xs text-gray-500 mt-1">Weightage: Academic {Math.max(0, 100 - Math.round(finalInputs.wConduct * 100))}% • Conduct {Math.round(finalInputs.wConduct * 100)}%</p>
+                    )}
                     <div className="flex items-center gap-4 mt-2">
                       <span
                         className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-semibold ${
@@ -675,7 +593,7 @@ h1{font-size:26px;margin:0}
                           ? "Average Performance"
                           : "Needs Attention"}
                       </span>
-                      <span className="text-2xl font-semibold text-gray-900">{overallAverage}%</span>
+                      <span className="text-2xl font-semibold text-gray-900">{fmt(displayOverall)}</span>
                     </div>
                   </div>
                 </div>
@@ -698,54 +616,124 @@ h1{font-size:26px;margin:0}
 
             {/* Content */}
             <div className="p-6 space-y-8">
-              {showReportPreview && reportHtml && (
+              {showReportPreview && (
                 <Portal>
-                <div
-className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4 md:p-6"
-                  role="dialog"
-                  aria-modal="true"
-                  onClick={() => setShowReportPreview(false)}
-                >
-                  <div
-className="bg-white w-full max-w-5xl max-h-[92vh] rounded-xl shadow-2xl overflow-hidden flex flex-col"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
-                      <div className="text-sm text-gray-700 font-medium">Report Preview</div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={handleDownloadPdf}
-                          className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700"
-                        >
-                          Download PDF
-                        </button>
-                        <button
-                          onClick={() => {
-                            try {
-                              const win = iframeRef.current?.contentWindow;
-                              win?.focus();
-                              win?.print();
-                            } catch (e) {
-                              console.error(e);
-                            }
-                          }}
-                          className="px-3 py-1.5 text-sm rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-100"
-                        >
-                          Print
-                        </button>
-                        <button
-                          onClick={() => setShowReportPreview(false)}
-                          className="px-3 py-1.5 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200"
-                        >
-                          Close
-                        </button>
+                  <div id="report-print-root" className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4 md:p-6" role="dialog" aria-modal="true" onClick={() => setShowReportPreview(false)}>
+                    <style>{`@media print { html, body { margin: 0 !important; padding: 0 !important; height: auto !important; } body * { visibility: hidden !important; } #report-print-area, #report-print-area * { visibility: visible !important; } #report-print-root { position: static !important; padding: 0 !important; margin: 0 !important; } .print-container { position: static !important; overflow: visible !important; height: auto !important; max-height: none !important; box-shadow: none !important; padding: 0 !important; margin: 0 !important; } #report-print-area { margin: 0 !important; padding: 16px !important; } .avoid-break { break-inside: avoid; page-break-inside: avoid; } } @page { margin: 16mm 14mm; }`}</style>
+                    <div className="print-container bg-white w-full max-w-5xl max-h-[92vh] rounded-xl shadow-2xl overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
+                        <div className="text-sm text-gray-700 font-medium">Report Preview</div>
+                        <div className="flex items-center gap-2">
+                          <button onClick={handleDownloadPdf} className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700">Save as PDF</button>
+                          <button onClick={() => { try { window.print(); } catch (e) { console.error(e); } }} className="px-3 py-1.5 text-sm rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-100">Print</button>
+                          <button onClick={() => setShowReportPreview(false)} className="px-3 py-1.5 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Close</button>
+                        </div>
+                      </div>
+                      <div className="flex-1 overflow-auto bg-gray-100">
+                        <div id="report-print-area" className="bg-white p-6 md:p-8">
+                          {/* School header */}
+                          <div className="row flex items-center justify-between border border-gray-200 rounded-xl bg-gray-50 px-4 py-3 mb-4">
+                            <div className="flex items-center gap-3">
+                              <img src="/logo-akademi.png" alt="Akademi Al Khayr" width={36} height={36} className="object-contain" />
+                              <div>
+                                <div className="font-bold text-base">Akademi Al Khayr</div>
+                                <div className="text-xs text-gray-500">Student Performance Report</div>
+                              </div>
+                            </div>
+                            <div className="text-xs text-gray-500">Generated: {new Date().toLocaleString()}</div>
+                          </div>
+
+                          {/* Student header */}
+                          <div className="flex items-center justify-between mb-6">
+                            <div className="flex items-center gap-4">
+                              <div className="w-16 h-16 bg-blue-500 rounded-xl flex items-center justify-center text-white text-xl font-semibold">{(studentName || 'S').charAt(0).toUpperCase()}</div>
+                              <div>
+                                <h1 className="text-2xl font-semibold text-gray-900">{studentName || 'Student'}</h1>
+                                <div className="text-gray-600">{className}{examName ? ` • ${examName}` : ''}</div>
+                                {typeof finalInputs?.wConduct === 'number' && (
+                                  <div className="text-xs text-gray-600 mt-1">Weightage: Academic {Math.max(0, 100 - Math.round(finalInputs.wConduct * 100))}% • Conduct {Math.round(finalInputs.wConduct * 100)}%</div>
+                                )}
+                                <div className="mt-2">
+                                  <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-semibold ${overallTrend === 'positive' ? 'bg-blue-100 text-blue-700' : overallTrend === 'stable' ? 'bg-blue-50 text-blue-600' : 'bg-blue-50 text-blue-500'}`}>{overallTrend === 'positive' ? 'Performing Well' : overallTrend === 'stable' ? 'Average Performance' : 'Needs Attention'}</span>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="text-2xl font-semibold text-gray-900">{fmt(displayOverall)}</div>
+                          </div>
+
+                          {/* Subjects card with chart */}
+                          <h3 className="text-lg font-semibold text-gray-900 mb-3">{examName ? `${examName} - Subject Marks` : 'Subject Performance Overview'}</h3>
+                          <div className="avoid-break bg-gray-50 rounded-xl p-6 mb-6 border border-gray-200">
+                            <div className="h-64">
+                              <ResponsiveContainer width="100%" height="100%">
+                                {!selectedSubject ? (
+                                  <BarChart data={subjectSummaries.map((summary) => ({ ...summary, classAvgForChart: summary.classAvg ?? undefined }))} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                                    <XAxis dataKey="subject" tick={{ fontSize: 12 }} angle={-45} textAnchor="end" height={80} />
+                                    <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
+                                    <Tooltip contentStyle={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }} />
+                                    <Bar dataKey="score" fill="#3b82f6" name="Student Mark" radius={[4, 4, 0, 0]} />
+                                    <Bar dataKey="classAvgForChart" fill="#9ca3af" name="Class Average" radius={[4, 4, 0, 0]} />
+                                  </BarChart>
+                                ) : (
+                                  <LineChart data={buildChartData(undefined, selectedSubjectRow, (subjectSummaries.find((s) => s.subject === selectedSubject)?.classAvg ?? undefined) ?? undefined)} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
+                                    <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                                    <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
+                                    <Tooltip />
+                                    <Line type="monotone" dataKey="score" stroke="#3b82f6" name="Student" strokeWidth={2} />
+                                    <Line type="monotone" dataKey="classAvg" stroke="#9ca3af" name="Class Avg" strokeDasharray="4 4" />
+                                  </LineChart>
+                                )}
+                              </ResponsiveContainer>
+                            </div>
+                            {/* Subject list under chart */}
+                            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {subjectSummaries.map((s) => (
+                                <div key={s.subject} className="flex items-center justify-between rounded-lg bg-white border border-gray-200 px-3 py-2">
+                                  <span className="text-sm text-gray-700">{s.subject}</span>
+                                  <span className="text-sm font-semibold">{fmt(s.score)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Conduct radar */}
+                          <h3 className="text-lg font-semibold text-gray-900 mb-3">Conduct Profile</h3>
+                          <div className="avoid-break bg-gray-50 rounded-xl p-6 border border-gray-200">
+                            <div className="h-72">
+                              <ResponsiveRadar
+                                data={radarData}
+                                keys={["score"]}
+                                indexBy="aspect"
+                                margin={{ top: 20, right: 50, bottom: 20, left: 50 }}
+                                maxValue={100}
+                                curve="linearClosed"
+                                borderColor={{ from: 'color' }}
+                                gridLevels={5}
+                                gridShape="circular"
+                                enableDots={true}
+                                dotSize={6}
+                                colors={["#3b82f6"]}
+                                animate={false}
+                              />
+                            </div>
+                            {/* Conduct items list */}
+                            <div className="mt-4 rounded-xl border border-gray-200 overflow-hidden bg-white">
+                              <div className="grid grid-cols-2 bg-gray-50 text-gray-600 text-sm font-medium px-3 py-2 border-b">
+                                <div>Aspect</div>
+                                <div className="text-right">Score</div>
+                              </div>
+                              {conductDisplayItems.map((item) => (
+                                <div key={item.aspect} className="grid grid-cols-2 px-3 py-2 border-b last:border-b-0">
+                                  <div>{item.aspect}</div>
+                                  <div className="text-right font-semibold">{fmtConduct(item.value)}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                    <div className="flex-1 overflow-auto bg-gray-100">
-                      <iframe ref={iframeRef} title="Report Preview" className="w-full h-[80vh] bg-white" srcDoc={reportHtml || ""} />
-                    </div>
                   </div>
-                </div>
                 </Portal>
               )}
 
@@ -1031,19 +1019,21 @@ className="bg-white w-full max-w-5xl max-h-[92vh] rounded-xl shadow-2xl overflow
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Benchmarks</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="bg-blue-50 rounded-xl p-4 text-center">
-                    <div className="text-2xl font-semibold text-blue-900">{overallAverage}%</div>
-                    <div className="text-sm text-blue-700">Current Average</div>
+                    <div className="text-2xl font-semibold text-blue-900">{fmt(displayOverall)}</div>
+                    <div className="text-sm text-blue-700">Final Mark</div>
                   </div>
                   <div className="bg-gray-50 rounded-xl p-4 text-center">
-                    <div className="text-2xl font-semibold text-gray-900">
-                      {(() => {
-                        const vals = Array.from(avgMap.values())
-                          .map((v) => (typeof v === "number" ? v : null))
-                          .filter((v): v is number => v != null);
-                        const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
-                        return avg.toFixed(1);
-                      })()}%
-                    </div>
+                  <div className="text-2xl font-semibold text-gray-900">
+                    {typeof classOverallAvg === 'number' && Number.isFinite(classOverallAvg)
+                      ? classOverallAvg.toFixed(1)
+                      : (() => {
+                          const vals = Array.from(avgMap.values())
+                            .map((v) => (typeof v === "number" ? v : null))
+                            .filter((v): v is number => v != null);
+                          const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+                          return avg.toFixed(1);
+                        })()}%
+                  </div>
                     <div className="text-sm text-gray-700">Class Average</div>
                   </div>
                 </div>

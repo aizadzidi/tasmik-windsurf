@@ -1112,6 +1112,7 @@ export default function TeacherExamDashboard() {
   // Section 3: Graph Data
   // Drawer panel state
   const [panelStudent, setPanelStudent] = React.useState<any>(null);
+  const [panelClassOverallAvg, setPanelClassOverallAvg] = React.useState<number | null>(null);
 
   // Visible rows based on search (map indexes back to original array)
   const visibleRows = React.useMemo(() => {
@@ -1478,8 +1479,9 @@ export default function TeacherExamDashboard() {
                     };
                     return (
                       <React.Fragment key={student.id}>
-                        <tr className="border-b" onClick={() => {
+                        <tr className="border-b" onClick={async () => {
                           const clsName = classes.find(c => c.id === selectedClassId)?.name || '';
+                          // Set basic info immediately
                           setPanelStudent({
                             id: student.id,
                             name: student.name,
@@ -1488,6 +1490,27 @@ export default function TeacherExamDashboard() {
                             conduct: { discipline: 0, effort: 0, participation: 0, motivationalLevel: 0, character: 0, leadership: 0 },
                             overall: { average: 0, rank: 0, needsAttention: false },
                           });
+                          try {
+                            if (selectedExamId) {
+                              const params = new URLSearchParams({ examId: selectedExamId });
+                              if (selectedClassId) params.append('classId', selectedClassId);
+                              const res = await fetch(`/api/admin/exams?${params.toString()}`);
+                              const json = await res.json();
+                              const list = Array.isArray(json.students) ? json.students : [];
+                              const me = list.find((s: any) => String(s.id) === String(student.id));
+                              const classAvg = list.length > 0 ? (list.reduce((a: number, s: any) => a + (Number(s?.overall?.average) || 0), 0) / list.length) : null;
+                              if (me) {
+                                setPanelStudent((prev: any) => ({
+                                  ...(prev || {}),
+                                  overall: me.overall || { average: 0, rank: 0, needsAttention: false },
+                                }));
+                              }
+                              setPanelClassOverallAvg(classAvg);
+                            }
+                          } catch (e) {
+                            console.warn('Failed to load overall/class avg for panel', e);
+                            setPanelClassOverallAvg(null);
+                          }
                         }}>
                           <td className="px-3 py-2">{displayIdx + 1}</td>
                           <td className="px-3 py-2">{student.name}</td>
@@ -1679,6 +1702,7 @@ export default function TeacherExamDashboard() {
         examId={selectedExamId}
         classId={selectedClassId}
         selectedExamName={exams.find(e => String(e.id) === String(selectedExamId))?.name}
+        classOverallAvg={panelClassOverallAvg ?? undefined}
       />
     </div>
   );

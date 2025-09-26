@@ -242,17 +242,14 @@ export default function AdminExamPage() {
     });
   }, [students, selectedClass, selectedClassName, searchQuery]);
 
-  // Class averages used inside the details panel
-  // Compute using the student's class (or selected class), not the filtered list/search
+  // Class averages used inside the details panel (per-subject, academic only)
+  // Still computed for fallback/display purposes, but we will also compute a blended class overall average
   const classAverages = useMemo(() => {
     if (!Array.isArray(students) || !Array.isArray(subjects) || students.length === 0 || subjects.length === 0) {
       return {} as { [subject: string]: number };
     }
 
-    // Determine which class to average over
     const targetClassName = selectedStudent?.class || selectedClassName;
-
-    // Use all students in that class when available; otherwise all students for the exam
     const baseStudents = targetClassName
       ? students.filter((s) => s && s.class === targetClassName)
       : students;
@@ -265,26 +262,36 @@ export default function AdminExamPage() {
       if (!subject) return;
       let total = 0;
       let count = 0;
-      let thCount = 0;
       baseStudents.forEach((stu) => {
         const s = stu?.subjects?.[subject];
         if (!s) return;
         const grade = String(s.grade || '').toUpperCase();
-        if (grade === 'TH') {
-          thCount += 1;
-          return;
-        }
+        if (grade === 'TH') return;
         if (typeof s.score === 'number') {
           total += s.score;
           count += 1;
         }
       });
       averages[subject] = count > 0 ? Math.round(total / count) : 0;
-      // For display, TH students are handled per-student; no need to include them in averages.
     });
 
     return averages;
   }, [students, subjects, selectedStudent, selectedClassName]);
+
+  // New: Class overall average (blended academic + conduct), comparable to the student's Current Average
+  const classOverallAvg = useMemo(() => {
+    if (!Array.isArray(students) || students.length === 0) return null as number | null;
+    const targetClassName = selectedStudent?.class || selectedClassName;
+    const baseStudents = targetClassName
+      ? students.filter((s) => s && s.class === targetClassName)
+      : students;
+    const list = baseStudents
+      .map((s) => (typeof s?.overall?.average === 'number' ? s.overall.average : null))
+      .filter((n): n is number => n != null && Number.isFinite(n));
+    if (list.length === 0) return null;
+    const avg = list.reduce((a, b) => a + b, 0) / list.length;
+    return avg;
+  }, [students, selectedStudent, selectedClassName]);
 
   // Handler functions
   const handleCreateExam = async (examData: any) => {
@@ -527,6 +534,7 @@ export default function AdminExamPage() {
         student={selectedStudent}
         onClose={handleCloseDetailsPanel}
         classAverages={classAverages}
+        classOverallAvg={classOverallAvg ?? undefined}
         isMobile={isMobile}
         selectedExamName={selectedExamName || ''}
         examId={selectedExam || ''}
