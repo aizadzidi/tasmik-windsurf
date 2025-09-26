@@ -257,7 +257,7 @@ export default function ParentFullRecordsModal({
         </div>
 
         {/* Content */}
-        <div className="overflow-y-auto max-h[calc(90vh-80px)]">
+        <div className="overflow-y-auto overscroll-contain max-h-[calc(90vh-120px)]">
           {loading ? (
             <div className="p-6">
               <div className="animate-pulse space-y-4">

@@ -343,7 +343,7 @@ export default function JuzTestHistoryModal({
         </div>
 
         {/* Content */}
-        <div className="overflow-y-auto max-h-[calc(85vh-140px)] p-6">
+        <div className="overflow-y-auto overscroll-contain max-h-[calc(85vh-140px)] p-6">
           {loading ? (
             <div className="text-center py-12">
               <div className="inline-block w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
