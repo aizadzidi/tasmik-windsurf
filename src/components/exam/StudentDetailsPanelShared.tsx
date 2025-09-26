@@ -58,6 +58,7 @@ export default function StudentDetailsPanelShared({
   const examName = selectedExamName;
   const open = Boolean(student);
   const parentMeetMode = false;
+  const isTeacher = (mode ?? 'admin') === 'teacher';
 
   // Local responsive flag (to preserve identical animation behavior)
   const [isMobileView, setIsMobileView] = useState(false);
@@ -371,10 +372,38 @@ export default function StudentDetailsPanelShared({
   const handleDownloadPdf = async () => {
     try {
       if (!showReportPreview) setShowReportPreview(true);
-      setTimeout(() => { try { window.print(); } catch (e) { console.error(e); } }, 100);
+      await new Promise((r) => setTimeout(r, 150));
+      const area = document.getElementById('report-print-area');
+      if (!area) { alert('Report not ready'); return; }
+      const html2canvas = (await import('html2canvas')).default;
+      const jsPDFmod: any = await import('jspdf');
+      const JsPDFCtor = jsPDFmod?.default ?? jsPDFmod?.jsPDF;
+      if (!JsPDFCtor) throw new Error('jsPDF module not loaded');
+      const canvas = await html2canvas(area, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        windowWidth: area.scrollWidth,
+        windowHeight: area.scrollHeight,
+        scrollY: -window.scrollY,
+      });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new JsPDFCtor('p', 'mm', 'a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth = pageWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      let y = 0;
+      while (y < imgHeight) {
+        pdf.addImage(imgData, 'PNG', 0, -y, imgWidth, imgHeight);
+        y += pageHeight;
+        if (y < imgHeight) pdf.addPage();
+      }
+      const nameSlug = (studentName || 'report').replace(/\s+/g, '-').toLowerCase();
+      pdf.save(`report-${nameSlug}.pdf`);
     } catch (e) {
-      console.error('Print to PDF failed', e);
-      alert('Failed to open print dialog. Please use the Print button in the preview.');
+      console.error('PDF export failed', e);
+      alert('Failed to generate PDF.');
     }
   };
 
@@ -539,18 +568,34 @@ export default function StudentDetailsPanelShared({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50"
+          className={isTeacher ? "fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4 md:p-8" : "fixed inset-0 bg-black/20 backdrop-blur-sm z-50"}
           onClick={() => onClose()}
         >
           <motion.div
-            initial={isMobileView ? { y: "100%" } : { x: "100%" }}
-            animate={isMobileView ? { y: 0 } : { x: 0 }}
-            exit={isMobileView ? { y: "100%" } : { x: "100%" }}
-            transition={{ type: "spring", damping: 25, stiffness: 200 }}
+            initial={
+              isTeacher
+                ? { opacity: 0, y: 20, scale: 0.96 }
+                : (isMobileView ? { y: "100%" } : { x: "100%" })
+            }
+            animate={
+              isTeacher
+                ? { opacity: 1, y: 0, scale: 1 }
+                : (isMobileView ? { y: 0 } : { x: 0 })
+            }
+            exit={
+              isTeacher
+                ? { opacity: 0, y: 16, scale: 0.98 }
+                : (isMobileView ? { y: "100%" } : { x: "100%" })
+            }
+            transition={{ type: "spring", damping: 24, stiffness: 260 }}
             className={
-              isMobileView
-                ? "fixed inset-4 bg-white shadow-2xl overflow-y-auto rounded-2xl"
-                : "fixed right-0 top-0 bottom-0 w-full max-w-2xl bg-white shadow-2xl overflow-y-auto"
+              isTeacher
+                ? "w-full max-w-6xl bg-white rounded-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
+                : (
+                    isMobileView
+                      ? "fixed inset-4 bg-white shadow-2xl overflow-y-auto rounded-2xl"
+                      : "fixed right-0 top-0 bottom-0 w-full max-w-2xl bg-white shadow-2xl overflow-y-auto"
+                  )
             }
             onClick={(e) => e.stopPropagation()}
           >
@@ -615,7 +660,7 @@ export default function StudentDetailsPanelShared({
             </div>
 
             {/* Content */}
-            <div className="p-6 space-y-8">
+            <div className={isTeacher ? "flex-1 overflow-auto p-6 space-y-8" : "p-6 space-y-8"}>
               {showReportPreview && (
                 <Portal>
                   <div id="report-print-root" className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4 md:p-6" role="dialog" aria-modal="true" onClick={() => setShowReportPreview(false)}>

@@ -91,7 +91,8 @@ export default function ParentFullRecordsModal({
           .from('juz_tests')
           .select('*')
           .eq('student_id', student.id)
-          .order('test_date', { ascending: false });
+          .order('test_date', { ascending: false })
+          .order('id', { ascending: false });
         if (!error && data) {
           setJuzTests(data as JuzTestRecord[]);
         } else {
@@ -103,7 +104,8 @@ export default function ParentFullRecordsModal({
           .from("reports")
           .select("*")
           .eq("student_id", student.id)
-          .order("date", { ascending: false });
+          .order("date", { ascending: false })
+          .order("created_at", { ascending: false });
         
         if (!error && data) {
           setReports(data);

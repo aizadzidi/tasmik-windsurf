@@ -30,6 +30,7 @@
     "cmdk": "^1.0.0",
     "date-fns": "^4.1.0",
     "framer-motion": "^12.23.12",
+    "html2canvas": "^1.4.1",
     "image-to-base64": "^2.2.0",
     "jspdf": "^3.0.1",
     "jspdf-autotable": "^5.0.2",

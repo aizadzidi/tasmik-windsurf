@@ -261,12 +261,40 @@ export default function StudentDetailsPanel({
 
   const handleDownloadPdf = async () => {
     try {
-      // Trigger the print dialog directly to allow "Save as PDF"
       if (!showReportPreview) setShowReportPreview(true);
-      setTimeout(() => { try { window.print(); } catch (e) { console.error(e); } }, 100);
+      // Wait a tick for the preview to render
+      await new Promise((r) => setTimeout(r, 150));
+      const area = document.getElementById('report-print-area');
+      if (!area) { alert('Report not ready'); return; }
+      const html2canvas = (await import('html2canvas')).default;
+      const jsPDFmod: any = await import('jspdf');
+      const JsPDFCtor = jsPDFmod?.default ?? jsPDFmod?.jsPDF;
+      if (!JsPDFCtor) throw new Error('jsPDF module not loaded');
+      const canvas = await html2canvas(area, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        windowWidth: area.scrollWidth,
+        windowHeight: area.scrollHeight,
+        scrollY: -window.scrollY,
+      });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new JsPDFCtor('p', 'mm', 'a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth = pageWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      let y = 0;
+      while (y < imgHeight) {
+        pdf.addImage(imgData, 'PNG', 0, -y, imgWidth, imgHeight);
+        y += pageHeight;
+        if (y < imgHeight) pdf.addPage();
+      }
+      const nameSlug = (student.name || 'report').replace(/\s+/g, '-').toLowerCase();
+      pdf.save(`report-${nameSlug}.pdf`);
     } catch (e) {
-      console.error('Print to PDF failed', e);
-      alert('Failed to open print dialog. Please use the Print button in the preview.');
+      console.error('PDF export failed', e);
+      alert('Failed to generate PDF.');
     }
   };
   

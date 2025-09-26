@@ -160,7 +160,8 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
       const { data, error } = await supabase
         .from("reports")
         .select("*, students(name)")
-        .order("date", { ascending: false });
+        .order("date", { ascending: false })
+        .order("created_at", { ascending: false });
       if (!error && data) {
         setReports(data.map((r: any) => ({ ...r, student_name: r.students?.name || "" })));
       }
@@ -297,7 +298,9 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
         reportsQuery = reportsQuery.in("type", ["Murajaah", "Old Murajaah", "New Murajaah"]);
       }
       
-      const { data: allReports } = await reportsQuery.order("date", { ascending: false });
+      const { data: allReports } = await reportsQuery
+        .order("date", { ascending: false })
+        .order("created_at", { ascending: false });
       
       // Group reports by student
       const reportsByStudent = (allReports || []).reduce((acc, report) => {
@@ -309,7 +312,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
       const studentProgressPromises = studentsData.map(async (student) => {
         if (viewMode === 'juz_tests') {
           // For Juz Tests view, get memorization progress and test progress
-          const [memorizationResult, juzTestsResult] = await Promise.all([
+          const [memorizationResult, latestByDateResult, highestTestedResult] = await Promise.all([
             // Get highest memorized juz from Tasmi reports
             supabase
               .from("reports")
@@ -320,10 +323,25 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
               .order("juzuk", { ascending: false })
               .limit(1),
             
-            // Get highest tested juz (passed or failed)
+            // Latest test by date (for display in table)
             supabase
               .from("juz_tests")
               .select("juz_number, test_date, passed, total_percentage, examiner_name, test_hizb")
+              .eq("student_id", student.id)
+              .order("test_date", { ascending: false })
+              .order("id", { ascending: false })
+              .limit(1)
+              .then(result => {
+                if (result.error?.message?.includes('relation "public.juz_tests" does not exist')) {
+                  return { data: [], error: null };
+                }
+                return result;
+              }),
+
+            // Highest tested juz by number (for gap calculation)
+            supabase
+              .from("juz_tests")
+              .select("juz_number")
               .eq("student_id", student.id)
               .order("juz_number", { ascending: false })
               .limit(1)
@@ -336,8 +354,8 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
           ]);
 
           const highestMemorizedJuz = memorizationResult.data?.[0]?.juzuk || 0;
-          const latestTest = juzTestsResult.data?.[0] || null;
-          const highestTestedJuz = latestTest?.juz_number || 0;
+          const latestTest = latestByDateResult.data?.[0] || null;
+          const highestTestedJuz = highestTestedResult.data?.[0]?.juz_number || 0;
           
           const gap = highestMemorizedJuz - highestTestedJuz;
 
@@ -516,7 +534,8 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
       const { data, error } = await supabase
         .from("reports")
         .select("*, students(name)")
-        .order("date", { ascending: false });
+        .order("date", { ascending: false })
+        .order("created_at", { ascending: false });
       if (!error && data) {
         setReports(data.map((r: any) => ({ ...r, student_name: r.students?.name || "" })));
       }
@@ -531,6 +550,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
         .from("reports")
         .select("*, students(name)")
         .order("date", { ascending: false })
+        .order("created_at", { ascending: false })
         .then(({ data, error }) => {
           if (!error && data) {
             setReports(data.map((r: any) => ({ ...r, student_name: r.students?.name || "" })));

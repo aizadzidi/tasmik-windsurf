@@ -96,7 +96,8 @@ export default function JuzTestHistoryModal({
         .from('juz_tests')
         .select('*')
         .eq('student_id', studentId)
-        .order('test_date', { ascending: false });
+        .order('test_date', { ascending: false })
+        .order('id', { ascending: false });
 
       if (error) {
         if (error.message?.includes('relation "public.juz_tests" does not exist')) {

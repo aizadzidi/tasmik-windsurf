@@ -71,7 +71,8 @@ export default function FullRecordsModal({
         .from("reports")
         .select("*")
         .eq("student_id", student.id)
-        .order("date", { ascending: false });
+        .order("date", { ascending: false })
+        .order("created_at", { ascending: false });
       
       if (!error && data) {
         setReports(data);
