@@ -290,7 +290,7 @@ export default function StudentDetailsPanel({
         y += pageHeight;
         if (y < imgHeight) pdf.addPage();
       }
-      const nameSlug = (student.name || 'report').replace(/\s+/g, '-').toLowerCase();
+      const nameSlug = (student?.name ?? 'report').replace(/\s+/g, '-').toLowerCase();
       pdf.save(`report-${nameSlug}.pdf`);
     } catch (e) {
       console.error('PDF export failed', e);
