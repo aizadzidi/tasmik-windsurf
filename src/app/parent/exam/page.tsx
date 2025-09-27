@@ -4,7 +4,7 @@ import Navbar from "@/components/Navbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { supabase } from "@/lib/supabaseClient";
 import StudentTable, { type StudentData } from "@/components/admin/exam/StudentTable";
-import StudentDetailsPanel from "@/components/admin/exam/StudentDetailsPanel";
+import StudentDetailsPanel from "@/components/exam/StudentDetailsPanelShared";
 
 type Child = { id: string; name: string; class_id: string | null };
 type MetaExam = {
@@ -204,37 +204,12 @@ export default function ParentExamPage() {
       <StudentDetailsPanel
         student={selectedStudent}
         onClose={() => setSelectedStudent(null)}
-        classAverages={React.useMemo(() => {
-          if (!selectedStudent || studentRows.length === 0 || subjects.length === 0) return {} as { [k:string]: number };
-          const targetClass = selectedStudent.class;
-          const sameClass = studentRows.filter(s => s.class === targetClass);
-          const avg: Record<string, number> = {};
-          subjects.forEach(name => {
-            let total = 0, count = 0;
-            sameClass.forEach(s => {
-              const sd = s.subjects?.[name];
-              if (sd && typeof sd.score === 'number' && String(sd.grade || '').toUpperCase() !== 'TH') {
-                total += sd.score;
-                count++;
-              }
-            });
-            avg[name] = count>0 ? Math.round(total / count) : 0;
-          });
-          return avg;
-        }, [selectedStudent, studentRows, subjects])}
-        classOverallAvg={React.useMemo(() => {
-          if (!selectedStudent) return undefined;
-          const targetClass = selectedStudent.class;
-          const sameClass = studentRows.filter(s => s.class === targetClass);
-          const list = sameClass.map(s => (typeof s?.overall?.average === 'number' ? s.overall.average : null)).filter((n): n is number => n != null && Number.isFinite(n));
-          if (list.length === 0) return undefined;
-          return list.reduce((a, b) => a + b, 0) / list.length;
-        }, [selectedStudent, studentRows])}
         isMobile={isMobile}
         selectedExamName={exams.find(e=>e.id===selectedExam)?.name || ''}
         examId={selectedExam || ''}
         classId={selectedStudent?.classId || ''}
         reportButtonLabel="View / Export"
+        mode="parent"
       />
     </div>
   );

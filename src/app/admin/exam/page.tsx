@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import AdminNavbar from "@/components/admin/AdminNavbar";
 import HeaderToolbar from "@/components/admin/exam/HeaderToolbar";
 import StudentTable, { StudentData } from "@/components/admin/exam/StudentTable";
-import StudentDetailsPanel from "@/components/admin/exam/StudentDetailsPanel";
+import StudentDetailsPanel from "@/components/exam/StudentDetailsPanelShared";
 import CreateExamModal from "@/components/admin/exam/CreateExamModal";
 import EditExamModal from "@/components/admin/exam/EditExamModal";
 import ManageExamsModal from "@/components/admin/exam/ManageExamsModal";

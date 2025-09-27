@@ -8,18 +8,17 @@ import { motion, AnimatePresence } from 'framer-motion';
 import Portal from '@/components/Portal';
 import { StudentData } from '@/components/admin/exam/StudentTable';
 import {
-  rpcGetClassSubjectAverages,
   rpcGetStudentSubjects,
   type StudentSubjectRow,
 } from '@/data/exams';
 import { rpcGetConductSummary, type ConductSummary } from '@/data/conduct';
 import { supabase } from '@/lib/supabaseClient';
-import { computeFinalMark, fetchSummaryForFinal } from '@/lib/finalScore';
+import { useWeightedAverages } from '@/hooks/useWeightedAverages';
 
 // Null-safe number helper
 const nn = (n: number | null | undefined) => (n ?? 0);
 
-export type StudentPanelMode = 'admin' | 'teacher';
+export type StudentPanelMode = 'admin' | 'teacher' | 'parent';
 
 interface StudentDetailsPanelProps {
   student: StudentData | null;
@@ -48,7 +47,10 @@ export default function StudentDetailsPanelShared({
   classId,
   mode = 'admin'
 }: StudentDetailsPanelProps) {
-  const isAdmin = (mode ?? 'admin') === 'admin';
+  const modeNormalized = mode ?? 'admin';
+  const isAdmin = modeNormalized === 'admin';
+  const isTeacher = modeNormalized === 'teacher';
+  const showClassAverage = modeNormalized !== 'parent';
 
   // Derived locals to match legacy usage in this panel
   const studentId = student?.id;
@@ -58,7 +60,6 @@ export default function StudentDetailsPanelShared({
   const examName = selectedExamName;
   const open = Boolean(student);
   const parentMeetMode = false;
-  const isTeacher = (mode ?? 'admin') === 'teacher';
 
   // Local responsive flag (to preserve identical animation behavior)
   const [isMobileView, setIsMobileView] = useState(false);
@@ -74,14 +75,12 @@ export default function StudentDetailsPanelShared({
   const [showReportPreview, setShowReportPreview] = useState(false);
   const [subjectRows, setSubjectRows] = useState<StudentSubjectRow[]>([]);
   const [subjectsLoading, setSubjectsLoading] = useState(false);
-  const [avgMap, setAvgMap] = useState<Map<string, number | null>>(new Map());
   const [conductSummary, setConductSummary] = useState<ConductSummary | null>(null);
   const [conductSummaryLoading, setConductSummaryLoading] = useState(false);
+  const [conductWeightagePct, setConductWeightagePct] = useState<number | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
-  // Final mark (teacher mode): inputs and result
-  const [finalInputs, setFinalInputs] = useState<{ academicAvg: number | null; conductAvg: number | null; wConduct: number } | null>(null);
-  const [finalForTeacher, setFinalForTeacher] = useState<number | null>(null);
+  // Final mark and averages come from RPCs via useWeightedAverages
 
   // Load subject rows for student/exam/class
   React.useEffect(() => {
@@ -158,30 +157,31 @@ export default function StudentDetailsPanelShared({
   );
 
 
+  // Fetch conduct weightage for this exam/class from admin metadata
   React.useEffect(() => {
-    if (!examId || !classId) {
-      setAvgMap(new Map());
-      return;
-    }
-
     let cancelled = false;
-
     (async () => {
       try {
-        const avgs = await rpcGetClassSubjectAverages(supabase, examId!, classId!);
-        if (cancelled) return;
-        setAvgMap(new Map(avgs.map((a) => [a.subject_id, a.class_avg])));
-      } catch (e) {
-        if (!cancelled) {
-          // Gracefully handle missing RPC or permissions by using empty averages
-          setAvgMap(new Map());
+        if (!examId) { setConductWeightagePct(null); return; }
+        const res = await fetch('/api/admin/exam-metadata');
+        const meta = await res.json();
+        const exam = (meta?.exams || []).find((e: any) => String(e?.id) === String(examId));
+        if (!exam) { if (!cancelled) setConductWeightagePct(null); return; }
+        const examClasses: Array<{ conduct_weightage?: number; classes?: { id: string } }> = Array.isArray(exam?.exam_classes) ? exam.exam_classes : [];
+        let pct: number | null = null;
+        if (classId) {
+          const found = examClasses.find((ec: any) => String(ec?.classes?.id) === String(classId));
+          if (found && typeof found?.conduct_weightage !== 'undefined') pct = Number(found.conduct_weightage);
         }
+        if (pct == null && examClasses.length === 1 && typeof examClasses[0]?.conduct_weightage !== 'undefined') {
+          pct = Number(examClasses[0].conduct_weightage);
+        }
+        if (!cancelled) setConductWeightagePct(Number.isFinite(pct as number) ? (pct as number) : 0);
+      } catch (e) {
+        if (!cancelled) setConductWeightagePct(0);
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [examId, classId]);
 
   const refreshConductSummary = React.useCallback(async () => {
@@ -242,14 +242,23 @@ export default function StudentDetailsPanelShared({
     return filledRows.find((row) => row.subject_name === selectedSubject);
   }, [filledRows, selectedSubject]);
 
+  // Weighted/averages via RPCs
+  const allowedSubjectIds: string[] | null = null; // keep identical filters across calls
+  const wConduct = typeof conductWeightagePct === 'number' ? conductWeightagePct : 0;
+  const { subjectAvg, classAvg, finalWeighted, fmt } = useWeightedAverages({
+    supabase,
+    examId: examId || null,
+    classId: classId || null,
+    studentId: studentId || null,
+    wConduct,
+    allowedSubjectIds,
+  });
+
   const getClassAverage = React.useCallback(
     (subjectId: string) => {
-      if (!avgMap.has(subjectId)) {
-        return null;
-      }
-      return avgMap.get(subjectId) ?? null;
+      return subjectAvg[String(subjectId)] ?? null;
     },
-    [avgMap]
+    [subjectAvg]
   );
 
   const subjectSummaries = React.useMemo(
@@ -264,60 +273,9 @@ export default function StudentDetailsPanelShared({
     [filledRows, getClassAverage]
   );
 
-  // Fetch and compute final mark for teacher mode using shared RPCs and exact formula
-  React.useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (mode !== 'teacher') return;
-      if (!examId || !studentId || !classId) {
-        setFinalInputs(null);
-        setFinalForTeacher(null);
-        return;
-      }
-      try {
-        // Determine allowed subject ids exactly like Admin/Parent
-        const metaRes = await fetch('/api/admin/exam-metadata');
-        const meta = await metaRes.json();
-        const exam = (meta?.exams || []).find((e: any) => String(e?.id) === String(examId));
-        let allowedSubjectIds: string[] = [];
-        if (exam) {
-          const pairs: Array<{ classes?: { id: string }, subjects?: { id: string } }> = Array.isArray(exam?.exam_class_subjects)
-            ? exam.exam_class_subjects
-            : [];
-          if (pairs.length > 0) {
-            allowedSubjectIds = pairs
-              .filter((row) => String(row?.classes?.id || '') === String(classId))
-              .map((row) => String(row?.subjects?.id))
-              .filter((sid): sid is string => !!sid);
-          }
-          if (allowedSubjectIds.length === 0) {
-            // Fallback to exam_subjects when no per-class mapping exists
-            const subj = Array.isArray(exam?.exam_subjects) ? exam.exam_subjects : [];
-            allowedSubjectIds = subj
-              .map((row: any) => String(row?.subjects?.id))
-              .filter((sid: any): sid is string => typeof sid === 'string' && sid.length > 0);
-          }
-        }
+  // Final mark is provided by RPC via useWeightedAverages; no FE recomputation when RPCs are available
 
-        const summary = await fetchSummaryForFinal({ supabase, examId, studentId, allowedSubjectIds });
-        if (cancelled) return;
-        setFinalInputs(summary);
-        const { final } = computeFinalMark(summary.academicAvg, summary.conductAvg, summary.wConduct);
-        setFinalForTeacher(final);
-        console.info('[Teacher Final]', { academicAvg: summary.academicAvg, conductAvg: summary.conductAvg, wConduct: summary.wConduct, final });
-      } catch (e) {
-        if (!cancelled) {
-          console.error('Failed to compute teacher final mark', e);
-          setFinalInputs(null);
-          setFinalForTeacher(null);
-        }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [mode, examId, studentId, classId]);
-
-  const fmt = (value: number | null | undefined) =>
-    value == null || Number.isNaN(value) ? "—" : `${value}%`;
+  // fmt provided by hook for 1-decimal rounding
 
   const toNumeric = (value: unknown): number | null => {
     if (typeof value === "number") {
@@ -369,42 +327,172 @@ export default function StudentDetailsPanelShared({
     };
   }, [conductSummary]);
 
-  const handleDownloadPdf = async () => {
-    try {
-      if (!showReportPreview) setShowReportPreview(true);
-      await new Promise((r) => setTimeout(r, 150));
-      const area = document.getElementById('report-print-area');
-      if (!area) { alert('Report not ready'); return; }
-      const html2canvas = (await import('html2canvas')).default;
-      const jsPDFmod: any = await import('jspdf');
-      const JsPDFCtor = jsPDFmod?.default ?? jsPDFmod?.jsPDF;
-      if (!JsPDFCtor) throw new Error('jsPDF module not loaded');
-      const canvas = await html2canvas(area, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        windowWidth: area.scrollWidth,
-        windowHeight: area.scrollHeight,
-        scrollY: -window.scrollY,
-      });
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new JsPDFCtor('p', 'mm', 'a4');
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pageWidth;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      let y = 0;
-      while (y < imgHeight) {
-        pdf.addImage(imgData, 'PNG', 0, -y, imgWidth, imgHeight);
-        y += pageHeight;
-        if (y < imgHeight) pdf.addPage();
-      }
-      const nameSlug = (studentName || 'report').replace(/\s+/g, '-').toLowerCase();
-      pdf.save(`report-${nameSlug}.pdf`);
-    } catch (e) {
-      console.error('PDF export failed', e);
-      alert('Failed to generate PDF.');
+  const openCleanPrintWindow = async () => {
+    // Ensure the preview is open so print CSS (in the Portal) applies
+    if (!showReportPreview) setShowReportPreview(true);
+
+    // Give React/DOM a tick to render the preview fully
+    await new Promise((r) => setTimeout(r, 200));
+
+    const area = document.getElementById('report-print-area');
+    if (!area) {
+      alert('Report not ready');
+      return;
     }
+
+    // Best-effort: wait for images in the report area to finish loading
+    try {
+      const imgs = Array.from(area.querySelectorAll('img')) as HTMLImageElement[];
+      await Promise.all(
+        imgs.map((img) =>
+          img.complete
+            ? Promise.resolve()
+            : new Promise<void>((resolve) => {
+                const done = () => resolve();
+                img.onload = done;
+                img.onerror = done;
+              })
+        )
+      );
+    } catch (_) {
+      // Non-fatal if waiting fails
+    }
+
+    // Trigger native print dialog (user can choose "Save as PDF")
+    window.requestAnimationFrame(() => {
+      try {
+        window.focus();
+      } catch (_) {}
+      window.print();
+    });
+  };
+
+  const handleDownloadPdf = async () => {
+    const downloadBtn = document.getElementById('pdf-download-button') as HTMLButtonElement | null;
+    let printFrame: HTMLIFrameElement | null = null;
+    try {
+      if (downloadBtn) {
+        downloadBtn.disabled = true;
+        downloadBtn.innerHTML = '<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Preparing PDF...';
+      }
+
+      const reportNode = document.getElementById('report-print-area');
+      if (!reportNode) {
+        throw new Error('Report content not found');
+      }
+
+      printFrame = document.createElement('iframe');
+      printFrame.style.position = 'fixed';
+      printFrame.style.right = '0';
+      printFrame.style.bottom = '0';
+      printFrame.style.width = '0';
+      printFrame.style.height = '0';
+      printFrame.style.border = '0';
+      printFrame.style.opacity = '0';
+      printFrame.setAttribute('aria-hidden', 'true');
+      printFrame.setAttribute('tabindex', '-1');
+      document.body.appendChild(printFrame);
+
+      const frameWindow = printFrame.contentWindow;
+      const frameDoc = frameWindow?.document;
+      if (!frameDoc) {
+        throw new Error('Failed to access print frame document');
+      }
+
+      frameDoc.open();
+      frameDoc.write('<!DOCTYPE html><html><head><meta charset="utf-8" /></head><body></body></html>');
+      frameDoc.close();
+
+      const headStyles = Array.from(document.querySelectorAll('link[rel="stylesheet"], style'));
+      headStyles.forEach((styleNode) => {
+        frameDoc.head.appendChild(styleNode.cloneNode(true));
+      });
+
+      const customStyle = frameDoc.createElement('style');
+      customStyle.textContent = `
+        html, body {
+          margin: 0;
+          padding: 0;
+          background: #f1f5f9;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+          font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+        body {
+          padding: 24px;
+        }
+        @media print {
+          @page {
+            size: A4;
+            margin: 12mm;
+          }
+          body {
+            padding: 0;
+            background: transparent;
+          }
+        }
+      `;
+      frameDoc.head.appendChild(customStyle);
+
+      frameDoc.body.innerHTML = reportNode.outerHTML;
+
+      const waitForImages = async () => {
+        const area = frameDoc.getElementById('report-print-area');
+        if (!area) return;
+        const imgs = Array.from(area.querySelectorAll('img')) as HTMLImageElement[];
+        await Promise.all(
+          imgs.map((img) =>
+            img.complete
+              ? Promise.resolve()
+              : new Promise<void>((resolve) => {
+                  const handler = () => resolve();
+                  img.addEventListener('load', handler, { once: true });
+                  img.addEventListener('error', handler, { once: true });
+                })
+          )
+        );
+      };
+
+      if (frameDoc.fonts && typeof frameDoc.fonts.ready?.then === 'function') {
+        try {
+          await frameDoc.fonts.ready;
+        } catch (err) {
+          console.warn('Font load warning for PDF export:', err);
+        }
+      }
+
+      try {
+        await waitForImages();
+      } catch (err) {
+        console.warn('Image load warning for PDF export:', err);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      frameWindow?.focus();
+      frameWindow?.print();
+
+      setTimeout(() => {
+        if (printFrame && printFrame.parentNode) {
+          printFrame.parentNode.removeChild(printFrame);
+        }
+      }, 1000);
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      alert('Failed to generate PDF: ' + (error instanceof Error ? error.message : 'Unknown error'));
+      if (printFrame && printFrame.parentNode) {
+        printFrame.parentNode.removeChild(printFrame);
+      }
+    } finally {
+      if (downloadBtn) {
+        downloadBtn.disabled = false;
+        downloadBtn.textContent = 'Save as PDF';
+      }
+    }
+  };
+
+  const handlePrint = async () => {
+    await openCleanPrintWindow();
   };
 
   // Build chart points
@@ -446,11 +534,8 @@ export default function StudentDetailsPanelShared({
   };
 
   const displayOverall: number | null = React.useMemo(() => {
-    if (mode === 'teacher') {
-      return finalForTeacher != null && Number.isFinite(finalForTeacher) ? Math.round(finalForTeacher) : null;
-    }
-    return typeof overallAvgRaw === 'number' && Number.isFinite(overallAvgRaw) ? overallAvgRaw : null;
-  }, [mode, finalForTeacher, overallAvgRaw]);
+    return finalWeighted != null && Number.isFinite(finalWeighted) ? finalWeighted : null;
+  }, [finalWeighted]);
 
   const overallTrend = (displayOverall ?? 0) >= 75 ? "positive" : (displayOverall ?? 0) >= 60 ? "stable" : "concerning";
 
@@ -479,7 +564,7 @@ export default function StudentDetailsPanelShared({
   const handleGenerateReport = () => {
     try {
       const dateStr = new Date().toLocaleString();
-      const wPct = typeof finalInputs?.wConduct === 'number' ? Math.round(finalInputs.wConduct * 100) : 0;
+      const wPct = Math.round(typeof conductWeightagePct === 'number' ? conductWeightagePct : 0);
       const aPct = Math.max(0, 100 - wPct);
       const weightageHtml = `<div class=\"muted\" style=\"font-size:12px;margin-top:4px\">Weightage: Academic ${aPct}% • Conduct ${wPct}%</div>`;
       const subjectsRowsVisual = filledRows
@@ -488,7 +573,8 @@ export default function StudentDetailsPanelShared({
           const classAvgValue = getClassAverage(row.subject_id);
           const studentPct = Math.max(0, Math.min(100, typeof score === 'number' ? score : 0));
           const classPct = typeof classAvgValue === 'number' ? Math.max(0, Math.min(100, classAvgValue)) : 0;
-          return `<div class=\"sub-row\">\n            <div class=\"name\">${row.subject_name}</div>\n            <div class=\"bar-wrap\">\n              <div class=\"bar class\" style=\"width:${classPct}%\"></div>\n              <div class=\"bar student\" style=\"width:${studentPct}%\"></div>\n            </div>\n            <div class=\"pill\">${fmt(score)}</div>\n          </div>`;
+          const classBarHtml = showClassAverage ? `<div class=\"bar class\" style=\"width:${classPct}%\"></div>` : '';
+          return `<div class=\"sub-row\">\n            <div class=\"name\">${row.subject_name}</div>\n            <div class=\"bar-wrap\">\n              ${classBarHtml}\n              <div class=\"bar student\" style=\"width:${studentPct}%\"></div>\n            </div>\n            <div class=\"pill\">${fmt(score)}</div>\n          </div>`;
         })
         .join("");
 
@@ -612,8 +698,8 @@ export default function StudentDetailsPanelShared({
                       {className}
                       {examName ? ` • ${examName}` : ""}
                     </p>
-                    {typeof finalInputs?.wConduct === 'number' && (
-                      <p className="text-xs text-gray-500 mt-1">Weightage: Academic {Math.max(0, 100 - Math.round(finalInputs.wConduct * 100))}% • Conduct {Math.round(finalInputs.wConduct * 100)}%</p>
+                    {typeof conductWeightagePct === 'number' && (
+                      <p className="text-xs text-gray-500 mt-1">Weightage: Academic {Math.max(0, 100 - Math.round(conductWeightagePct))}% • Conduct {Math.round(conductWeightagePct)}%</p>
                     )}
                     <div className="flex items-center gap-4 mt-2">
                       <span
@@ -638,7 +724,7 @@ export default function StudentDetailsPanelShared({
                           ? "Average Performance"
                           : "Needs Attention"}
                       </span>
-                      <span className="text-2xl font-semibold text-gray-900">{fmt(displayOverall)}</span>
+                      <span className="text-2xl font-semibold text-gray-900">{fmt(displayOverall ?? (typeof overallAvgRaw === 'number' ? overallAvgRaw : null))}</span>
                     </div>
                   </div>
                 </div>
@@ -664,13 +750,62 @@ export default function StudentDetailsPanelShared({
               {showReportPreview && (
                 <Portal>
                   <div id="report-print-root" className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4 md:p-6" role="dialog" aria-modal="true" onClick={() => setShowReportPreview(false)}>
-                    <style>{`@media print { html, body { margin: 0 !important; padding: 0 !important; height: auto !important; } body * { visibility: hidden !important; } #report-print-area, #report-print-area * { visibility: visible !important; } #report-print-root { position: static !important; padding: 0 !important; margin: 0 !important; } .print-container { position: static !important; overflow: visible !important; height: auto !important; max-height: none !important; box-shadow: none !important; padding: 0 !important; margin: 0 !important; } #report-print-area { margin: 0 !important; padding: 16px !important; } .avoid-break { break-inside: avoid; page-break-inside: avoid; } } @page { margin: 16mm 14mm; }`}</style>
+                    <style>{`
+      @media print { 
+        html, body { 
+          margin: 0 !important; 
+          padding: 0 !important; 
+          height: auto !important; 
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        } 
+        body * { 
+          visibility: hidden !important; 
+        } 
+        #report-print-area, #report-print-area * { 
+          visibility: visible !important; 
+        } 
+        #report-print-root { 
+          position: static !important; 
+          padding: 0 !important; 
+          margin: 0 !important; 
+        } 
+        .print-container { 
+          position: static !important; 
+          overflow: visible !important; 
+          height: auto !important; 
+          max-height: none !important; 
+          box-shadow: none !important; 
+          padding: 0 !important; 
+          margin: 0 !important; 
+        } 
+        #report-print-area { 
+          margin: 0 !important; 
+          padding: 0 !important;
+          width: 100% !important;
+        } 
+        .avoid-break { 
+          break-inside: avoid; 
+          page-break-inside: avoid; 
+        }
+        @page { 
+          margin: 1cm;
+          size: A4;
+        }
+      } 
+    `}</style>
                     <div className="print-container bg-white w-full max-w-5xl max-h-[92vh] rounded-xl shadow-2xl overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
                         <div className="text-sm text-gray-700 font-medium">Report Preview</div>
                         <div className="flex items-center gap-2">
-                          <button onClick={handleDownloadPdf} className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700">Save as PDF</button>
-                          <button onClick={() => { try { window.print(); } catch (e) { console.error(e); } }} className="px-3 py-1.5 text-sm rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-100">Print</button>
+                          <button 
+                            id="pdf-download-button"
+                            onClick={handleDownloadPdf} 
+                            className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 flex items-center justify-center min-w-[120px]"
+                          >
+                            Save as PDF
+                          </button>
+                          <button onClick={handlePrint} className="px-3 py-1.5 text-sm rounded-lg bg-white border border-gray-200 text-gray-700 hover:bg-gray-100">Print</button>
                           <button onClick={() => setShowReportPreview(false)} className="px-3 py-1.5 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Close</button>
                         </div>
                       </div>
@@ -695,8 +830,8 @@ export default function StudentDetailsPanelShared({
                               <div>
                                 <h1 className="text-2xl font-semibold text-gray-900">{studentName || 'Student'}</h1>
                                 <div className="text-gray-600">{className}{examName ? ` • ${examName}` : ''}</div>
-                                {typeof finalInputs?.wConduct === 'number' && (
-                                  <div className="text-xs text-gray-600 mt-1">Weightage: Academic {Math.max(0, 100 - Math.round(finalInputs.wConduct * 100))}% • Conduct {Math.round(finalInputs.wConduct * 100)}%</div>
+                                {typeof conductWeightagePct === 'number' && (
+                                  <div className="text-xs text-gray-600 mt-1">Weightage: Academic {Math.max(0, 100 - Math.round(conductWeightagePct))}% • Conduct {Math.round(conductWeightagePct)}%</div>
                                 )}
                                 <div className="mt-2">
                                   <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-semibold ${overallTrend === 'positive' ? 'bg-blue-100 text-blue-700' : overallTrend === 'stable' ? 'bg-blue-50 text-blue-600' : 'bg-blue-50 text-blue-500'}`}>{overallTrend === 'positive' ? 'Performing Well' : overallTrend === 'stable' ? 'Average Performance' : 'Needs Attention'}</span>
@@ -707,72 +842,95 @@ export default function StudentDetailsPanelShared({
                           </div>
 
                           {/* Subjects card with chart */}
-                          <h3 className="text-lg font-semibold text-gray-900 mb-3">{examName ? `${examName} - Subject Marks` : 'Subject Performance Overview'}</h3>
-                          <div className="avoid-break bg-gray-50 rounded-xl p-6 mb-6 border border-gray-200">
-                            <div className="h-64">
-                              <ResponsiveContainer width="100%" height="100%">
-                                {!selectedSubject ? (
-                                  <BarChart data={subjectSummaries.map((summary) => ({ ...summary, classAvgForChart: summary.classAvg ?? undefined }))} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                                    <XAxis dataKey="subject" tick={{ fontSize: 12 }} angle={-45} textAnchor="end" height={80} />
-                                    <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
-                                    <Tooltip contentStyle={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }} />
-                                    <Bar dataKey="score" fill="#3b82f6" name="Student Mark" radius={[4, 4, 0, 0]} />
-                                    <Bar dataKey="classAvgForChart" fill="#9ca3af" name="Class Average" radius={[4, 4, 0, 0]} />
-                                  </BarChart>
-                                ) : (
-                                  <LineChart data={buildChartData(undefined, selectedSubjectRow, (subjectSummaries.find((s) => s.subject === selectedSubject)?.classAvg ?? undefined) ?? undefined)} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
-                                    <XAxis dataKey="label" tick={{ fontSize: 12 }} />
-                                    <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
-                                    <Tooltip />
-                                    <Line type="monotone" dataKey="score" stroke="#3b82f6" name="Student" strokeWidth={2} />
-                                    <Line type="monotone" dataKey="classAvg" stroke="#9ca3af" name="Class Avg" strokeDasharray="4 4" />
-                                  </LineChart>
-                                )}
-                              </ResponsiveContainer>
-                            </div>
-                            {/* Subject list under chart */}
-                            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-                              {subjectSummaries.map((s) => (
-                                <div key={s.subject} className="flex items-center justify-between rounded-lg bg-white border border-gray-200 px-3 py-2">
-                                  <span className="text-sm text-gray-700">{s.subject}</span>
-                                  <span className="text-sm font-semibold">{fmt(s.score)}</span>
-                                </div>
-                              ))}
+                          <div className="avoid-break space-y-3 mb-6">
+                            <h3 className="text-lg font-semibold text-gray-900">{examName ? `${examName} - Subject Marks` : 'Subject Performance Overview'}</h3>
+                            <div className="bg-gray-50 rounded-xl p-6 border border-gray-200">
+                              <div className="h-64">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  {!selectedSubject ? (
+                                    <BarChart
+                                      data={subjectSummaries.map((summary) => ({
+                                        ...summary,
+                                        classAvgForChart: showClassAverage ? summary.classAvg ?? undefined : undefined,
+                                      }))}
+                                      margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                                    >
+                                      <XAxis dataKey="subject" tick={{ fontSize: 12 }} angle={-45} textAnchor="end" height={80} />
+                                      <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
+                                      <Tooltip contentStyle={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }} />
+                                      <Bar dataKey="score" fill="#3b82f6" name="Student Mark" radius={[4, 4, 0, 0]} />
+                                      {showClassAverage && (
+                                        <Bar dataKey="classAvgForChart" fill="#9ca3af" name="Class Average" radius={[4, 4, 0, 0]} />
+                                      )}
+                                    </BarChart>
+                                  ) : (
+                                    <LineChart
+                                      data={buildChartData(
+                                        undefined,
+                                        selectedSubjectRow,
+                                        showClassAverage
+                                          ? (subjectSummaries.find((s) => s.subject === selectedSubject)?.classAvg ?? undefined)
+                                          : undefined
+                                      )}
+                                      margin={{ top: 5, right: 5, left: 5, bottom: 5 }}
+                                    >
+                                      <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                                      <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
+                                      <Tooltip />
+                                      <Line type="monotone" dataKey="score" stroke="#3b82f6" name="Student" strokeWidth={2} />
+                                      {showClassAverage && (
+                                        <Line type="monotone" dataKey="classAvg" stroke="#9ca3af" name="Class Avg" strokeDasharray="4 4" />
+                                      )}
+                                    </LineChart>
+                                  )}
+                                </ResponsiveContainer>
+                              </div>
+                              {/* Subject list under chart */}
+                              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {subjectSummaries.map((s) => (
+                                  <div key={s.subject} className="flex items-center justify-between rounded-lg bg-white border border-gray-200 px-3 py-2">
+                                    <span className="text-sm text-gray-700">{s.subject}</span>
+                                    <span className="text-sm font-semibold">{fmt(s.score)}</span>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           </div>
 
                           {/* Conduct radar */}
-                          <h3 className="text-lg font-semibold text-gray-900 mb-3">Conduct Profile</h3>
-                          <div className="avoid-break bg-gray-50 rounded-xl p-6 border border-gray-200">
-                            <div className="h-72">
-                              <ResponsiveRadar
-                                data={radarData}
-                                keys={["score"]}
-                                indexBy="aspect"
-                                margin={{ top: 20, right: 50, bottom: 20, left: 50 }}
-                                maxValue={100}
-                                curve="linearClosed"
-                                borderColor={{ from: 'color' }}
-                                gridLevels={5}
-                                gridShape="circular"
-                                enableDots={true}
-                                dotSize={6}
-                                colors={["#3b82f6"]}
-                                animate={false}
-                              />
-                            </div>
-                            {/* Conduct items list */}
-                            <div className="mt-4 rounded-xl border border-gray-200 overflow-hidden bg-white">
-                              <div className="grid grid-cols-2 bg-gray-50 text-gray-600 text-sm font-medium px-3 py-2 border-b">
-                                <div>Aspect</div>
-                                <div className="text-right">Score</div>
+                          <div className="avoid-break space-y-3">
+                            <h3 className="text-lg font-semibold text-gray-900">Conduct Profile</h3>
+                            <div className="bg-gray-50 rounded-xl p-6 border border-gray-200">
+                              <div className="h-72">
+                                <ResponsiveRadar
+                                  data={radarData}
+                                  keys={["score"]}
+                                  indexBy="aspect"
+                                  margin={{ top: 20, right: 50, bottom: 20, left: 50 }}
+                                  maxValue={100}
+                                  curve="linearClosed"
+                                  borderColor={{ from: 'color' }}
+                                  gridLevels={5}
+                                  gridShape="circular"
+                                  enableDots={true}
+                                  dotSize={6}
+                                  colors={["#3b82f6"]}
+                                  animate={false}
+                                />
                               </div>
-                              {conductDisplayItems.map((item) => (
-                                <div key={item.aspect} className="grid grid-cols-2 px-3 py-2 border-b last:border-b-0">
-                                  <div>{item.aspect}</div>
-                                  <div className="text-right font-semibold">{fmtConduct(item.value)}</div>
+                              {/* Conduct items list */}
+                              <div className="mt-4 rounded-xl border border-gray-200 overflow-hidden bg-white">
+                                <div className="grid grid-cols-2 bg-gray-50 text-gray-600 text-sm font-medium px-3 py-2 border-b">
+                                  <div>Aspect</div>
+                                  <div className="text-right">Score</div>
                                 </div>
-                              ))}
+                                {conductDisplayItems.map((item) => (
+                                  <div key={item.aspect} className="grid grid-cols-2 px-3 py-2 border-b last:border-b-0">
+                                    <div>{item.aspect}</div>
+                                    <div className="text-right font-semibold">{fmtConduct(item.value)}</div>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -818,7 +976,7 @@ export default function StudentDetailsPanelShared({
                             <BarChart
                               data={subjectSummaries.map((summary) => ({
                                 ...summary,
-                                classAvgForChart: summary.classAvg ?? undefined,
+                                classAvgForChart: showClassAverage ? summary.classAvg ?? undefined : undefined,
                               }))}
                               margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
                               onClick={(data) => {
@@ -847,7 +1005,9 @@ export default function StudentDetailsPanelShared({
                                 contentStyle={{ backgroundColor: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px" }}
                               />
                               <Bar dataKey="score" fill="#3b82f6" name="Student Mark" style={{ cursor: "pointer" }} radius={[4, 4, 0, 0]} />
-                              <Bar dataKey="classAvgForChart" fill="#9ca3af" name="Class Average" radius={[4, 4, 0, 0]} />
+                              {showClassAverage && (
+                                <Bar dataKey="classAvgForChart" fill="#9ca3af" name="Class Average" radius={[4, 4, 0, 0]} />
+                              )}
                             </BarChart>
                           </ResponsiveContainer>
                         </div>
@@ -861,8 +1021,12 @@ export default function StudentDetailsPanelShared({
                   ) : (
                     (() => {
                       const selectedSummary = subjectSummaries.find((summary) => summary.subject === selectedSubject);
-                      const classAvgValue = selectedSummary?.classAvg ?? null;
-                      const historicalData = buildChartData(undefined, selectedSubjectRow, classAvgValue ?? undefined);
+                      const classAvgValue = showClassAverage ? selectedSummary?.classAvg ?? null : null;
+                      const historicalData = buildChartData(
+                        undefined,
+                        selectedSubjectRow,
+                        showClassAverage ? classAvgValue ?? undefined : undefined
+                      );
                       const scoreValue = selectedSubjectRow ? resolveMark(selectedSubjectRow) : undefined;
                       const gradeValue = selectedSubjectRow?.grade ?? "";
                       return (
@@ -885,7 +1049,17 @@ export default function StudentDetailsPanelShared({
                                     }}
                                   />
                                   <Line type="monotone" dataKey="score" stroke="#3b82f6" strokeWidth={3} name="Student" dot={{ fill: "#3b82f6", strokeWidth: 2, r: 4 }} />
-                                  <Line type="monotone" dataKey="classAvg" stroke="#9ca3af" strokeWidth={2} strokeDasharray="5 5" name="Class Avg" dot={{ fill: "#9ca3af", strokeWidth: 2, r: 3 }} />
+                                  {showClassAverage && (
+                                    <Line
+                                      type="monotone"
+                                      dataKey="classAvg"
+                                      stroke="#9ca3af"
+                                      strokeWidth={2}
+                                      strokeDasharray="5 5"
+                                      name="Class Avg"
+                                      dot={{ fill: '#9ca3af', strokeWidth: 2, r: 3 }}
+                                    />
+                                  )}
                                 </LineChart>
                               </ResponsiveContainer>
                             </div>
@@ -919,11 +1093,11 @@ export default function StudentDetailsPanelShared({
                                     </span>
                                   )}
                                 </div>
-                                {typeof scoreValue === "number" && Number.isFinite(scoreValue) && classAvgValue != null && Number.isFinite(classAvgValue) && (
+                                {showClassAverage && typeof scoreValue === 'number' && Number.isFinite(scoreValue) && classAvgValue != null && Number.isFinite(classAvgValue) && (
                                   <div className="text-sm text-gray-600">
                                     vs Class Avg: {fmt(classAvgValue)}
                                     <span
-                                      className={`ml-2 ${scoreValue > classAvgValue ? "text-green-600" : scoreValue === classAvgValue ? "text-gray-600" : "text-red-600"}`}
+                                      className={`ml-2 ${scoreValue > classAvgValue ? 'text-green-600' : scoreValue === classAvgValue ? 'text-gray-600' : 'text-red-600'}`}
                                     >
                                       ({scoreValue > classAvgValue ? "+" : ""}
                                       {(scoreValue - classAvgValue).toFixed(1)}%)
@@ -935,9 +1109,11 @@ export default function StudentDetailsPanelShared({
                                 <div>
                                   <span className="font-medium text-gray-900">Grade:</span> {gradeValue || "—"}
                                 </div>
-                                <div>
-                                  <span className="font-medium text-gray-900">Class Avg:</span> {fmt(classAvgValue)}
-                                </div>
+                                {showClassAverage && (
+                                  <div>
+                                    <span className="font-medium text-gray-900">Class Avg:</span> {fmt(classAvgValue)}
+                                  </div>
+                                )}
                                 <div>
                                   <span className="font-medium text-gray-900">Trend:</span> Not available
                                 </div>
@@ -1067,20 +1243,14 @@ export default function StudentDetailsPanelShared({
                     <div className="text-2xl font-semibold text-blue-900">{fmt(displayOverall)}</div>
                     <div className="text-sm text-blue-700">Final Mark</div>
                   </div>
-                  <div className="bg-gray-50 rounded-xl p-4 text-center">
-                  <div className="text-2xl font-semibold text-gray-900">
-                    {typeof classOverallAvg === 'number' && Number.isFinite(classOverallAvg)
-                      ? classOverallAvg.toFixed(1)
-                      : (() => {
-                          const vals = Array.from(avgMap.values())
-                            .map((v) => (typeof v === "number" ? v : null))
-                            .filter((v): v is number => v != null);
-                          const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
-                          return avg.toFixed(1);
-                        })()}%
-                  </div>
-                    <div className="text-sm text-gray-700">Class Average</div>
-                  </div>
+                  {showClassAverage && (
+                    <div className="bg-gray-50 rounded-xl p-4 text-center">
+                      <div className="text-2xl font-semibold text-gray-900">
+                        {fmt(classAvg ?? (typeof classOverallAvg === 'number' ? classOverallAvg : null))}
+                      </div>
+                      <div className="text-sm text-gray-700">Class Average</div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
