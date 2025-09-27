@@ -401,6 +401,11 @@ USING (
 **Debug:** Run `debug-classes.sql` to check policies
 **Temporary fix:** `disable-classes-rls.sql` (for testing only)
 
+### RPC Helper Fallback Logic (2025-09-27)
+**Context:** The `fetchAllAverages()` helper in `src/lib/averages.ts` now uses the Supabase client's `rpc()` fallback pattern without generics to support mixed naming conventions across Postgres functions.
+**Behavior:** When calling a function such as `get_subject_class_averages`, the helper first attempts modern snake_case named arguments. If the RPC returns an error (e.g., legacy function signature), it automatically retries with legacy parameter names (`exam`, `class`, `stu`).
+**Action Required:** Ensure any new RPCs that may have legacy signatures either update to the preferred snake_case argument names or include a fallback entry in `fetchAllAverages()`.
+
 ## Future Expansion
 
 ### Planned Tables (for exam/quiz system)

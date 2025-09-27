@@ -7,6 +7,8 @@ export type AveragesPayload = {
   finalWeighted: number | null;         // weighted final for the current student
 };
 
+type RpcResponse<T> = { data: T | null; error: any | null };
+
 export function toWeightFraction(w: number | null | undefined) {
   // Accepts 0..1 or 0..100; auto-normalize to 0..1
   if (w == null) return 0;
@@ -29,13 +31,13 @@ export async function fetchAllAverages(
   // Helper: try primary named params; if that fails, try secondary
   async function rpcWithFallback<T>(
     fn: string,
-    primaryArgs: Record<string, any>,
-    secondaryArgs: Record<string, any>
-  ): Promise<{ data: T | null; error: any | null }> {
-    const r1 = await supabase.rpc<T>(fn as any, primaryArgs as any);
-    if (!r1.error) return r1 as any;
-    const r2 = await supabase.rpc<T>(fn as any, secondaryArgs as any);
-    return r2 as any;
+    primaryArgs: Record<string, unknown>,
+    secondaryArgs: Record<string, unknown>
+  ): Promise<RpcResponse<T>> {
+    const r1 = await supabase.rpc(fn, primaryArgs);
+    if (!r1.error) return r1 as unknown as RpcResponse<T>;
+    const r2 = await supabase.rpc(fn, secondaryArgs);
+    return r2 as unknown as RpcResponse<T>;
   }
 
   const [subjRes, classRes, stuRes] = await Promise.all([
