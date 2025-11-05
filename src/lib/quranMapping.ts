@@ -172,11 +172,11 @@ export function formatMurajaahDisplay(pageFrom: number, pageTo?: number): string
     return null;
   }
 
-  // Calculate pages covered within this Juz
-  const effectivePageFrom = Math.max(pageFrom, juzRange.startPage);
-  const effectivePageTo = Math.min(pageTo, juzRange.endPage);
-  
-  const pagesInJuz = effectivePageTo - effectivePageFrom + 1;
-  
-  return `Juz ${juz} - ${pagesInJuz}/20`;
+  // Determine the ending page position within the Juz (1-20)
+  const pagePosition = getPageWithinJuz(pageTo);
+  if (!pagePosition) {
+    return `Juz ${juz}`;
+  }
+
+  return `Juz ${juz} - ${pagePosition}/20`;
 }

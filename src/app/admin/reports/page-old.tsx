@@ -217,12 +217,17 @@ export default function AdminReportsPage() {
                 latestReading = `${latestReport.surah} (${latestReport.ayat_from}-${latestReport.ayat_to})`;
               } else {
                 // Use formatMurajaahDisplay for Murajaah reports
-                if (latestReport.page_from && latestReport.page_to) {
-                  latestReading = formatMurajaahDisplay(latestReport.page_from, latestReport.page_to);
-                } else if (latestReport.juzuk) {
-                  latestReading = `Juz ${latestReport.juzuk}`;
+                const fallbackReading = latestReport.juzuk
+                  ? `Juz ${latestReport.juzuk}`
+                  : latestReport.surah;
+                const pageFrom = latestReport.page_from ?? latestReport.page_to ?? null;
+                const pageTo = latestReport.page_to ?? latestReport.page_from ?? undefined;
+
+                if (pageFrom !== null) {
+                  const formatted = formatMurajaahDisplay(pageFrom, pageTo);
+                  latestReading = formatted ?? fallbackReading;
                 } else {
-                  latestReading = latestReport.surah;
+                  latestReading = fallbackReading;
                 }
               }
             }

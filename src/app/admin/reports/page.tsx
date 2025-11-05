@@ -35,15 +35,21 @@ function formatLatestReading(report: { type: string; surah?: string; ayat_from?:
     return `${report.surah} (${report.ayat_from}-${report.ayat_to})`;
   } else {
     // For murajaah reports, use page numbers if available, otherwise show juzuk
-    if (report.page_from && report.page_to) {
-      return formatMurajaahDisplay(report.page_from, report.page_to);
-    } else if (report.juzuk_from && report.juzuk_to) {
-      return `Juz ${report.juzuk_from}${report.juzuk_to !== report.juzuk_from ? ` - ${report.juzuk_to}` : ''}`;
-    } else if (report.juzuk) {
-      return `Juz ${report.juzuk}`;
-    } else {
-      return "Murajaah reading";
+    const fallback =
+      report.juzuk_from && report.juzuk_to
+        ? `Juz ${report.juzuk_from}${report.juzuk_to !== report.juzuk_from ? ` - ${report.juzuk_to}` : ""}`
+        : report.juzuk
+          ? `Juz ${report.juzuk}`
+          : "Murajaah reading";
+
+    const pageFrom = report.page_from ?? report.page_to ?? null;
+    const pageTo = report.page_to ?? report.page_from ?? undefined;
+
+    if (pageFrom !== null) {
+      return formatMurajaahDisplay(pageFrom, pageTo) ?? fallback;
     }
+
+    return fallback;
   }
 }
 

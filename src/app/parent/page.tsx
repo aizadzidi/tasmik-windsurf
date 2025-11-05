@@ -204,25 +204,34 @@ export default function ParentPage() {
         // Process student progress data
         const childrenProgressData = studentsData.map(student => {
           const studentReports = reportsByStudent[student.id] || [];
-          const latestReport = studentReports[0]; // Already sorted by date desc
+          const latestReport = viewMode === 'murajaah'
+            ? studentReports.find(report => ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(report.type))
+            : studentReports[0]; // Already sorted by date desc
           const daysSinceLastRead = latestReport 
             ? calculateDaysSinceLastRead(latestReport.date)
             : 999;
 
-          let latestReading = null;
+          let latestReading: string | null = null;
           if (latestReport) {
             if (latestReport.type === 'Tasmi') {
               latestReading = `${latestReport.surah} (${latestReport.ayat_from}-${latestReport.ayat_to})`;
             } else {
               // Use formatMurajaahDisplay for Murajaah reports
-              if (latestReport.page_from && latestReport.page_to) {
-                latestReading = formatMurajaahDisplay(latestReport.page_from, latestReport.page_to);
-              } else if (latestReport.juzuk) {
-                latestReading = `Juz ${latestReport.juzuk}`;
+              const fallbackReading = latestReport.juzuk
+                ? `Juz ${latestReport.juzuk}`
+                : latestReport.surah;
+              const pageFrom = latestReport.page_from ?? latestReport.page_to ?? null;
+              const pageTo = latestReport.page_to ?? latestReport.page_from ?? undefined;
+
+              if (pageFrom !== null) {
+                const formatted = formatMurajaahDisplay(pageFrom, pageTo);
+                latestReading = formatted ?? fallbackReading;
               } else {
-                latestReading = latestReport.surah;
+                latestReading = fallbackReading;
               }
             }
+          } else if (viewMode === 'murajaah') {
+            latestReading = "No Murajaah record";
           }
 
           return {
@@ -233,7 +242,7 @@ export default function ParentPage() {
             latest_reading: latestReading,
             last_read_date: latestReport?.date || null,
             days_since_last_read: daysSinceLastRead,
-            report_type: latestReport?.type || null,
+            report_type: viewMode === 'murajaah' ? 'murajaah' : latestReport?.type || null,
             memorization_completed: (student as { memorization_completed?: boolean }).memorization_completed,
             memorization_completed_date: (student as { memorization_completed_date?: string }).memorization_completed_date
           } as StudentProgressData;
