@@ -14,7 +14,7 @@ export interface StudentProgressData {
   latest_reading: string | null;
   last_read_date: string | null;
   days_since_last_read: number;
-  report_type: 'Tasmi' | 'Old Murajaah' | 'New Murajaah' | 'juz_test' | null;
+  report_type: 'Tasmi' | 'Murajaah' | 'Old Murajaah' | 'New Murajaah' | 'juz_test' | null;
   memorization_completed?: boolean;
   memorization_completed_date?: string;
 }

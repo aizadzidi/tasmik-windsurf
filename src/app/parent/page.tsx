@@ -205,7 +205,7 @@ export default function ParentPage() {
         const childrenProgressData = studentsData.map(student => {
           const studentReports = reportsByStudent[student.id] || [];
           const latestReport = viewMode === 'murajaah'
-            ? studentReports.find(report => ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(report.type))
+            ? studentReports.find((report: Report) => ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(report.type))
             : studentReports[0]; // Already sorted by date desc
           const daysSinceLastRead = latestReport 
             ? calculateDaysSinceLastRead(latestReport.date)
@@ -242,7 +242,7 @@ export default function ParentPage() {
             latest_reading: latestReading,
             last_read_date: latestReport?.date || null,
             days_since_last_read: daysSinceLastRead,
-            report_type: viewMode === 'murajaah' ? 'murajaah' : latestReport?.type || null,
+            report_type: latestReport?.type || (viewMode === 'murajaah' ? 'Murajaah' : null),
             memorization_completed: (student as { memorization_completed?: boolean }).memorization_completed,
             memorization_completed_date: (student as { memorization_completed_date?: string }).memorization_completed_date
           } as StudentProgressData;
