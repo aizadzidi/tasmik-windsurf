@@ -14,23 +14,58 @@ export async function POST(request: NextRequest) {
     }
 
     // Insert the juz test record using service-role client (bypasses RLS)
-    const data = await adminOperationSimple(async (client) => {
+    const insertedRecord = await adminOperationSimple(async (client) => {
       const { data, error } = await client
         .from("juz_tests")
         .insert([testData])
         .select();
       if (error) {
-        // Bubble up clearer messages for common constraints
-        if ((error as any)?.code === '23505') {
-          // unique_violation
-          throw new Error('A passed juz test already exists for this student and juz. You can only have one PASSED record per juz.');
-        }
         throw error;
       }
-      return data;
+      
+      let record = data?.[0];
+
+      // Some legacy DB defaults/triggers still overwrite certain fields on insert.
+      // Immediately re-apply the values we just collected so the final record
+      // always reflects the form submission without requiring a manual edit.
+      if (record?.id) {
+        const fieldsToPreserve = [
+          "section2_scores",
+          "tajweed_score",
+          "recitation_score",
+          "total_percentage",
+          "passed",
+          "should_repeat",
+          "remarks",
+          "examiner_name",
+        ] as const;
+
+        const updatePayload = fieldsToPreserve.reduce((acc, field) => {
+          if (testData[field] !== undefined) {
+            acc[field] = testData[field];
+          }
+          return acc;
+        }, {} as Record<string, any>);
+
+        if (record && Object.keys(updatePayload).length > 0) {
+          const { data: enforcedData, error: enforceError } = await client
+            .from("juz_tests")
+            .update(updatePayload)
+            .eq("id", record.id)
+            .select();
+          
+          if (!enforceError && enforcedData?.[0]) {
+            record = enforcedData[0];
+          } else if (enforceError) {
+            console.warn("Failed to re-apply juz test scores after insert:", enforceError);
+          }
+        }
+      }
+
+      return record;
     });
 
-    return NextResponse.json(data[0], { status: 201 });
+    return NextResponse.json(insertedRecord, { status: 201 });
   } catch (error) {
     console.error("API error:", error);
     return NextResponse.json(
