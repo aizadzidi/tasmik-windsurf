@@ -101,6 +101,7 @@ export interface BillplzCallbackPayload {
   due_at: string | null;
   url: string;
   x_signature?: string;
+  [key: string]: string | null | undefined;
 }
 
 export interface PaymentCartItem {
