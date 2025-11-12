@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
 
+type FeeRouteContext = {
+  params: Promise<{ feeId: string }>;
+};
+
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { feeId: string } }
+  context: FeeRouteContext
 ) {
   try {
     const updates = await request.json();
-    const feeId = params.feeId;
+    const { feeId } = await context.params;
 
     if (!feeId) {
       return NextResponse.json({ error: 'Fee ID required' }, { status: 400 });
@@ -40,10 +44,10 @@ export async function PUT(
 
 export async function DELETE(
   _request: NextRequest,
-  { params }: { params: { feeId: string } }
+  context: FeeRouteContext
 ) {
   try {
-    const feeId = params.feeId;
+    const { feeId } = await context.params;
     if (!feeId) {
       return NextResponse.json({ error: 'Fee ID required' }, { status: 400 });
     }
