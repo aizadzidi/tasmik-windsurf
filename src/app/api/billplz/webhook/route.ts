@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
       paidAt
     });
 
-    await recordPaymentEvent(payment.id, 'billplz', 'webhook', payload);
+    await recordPaymentEvent(payment.id, 'billplz', 'webhook', payload as Record<string, unknown>);
 
     return NextResponse.json({ ok: true });
   } catch (error: any) {

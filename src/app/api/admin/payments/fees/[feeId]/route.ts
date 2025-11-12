@@ -5,17 +5,14 @@ type FeeRouteContext = {
   params: Promise<{ feeId: string }>;
 };
 
-export async function PUT(
-  request: NextRequest,
-  context: FeeRouteContext
-) {
+export async function PUT(req: NextRequest, context: FeeRouteContext) {
   try {
-    const updates = await request.json();
     const { feeId } = await context.params;
-
     if (!feeId) {
       return NextResponse.json({ error: 'Fee ID required' }, { status: 400 });
     }
+
+    const updates = await req.json();
 
     const fee = await adminOperationSimple(async client => {
       const { data, error } = await client
@@ -42,10 +39,7 @@ export async function PUT(
   }
 }
 
-export async function DELETE(
-  _request: NextRequest,
-  context: FeeRouteContext
-) {
+export async function DELETE(_req: NextRequest, context: FeeRouteContext) {
   try {
     const { feeId } = await context.params;
     if (!feeId) {

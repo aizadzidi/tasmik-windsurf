@@ -17,10 +17,9 @@ function requireEnv(value: string | undefined, name: string) {
   return value;
 }
 
-async function requestBillplz<T>(
-  path: string,
-  init: RequestInit & { body?: Record<string, unknown> } = {}
-): Promise<T> {
+type JsonRequestInit = Omit<RequestInit, 'body'> & { body?: Record<string, unknown> };
+
+async function requestBillplz<T>(path: string, init: JsonRequestInit = {}): Promise<T> {
   const key = requireEnv(apiKey, 'BILLPLZ_API_KEY');
   const url = `${apiBase}${path}`;
   const headers: HeadersInit = {

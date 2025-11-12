@@ -150,7 +150,7 @@ export default function ParentPaymentsPage() {
             .eq("is_active", true),
           supabase
             .from("payments")
-            .select("id, status, total_amount_cents, merchant_fee_cents, redirect_url, billplz_id, created_at, paid_at")
+            .select("id,parent_id,status,currency,total_amount_cents,merchant_fee_cents,redirect_url,billplz_id,created_at,paid_at")
             .eq("parent_id", parentId)
             .order("created_at", { ascending: false })
             .limit(5)
@@ -192,7 +192,7 @@ export default function ParentPaymentsPage() {
       }
 
       setAssignments(effectiveAssignments);
-      setPayments(paymentRows ?? []);
+      setPayments((paymentRows ?? []) as PaymentRecord[]);
     } catch (err: any) {
       console.error("Failed to load payments data", err);
       setError(err.message ?? "Gagal memuatkan data pembayaran");

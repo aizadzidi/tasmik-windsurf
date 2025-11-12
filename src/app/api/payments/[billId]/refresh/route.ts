@@ -18,7 +18,7 @@ function mapBillStatus(paid: boolean, state: string | undefined): PaymentStatus 
   return 'initiated';
 }
 
-export async function GET(_request: NextRequest, context: RefreshRouteContext) {
+export async function GET(_req: NextRequest, context: RefreshRouteContext) {
   try {
     const { billId } = await context.params;
     const bill = await fetchBillplzBill(billId);
