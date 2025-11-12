@@ -7,6 +7,10 @@ import {
 } from '@/lib/payments/paymentsService';
 import type { PaymentStatus } from '@/types/payments';
 
+type RefreshRouteContext = {
+  params: Promise<{ billId: string }>;
+};
+
 function mapBillStatus(paid: boolean, state: string | undefined): PaymentStatus {
   if (paid) return 'paid';
   if (state === 'overdue' || state === 'expired') return 'failed';
@@ -14,12 +18,9 @@ function mapBillStatus(paid: boolean, state: string | undefined): PaymentStatus 
   return 'initiated';
 }
 
-export async function GET(
-  _request: NextRequest,
-  { params }: { params: { billId: string } }
-) {
+export async function GET(_request: NextRequest, context: RefreshRouteContext) {
   try {
-    const billId = params.billId;
+    const { billId } = await context.params;
     const bill = await fetchBillplzBill(billId);
     const payment = await getPaymentByBillplzId(billId);
     if (!payment) {
