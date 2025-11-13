@@ -41,6 +41,103 @@ interface ExamStudent {
   };
 }
 
+type SubjectSummary = {
+  score: number;
+  trend: number[];
+  grade: string;
+  exams?: { name: string; score: number }[];
+  optedOut?: boolean;
+};
+
+type StudentRow = {
+  id: string;
+  name: string;
+  class_id: string | null;
+};
+
+type SubjectRow = {
+  id: string | null;
+  name: string | null;
+};
+
+type ExamSubjectRow = {
+  subjects?: {
+    id?: string | null;
+    name?: string | null;
+  } | null;
+};
+
+type ExamResultRow = {
+  student_id: string | null;
+  subject_id: string | null;
+  exam_id: string | null;
+  mark: number | null;
+  final_score: number | null;
+  grade: string | null;
+  subjects?: { name?: string | null } | null;
+};
+
+type ConductEntryRow = {
+  exam_id: string | null;
+  student_id: string | null;
+  teacher_id: string | null;
+  discipline: number | null;
+  effort: number | null;
+  participation: number | null;
+  motivational_level: number | null;
+  character: number | null;
+  leadership: number | null;
+};
+
+type ClassRow = { id: string; name: string | null };
+
+type ExamClassWeightRow = {
+  class_id: string | null;
+  conduct_weightage: number | null;
+};
+
+type SubjectOptOutRow = {
+  exam_id: string | null;
+  subject_id: string | null;
+  student_id: string | null;
+};
+
+type ConductCategoryAggregate = {
+  discipline: number;
+  effort: number;
+  participation: number;
+  motivational_level: number;
+  character: number;
+  leadership: number;
+};
+
+type ConductSummaryRow = {
+  discipline?: number | null;
+  effort?: number | null;
+  participation?: number | null;
+  motivational_level?: number | null;
+  character_score?: number | null;
+  leadership?: number | null;
+};
+
+type ExamMetaRow = {
+  id: string;
+  name: string;
+  exam_start_date?: string | null;
+  created_at?: string | null;
+};
+
+type ExamHistoryEntry = {
+  name: string;
+  score: number;
+  _date: string | null;
+};
+
+type QueryResult<T> = {
+  data: T;
+  error: unknown;
+};
+
 // GET - Fetch exam dashboard data
 export async function GET(request: Request) {
   try {
@@ -78,17 +175,20 @@ export async function GET(request: Request) {
     const excludedIds: string[] = await (async () => {
       if (!examId) return [];
       try {
-        const data = await adminOperationSimple(async (client) => {
-          let q = client
-            .from('exam_excluded_students')
-            .select('student_id')
-            .eq('exam_id', examId);
-          if (classId) q = q.eq('class_id', classId);
-          const { data, error } = await q;
-          if (error) throw error;
-          return (data || []).map((r: any) => String(r.student_id));
-        });
-        return data;
+    const data = await adminOperationSimple(async (client) => {
+      let q = client
+        .from('exam_excluded_students')
+        .select('student_id')
+        .eq('exam_id', examId);
+      if (classId) q = q.eq('class_id', classId);
+      const { data, error } = await q;
+      if (error) throw error;
+      const rows = (data ?? []) as Array<{ student_id: string | null }>;
+      return rows
+        .map(row => (typeof row.student_id === 'string' ? row.student_id : null))
+        .filter((id): id is string => Boolean(id));
+    });
+    return data;
       } catch (e) {
         console.error('Admin fetch exam_excluded_students failed:', e);
         return [];
@@ -98,7 +198,7 @@ export async function GET(request: Request) {
     const [studentsResult, subjectsResult, examResultsResult, conductResult, classesResult, examClassesWeightsResult, subjectOptOutsResult] = await Promise.all([
       // Students (admin client to avoid RLS issues)
       (async () => {
-        const data = await adminOperationSimple(async (client) => {
+        const result = await adminOperationSimple(async (client) => {
           let q = client
             .from('students')
             .select('id, name, class_id');
@@ -111,15 +211,15 @@ export async function GET(request: Request) {
           }
           const { data, error } = await q;
           if (error) throw error;
-          // Filter out excluded students if any
+          const rows = (data ?? []) as StudentRow[];
           const excludedSet = new Set(excludedIds);
-          const filtered = (data || []).filter((s: any) => !excludedSet.has(String(s.id)));
-          return { data: filtered, error: null } as const;
+          const filtered = rows.filter((s) => !excludedSet.has(String(s.id)));
+          return { data: filtered, error: null } as QueryResult<StudentRow[]>;
         }).catch((err) => {
           console.error('Admin fetch students failed:', err);
-          return { data: [], error: err } as const;
+          return { data: [] as StudentRow[], error: err } as QueryResult<StudentRow[]>;
         });
-        return data as any;
+        return result;
       })(),
 
       // Subjects: if exam selected, fetch subjects. If class filter provided and per-class mapping exists, honor it.
@@ -134,15 +234,19 @@ export async function GET(request: Request) {
                 .eq('exam_id', examId)
                 .eq('class_id', classId);
               if (error) throw error;
-              const names = (data || [])
-                .map((row: any) => ({ id: row.subjects?.id, name: row.subjects?.name }))
-                .filter((s) => s.name);
-              return { data: names, error: null } as const;
+              const rows = (data ?? []) as ExamSubjectRow[];
+              const names = rows
+                .map((row) => ({
+                  id: row.subjects?.id ?? null,
+                  name: row.subjects?.name ?? null
+                }))
+                .filter((s): s is SubjectRow => typeof s.name === 'string');
+              return { data: names, error: null } as QueryResult<SubjectRow[]>;
             }).catch((err) => {
               // Fallback silently to exam_subjects
-              return { data: null, error: err } as const;
+              return { data: null, error: err } as { data: SubjectRow[] | null; error: unknown };
             });
-            if (ecs.data && (ecs.data as any[]).length > 0) return ecs as any;
+            if (ecs.data && ecs.data.length > 0) return ecs;
           }
           const data = await adminOperationSimple(async (client) => {
             const { data, error } = await client
@@ -150,15 +254,19 @@ export async function GET(request: Request) {
               .select('subjects(id, name)')
               .eq('exam_id', examId);
             if (error) throw error;
-            const names = (data || [])
-              .map((row: any) => ({ id: row.subjects?.id, name: row.subjects?.name }))
-              .filter((s) => s.name);
-            return { data: names, error: null } as const;
+            const rows = (data ?? []) as ExamSubjectRow[];
+            const names = rows
+              .map((row) => ({
+                id: row.subjects?.id ?? null,
+                name: row.subjects?.name ?? null
+              }))
+              .filter((s): s is SubjectRow => typeof s.name === 'string');
+            return { data: names, error: null } as QueryResult<SubjectRow[]>;
           }).catch((err) => {
             console.error('Admin fetch exam subjects failed:', err);
-            return { data: [], error: err } as const;
+            return { data: [] as SubjectRow[], error: err } as QueryResult<SubjectRow[]>;
           });
-          return data as any;
+          return data;
         }
         return supabase
           .from('subjects')
@@ -168,9 +276,10 @@ export async function GET(request: Request) {
 
       // Exam results (read via anon is fine if RLS allows; otherwise admin)
       (async () => {
-        const _res = await supabase
+        await supabase
           .from('exam_results')
-          .select(`
+          .select(
+            `
             student_id,
             subject_id,
             mark,
@@ -178,13 +287,14 @@ export async function GET(request: Request) {
             grade,
             subjects!inner(name),
             exam_id
-          `)
+          `
+          )
           .maybeSingle();
-        // The above maybeSingle is not appropriate for multi; fall back to admin in all cases
         const data = await adminOperationSimple(async (client) => {
           let q = client
             .from('exam_results')
-            .select(`
+            .select(
+              `
               student_id,
               subject_id,
               mark,
@@ -192,21 +302,22 @@ export async function GET(request: Request) {
               grade,
               subjects(name),
               exam_id
-            `);
+            `
+            );
           if (examId) q = q.eq('exam_id', examId);
           const { data, error } = await q;
           if (error) throw error;
-          // Normalize to mimic previous shape with subjects(name)
-          const normalized = (data || []).map((r: any) => ({
+          const rows = (data ?? []) as ExamResultRow[];
+          const normalized = rows.map((r) => ({
             ...r,
-            subjects: { name: r.subjects?.name }
+            subjects: { name: r.subjects?.name ?? null }
           }));
-          return { data: normalized, error: null } as const;
+          return { data: normalized, error: null } as QueryResult<ExamResultRow[]>;
         }).catch((err) => {
           console.error('Admin fetch exam_results failed:', err);
-          return { data: [], error: err } as const;
+          return { data: [] as ExamResultRow[], error: err } as QueryResult<ExamResultRow[]>;
         });
-        return data as any;
+        return data;
       })(),
 
       // Conduct entries (per teacher) aggregated later
@@ -228,12 +339,13 @@ export async function GET(request: Request) {
           if (examId) q = q.eq('exam_id', examId);
           const { data, error } = await q;
           if (error) throw error;
-          return { data, error: null } as const;
+          const rows = (data ?? []) as ConductEntryRow[];
+          return { data: rows, error: null } as QueryResult<ConductEntryRow[]>;
         }).catch((err) => {
           console.error('Admin fetch conduct_entries failed:', err);
-          return { data: [], error: err } as const;
+          return { data: [] as ConductEntryRow[], error: err } as QueryResult<ConductEntryRow[]>;
         });
-        return data as any;
+        return data;
       })(),
 
       // Classes for mapping class_id -> name
@@ -244,12 +356,13 @@ export async function GET(request: Request) {
             if (allowedClassIds.length > 0) q = q.in('id', allowedClassIds);
             const { data, error } = await q;
             if (error) throw error;
-            return { data, error: null } as const;
+            const rows = (data ?? []) as ClassRow[];
+            return { data: rows, error: null } as QueryResult<ClassRow[]>;
           }).catch((err) => {
             console.error('Admin fetch classes failed:', err);
-            return { data: [], error: err } as const;
+            return { data: [] as ClassRow[], error: err } as QueryResult<ClassRow[]>;
           });
-          return data as any;
+          return data;
         }
         return supabase.from('classes').select('id, name');
       })(),
@@ -263,12 +376,13 @@ export async function GET(request: Request) {
             .select('class_id, conduct_weightage')
             .eq('exam_id', examId);
           if (error) throw error;
-          return { data, error: null } as const;
+          const rows = (data ?? []) as ExamClassWeightRow[];
+          return { data: rows, error: null } as QueryResult<ExamClassWeightRow[]>;
         }).catch((err) => {
           console.error('Admin fetch exam_classes weights failed:', err);
-          return { data: [], error: err } as const;
+          return { data: [] as ExamClassWeightRow[], error: err } as QueryResult<ExamClassWeightRow[]>;
         });
-        return data as any;
+        return data;
       })(),
 
       (async () => {
@@ -279,17 +393,18 @@ export async function GET(request: Request) {
           if (examId) q = q.eq('exam_id', examId);
           const { data, error } = await q;
           if (error) throw error;
-          return { data, error: null } as const;
+          const rows = (data ?? []) as SubjectOptOutRow[];
+          return { data: rows, error: null } as QueryResult<SubjectOptOutRow[]>;
         }).catch((err) => {
           const message = String(err?.message || '');
           if (message.includes('subject_opt_outs')) {
             console.warn('subject_opt_outs table not found; treating as empty');
-            return { data: [], error: null } as const;
+            return { data: [] as SubjectOptOutRow[], error: null } as QueryResult<SubjectOptOutRow[]>;
           }
           console.error('Admin fetch subject_opt_outs failed:', err);
-          return { data: [], error: err } as const;
+          return { data: [] as SubjectOptOutRow[], error: err } as QueryResult<SubjectOptOutRow[]>;
         });
-        return data as any;
+        return data;
       })(),
     ]);
 
@@ -297,9 +412,9 @@ export async function GET(request: Request) {
     const { data: subjects, error: subjectsError } = subjectsResult;
     const { data: examResults, error: examResultsError } = examResultsResult;
     const { data: conductEntries, error: conductError } = conductResult;
-    const { data: classesData } = classesResult || { data: [] } as any;
-    const { data: examClassesWeights } = examClassesWeightsResult || { data: [] } as any;
-    const { data: subjectOptOuts } = subjectOptOutsResult || { data: [] } as any;
+    const classesData = (classesResult?.data ?? []) as ClassRow[];
+    const examClassesWeights = (examClassesWeightsResult?.data ?? []) as ExamClassWeightRow[];
+    const subjectOptOuts = (subjectOptOutsResult?.data ?? []) as SubjectOptOutRow[];
     
     if (studentsError) {
       console.error('Error fetching students:', studentsError);
@@ -324,7 +439,13 @@ export async function GET(request: Request) {
     // Build examId -> metadata map for labeling charts
     let examMetaById = new Map<string, { name: string; date?: string }>();
     try {
-      const examIds = Array.from(new Set((examResults || []).map((r: any) => String(r.exam_id)).filter(Boolean)));
+      const examIds = Array.from(
+        new Set(
+          (examResults || [])
+            .map((r) => (typeof r.exam_id === 'string' ? r.exam_id : null))
+            .filter((id): id is string => Boolean(id))
+        )
+      );
       if (examIds.length > 0) {
         const meta = await adminOperationSimple(async (client) => {
           const { data, error } = await client
@@ -332,12 +453,17 @@ export async function GET(request: Request) {
             .select('id, name, exam_start_date, created_at')
             .in('id', examIds);
           if (error) throw error;
-          return data as Array<any>;
+          return (data ?? []) as ExamMetaRow[];
         }).catch((err) => {
           console.error('Admin fetch exams meta failed:', err);
-          return [] as Array<any>;
+          return [] as ExamMetaRow[];
         });
-        examMetaById = new Map(meta.map((e: any) => [String(e.id), { name: e.name, date: e.exam_start_date || e.created_at }]));
+        examMetaById = new Map(
+          meta.map((e) => [
+            String(e.id),
+            { name: e.name, date: e.exam_start_date || e.created_at || undefined }
+          ])
+        );
       }
     } catch (e) {
       // Non-fatal; continue without labels
@@ -347,18 +473,23 @@ export async function GET(request: Request) {
     // Transform data into the format expected by the frontend
     // Build a mapping of class_id -> name for quick lookup
     const classNameById = new Map<string, string>();
-    (classesData || []).forEach((c: any) => {
-      if (c && c.id) classNameById.set(c.id, c.name);
+    classesData.forEach((c) => {
+      if (c && c.id) classNameById.set(c.id, c.name ?? 'Unknown');
     });
 
     // Build a mapping of class_id -> conduct weightage for this exam
     const conductWeightByClassId = new Map<string, number>();
-    (examClassesWeights || []).forEach((row: any) => {
-      if (row && row.class_id) conductWeightByClassId.set(String(row.class_id), Number(row.conduct_weightage) || 0);
+    examClassesWeights.forEach((row) => {
+      if (row && row.class_id) {
+        conductWeightByClassId.set(
+          String(row.class_id),
+          Number(row.conduct_weightage) || 0
+        );
+      }
     });
 
     const optOutMap = new Map<string, Set<string>>();
-    (subjectOptOuts || []).forEach((row: any) => {
+    subjectOptOuts.forEach((row) => {
       const sid = row?.student_id ? String(row.student_id) : null;
       const subjId = row?.subject_id ? String(row.subject_id) : null;
       if (!sid || !subjId) return;
@@ -368,9 +499,10 @@ export async function GET(request: Request) {
     const subjectsSeen = new Set<string>();
 
     const subjectMetaById = new Map<string, string>();
-    (subjects || []).forEach((subject: any) => {
-      const subjId = subject?.id ? String(subject.id) : null;
-      const subjectName = subject?.name ? String(subject.name) : null;
+    (subjects || []).forEach((subject) => {
+      if (!subject) return;
+      const subjId = subject.id ? String(subject.id) : null;
+      const subjectName = subject.name ? String(subject.name) : null;
       if (!subjId) return;
       if (subjectName) {
         subjectMetaById.set(subjId, subjectName);
@@ -378,7 +510,7 @@ export async function GET(request: Request) {
     });
 
     const resultSubjectIds = new Set<string>();
-    (examResults || []).forEach((row: any) => {
+    (examResults || []).forEach((row) => {
       const subjId = row?.subject_id ? String(row.subject_id) : null;
       if (subjId) resultSubjectIds.add(subjId);
     });
@@ -408,18 +540,21 @@ export async function GET(request: Request) {
     }
 
     // Preload conduct summaries per student (override/averaged per-subject) to use when there are no conduct_entries
-    const conductSummaryByStudent = new Map<string, any>();
+    const conductSummaryByStudent = new Map<string, ConductSummaryRow | null>();
     try {
       if (examId && Array.isArray(students) && students.length > 0) {
         const summaries = await Promise.all(
-          (students as any[]).map(async (s: any) => {
+          (students as StudentRow[]).map(async (s) => {
             try {
               const rpcData = await adminOperationSimple(async (client) => {
-                const { data, error } = await client.rpc('get_conduct_summary', { p_exam_id: examId, p_student_id: s.id });
+                const { data, error } = await client.rpc('get_conduct_summary', {
+                  p_exam_id: examId,
+                  p_student_id: s.id
+                });
                 if (error) throw error;
-                return data as any[];
+                return (data ?? []) as ConductSummaryRow[];
               });
-              const row = Array.isArray(rpcData) ? rpcData[0] : null;
+              const row = Array.isArray(rpcData) ? rpcData[0] ?? null : null;
               return [String(s.id), row] as const;
             } catch {
               return [String(s.id), null] as const;
@@ -432,29 +567,21 @@ export async function GET(request: Request) {
       console.warn('Failed to preload conduct summaries; will rely on conduct_entries only');
     }
 
-    const studentExamData: ExamStudent[] = await Promise.all((students || []).map(async (student: any) => {
+    const studentExamData: ExamStudent[] = await Promise.all((students || []).map(async (student) => {
       // Get student's exam results
-      const studentResults = (examResults || []).filter((result: any) => result.student_id === student.id) || [];
+      const studentResults = (examResults || []).filter((result) => result.student_id === student.id) || [];
       
       // Build subjects object
-      const subjectsData: {
-        [subject: string]: {
-          score: number;
-          trend: number[];
-          grade: string;
-          exams?: { name: string; score: number }[];
-          optedOut?: boolean;
-        };
-      } = {};
+      const subjectsData: Record<string, SubjectSummary> = {};
       
       const subjectCandidates = new Map<string, { id: string; name: string }>();
-      (subjects || []).forEach((subject: any) => {
+      (subjects || []).forEach((subject) => {
         const subjId = subject?.id ? String(subject.id) : null;
         const subjectName = subject?.name ? String(subject.name) : null;
         if (!subjId || !subjectName) return;
         subjectCandidates.set(subjId, { id: subjId, name: subjectName });
       });
-      (studentResults || []).forEach((result: any) => {
+      (studentResults || []).forEach((result) => {
         const subjId = result?.subject_id ? String(result.subject_id) : null;
         if (!subjId) return;
         const subjectNameRaw = result?.subjects?.name ?? subjectMetaById.get(subjId);
@@ -463,20 +590,22 @@ export async function GET(request: Request) {
       });
 
       subjectCandidates.forEach(({ id: subjId, name: subjectName }) => {
-        const subjectResults = (studentResults || []).filter((r: any) => String(r.subject_id) === subjId);
+        const subjectResults = (studentResults || []).filter(
+          (r) => String(r.subject_id) === subjId
+        );
         if (subjectResults.length === 0) return;
 
         const studentOptOuts = optOutMap.get(String(student.id));
         const isOptedOut = studentOptOuts?.has(subjId) ?? false;
 
-        let currentResult: any | undefined;
+        let currentResult: ExamResultRow | undefined;
         if (examId) {
-          currentResult = subjectResults.find((r: any) => String(r.exam_id) === String(examId));
+          currentResult = subjectResults.find((r) => String(r.exam_id) === String(examId));
         }
         if (!currentResult) {
           currentResult = subjectResults
             .slice()
-            .sort((a: any, b: any) => {
+            .sort((a, b) => {
               const da = new Date(examMetaById.get(String(a.exam_id))?.date || 0).getTime();
               const db = new Date(examMetaById.get(String(b.exam_id))?.date || 0).getTime();
               return da - db;
@@ -499,8 +628,8 @@ export async function GET(request: Request) {
 
         const score = hasNumericMark ? Number(numericMark) : 0;
 
-        const examsHistory = (subjectResults || [])
-          .map((r: any) => {
+        const examsHistory: ExamHistoryEntry[] = (subjectResults || [])
+          .map((r) => {
             const markValue = r?.final_score ?? r?.mark;
             const numeric = typeof markValue === 'number' ? markValue : Number(markValue);
             if (!Number.isFinite(numeric)) return null;
@@ -511,42 +640,48 @@ export async function GET(request: Request) {
               _date: meta?.date || null
             };
           })
-          .filter((entry: any) => entry !== null)
-          .sort((a: any, b: any) => {
+          .filter((entry): entry is ExamHistoryEntry => entry !== null)
+          .sort((a, b) => {
             const da = new Date(a._date || 0).getTime();
             const db = new Date(b._date || 0).getTime();
             return da - db;
           })
-          .map((it: any) => ({ name: it.name, score: it.score }));
+          .map((it) => ({ name: it.name, score: it.score, _date: it._date }));
 
-        const trend = examsHistory.length > 0 ? examsHistory.map((h: any) => h.score) : generateTrend(score);
+        const trend =
+          examsHistory.length > 0
+            ? examsHistory.map((h) => h.score)
+            : generateTrend(score);
 
         subjectsData[subjectName] = {
           score,
           trend,
           grade,
-          exams: examsHistory,
+          exams: examsHistory.map(({ name, score }) => ({ name, score })),
           optedOut: isOptedOut || undefined
         };
         subjectsSeen.add(subjectName);
       });
 
       // Aggregate conduct from conduct_entries for this student/exam
-      const entries = (conductEntries || []).filter((ce: any) =>
-        ce && String(ce.student_id) === String(student.id) && (!examId || String(ce.exam_id) === String(examId))
+      const entries = (conductEntries || []).filter(
+        (ce) =>
+          ce &&
+          String(ce.student_id) === String(student.id) &&
+          (!examId || String(ce.exam_id) === String(examId))
       );
 
       // Average across teachers: per-teacher average of categories, then mean of those
-      const perTeacherAverages = entries.map((e: any) => {
+      const perTeacherAverages = entries.map((e) => {
         const vals = [
           Number(e.discipline) || 0,
           Number(e.effort) || 0,
           Number(e.participation) || 0,
           Number(e.motivational_level) || 0,
           Number(e.character) || 0,
-          Number(e.leadership) || 0,
+          Number(e.leadership) || 0
         ];
-        const count = vals.filter((v) => !isNaN(v)).length;
+        const count = vals.filter((v) => !Number.isNaN(v)).length;
         return count > 0 ? vals.reduce((a, b) => a + b, 0) / count : 0;
       });
       let conductPercent = perTeacherAverages.length > 0
@@ -557,14 +692,24 @@ export async function GET(request: Request) {
       const avgByCategory = (() => {
         const safeDiv = (num: number, den: number) => (den > 0 ? num / den : 0);
         const n = entries.length;
-        const sum = entries.reduce((acc: any, e: any) => ({
-          discipline: (acc.discipline || 0) + (Number(e.discipline) || 0),
-          effort: (acc.effort || 0) + (Number(e.effort) || 0),
-          participation: (acc.participation || 0) + (Number(e.participation) || 0),
-          motivational_level: (acc.motivational_level || 0) + (Number(e.motivational_level) || 0),
-          character: (acc.character || 0) + (Number(e.character) || 0),
-          leadership: (acc.leadership || 0) + (Number(e.leadership) || 0),
-        }), {} as any);
+        const sum = entries.reduce<ConductCategoryAggregate>(
+          (acc, e) => ({
+            discipline: acc.discipline + (Number(e.discipline) || 0),
+            effort: acc.effort + (Number(e.effort) || 0),
+            participation: acc.participation + (Number(e.participation) || 0),
+            motivational_level: acc.motivational_level + (Number(e.motivational_level) || 0),
+            character: acc.character + (Number(e.character) || 0),
+            leadership: acc.leadership + (Number(e.leadership) || 0)
+          }),
+          {
+            discipline: 0,
+            effort: 0,
+            participation: 0,
+            motivational_level: 0,
+            character: 0,
+            leadership: 0
+          }
+        );
         const percent = {
           discipline: safeDiv(sum.discipline || 0, n),
           effort: safeDiv(sum.effort || 0, n),
@@ -592,8 +737,8 @@ export async function GET(request: Request) {
         const row = conductSummaryByStudent.get(String(student.id));
         if (row) {
           const values = [row.discipline, row.effort, row.participation, row.motivational_level, row.character_score, row.leadership]
-            .map((v: any) => (v == null ? null : Number(v)))
-            .filter((n: any): n is number => Number.isFinite(n));
+            .map((v) => (v == null ? null : Number(v)))
+            .filter((n): n is number => Number.isFinite(n));
           if (values.length > 0) {
             const avg = values.reduce((a: number, b: number) => a + b, 0) / values.length;
             conductPercent = avg;
@@ -603,23 +748,23 @@ export async function GET(request: Request) {
               participation: Number(row.participation) || 0,
               motivationalLevel: Number(row.motivational_level) || 0,
               character: Number(row.character_score) || 0,
-              leadership: Number(row.leadership) || 0,
-            } as any;
+              leadership: Number(row.leadership) || 0
+            };
             conduct = {
               discipline: (Number(row.discipline) || 0) / 20,
               effort: (Number(row.effort) || 0) / 20,
               participation: (Number(row.participation) || 0) / 20,
               motivationalLevel: (Number(row.motivational_level) || 0) / 20,
               character: (Number(row.character_score) || 0) / 20,
-              leadership: (Number(row.leadership) || 0) / 20,
-            } as any;
+              leadership: (Number(row.leadership) || 0) / 20
+            };
           }
         }
       }
 
       // Calculate overall average: academic average blended with conduct by weight
       // Only include subjects with numeric scores in the average calculation
-      const scoredSubjects = Object.values(subjectsData).filter((s: any) => {
+      const scoredSubjects = Object.values(subjectsData).filter((s) => {
         // Include in average if it has a numeric score or isn't marked as TH
         return s.score > 0 || (s.grade && s.grade.toUpperCase() !== 'TH');
       });
@@ -645,10 +790,12 @@ export async function GET(request: Request) {
       const attentionReason = average < 60 ? 'Academic performance below average' : 
                             conduct.participation < 3 ? 'Low participation score needs attention' : undefined;
 
+      const className = student.class_id ? classNameById.get(student.class_id) : undefined;
+
       return {
         id: student.id,
         name: student.name,
-        class: classNameById.get(student.class_id) || 'Unknown',
+        class: className || 'Unknown',
         classId: String(student.class_id || ''),
         subjects: subjectsData,
         conduct,

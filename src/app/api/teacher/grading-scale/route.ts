@@ -1,5 +1,20 @@
 import { NextResponse } from "next/server";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
+import { ok, fail } from "@/types/http";
+
+type GradingSystemRelation = {
+  id: string;
+  name?: string | null;
+  grading_scale?: unknown;
+  description?: string | null;
+} | null;
+
+type ExamWithGradingSystem = {
+  id: string;
+  name: string;
+  grading_system_id?: string | null;
+  grading_systems?: GradingSystemRelation | GradingSystemRelation[] | null;
+};
 
 export async function GET(request: Request) {
   try {
@@ -7,9 +22,11 @@ export async function GET(request: Request) {
     const examId = searchParams.get('examId');
 
     if (!examId) {
-      return NextResponse.json({ 
-        error: 'Missing required parameter: examId' 
-      }, { status: 400 });
+      const errorResult = fail('Missing required parameter: examId');
+      return NextResponse.json(
+        { error: errorResult.error },
+        { status: 400 }
+      );
     }
 
     // Fetch exam's grading system with service role (bypass RLS for teacher tools)
@@ -50,16 +67,17 @@ export async function GET(request: Request) {
     }
 
     // If no grading system assigned, try to get default
-    let gradingScale: any = null;
+    let gradingScale: unknown = null;
     let systemName: string | undefined;
 
+    const examRow = examData as ExamWithGradingSystem;
     // Supabase relation nesting may return an array or an object depending on join
-    const related = (examData as any).grading_systems as any;
+    const related = examRow.grading_systems;
     const gsObj = Array.isArray(related) ? related[0] : related;
 
     if (gsObj) {
       gradingScale = gsObj?.grading_scale ?? null;
-      systemName = gsObj?.name;
+      systemName = gsObj?.name ?? undefined;
     } else {
       // Fallback to default grading system
       const { data: defaultSystem } = await adminOperationSimple(async (client) => {
@@ -70,7 +88,7 @@ export async function GET(request: Request) {
           .single();
       });
       
-      gradingScale = defaultSystem?.grading_scale;
+      gradingScale = defaultSystem?.grading_scale ?? null;
     }
 
     if (!gradingScale) {
@@ -92,20 +110,24 @@ export async function GET(request: Request) {
       };
     }
 
-    return NextResponse.json({
+    const payload = ok({
       success: true,
       gradingScale,
-      examName: examData.name,
+      examName: examRow.name,
       systemName: systemName || 'Default SPM 2023'
     });
 
-  } catch (error: any) {
+    return NextResponse.json(payload.data);
+
+  } catch (error: unknown) {
     console.error('API error:', error);
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    const stack = error instanceof Error ? error.stack : undefined;
     return NextResponse.json({
       error: 'Internal server error',
       details: {
-        message: error.message,
-        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        message,
+        stack: process.env.NODE_ENV === 'development' ? stack : undefined
       }
     }, { status: 500 });
   }

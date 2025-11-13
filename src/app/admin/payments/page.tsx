@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Switch } from "@/components/ui/Switch";
+import { Layers, Plus, X } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -68,6 +69,9 @@ export default function AdminPaymentsPage() {
   const [feeForm, setFeeForm] = useState<FeeFormState>(blankFeeForm);
   const [editingFeeId, setEditingFeeId] = useState<string | null>(null);
   const [savingFee, setSavingFee] = useState(false);
+  const [paymentSearch, setPaymentSearch] = useState("");
+  const [isFeeCatalogOpen, setIsFeeCatalogOpen] = useState(false);
+  const [isFeeFormOpen, setIsFeeFormOpen] = useState(false);
 
   const totalCollected = useMemo(
     () =>
@@ -76,6 +80,39 @@ export default function AdminPaymentsPage() {
         .reduce((sum, payment) => sum + (payment.total_amount_cents ?? 0), 0),
     [payments]
   );
+
+  const filteredPayments = useMemo(() => {
+    const query = paymentSearch.trim().toLowerCase();
+    if (!query) {
+      return payments;
+    }
+
+    return payments.filter((payment) => {
+      const parentName = ((payment as any).parent?.name ?? "").toLowerCase();
+      const parentEmail = ((payment as any).parent?.email ?? "").toLowerCase();
+      const status = payment.status.toLowerCase();
+      const billId = (payment.billplz_id ?? "").toLowerCase();
+      const items = ((payment as any).line_items ?? [])
+        .map((item: any) => (item?.label ?? "").toLowerCase())
+        .join(" ");
+
+      return [parentName, parentEmail, status, billId, items].some((value) =>
+        value.includes(query)
+      );
+    });
+  }, [payments, paymentSearch]);
+
+  const paymentSummary = useMemo(() => {
+    if (loading) {
+      return "Memuatkan transaksi...";
+    }
+
+    if (paymentSearch.trim()) {
+      return `${filteredPayments.length} rekod padanan daripada ${payments.length} transaksi.`;
+    }
+
+    return `${payments.length} rekod terkini dipaparkan.`;
+  }, [filteredPayments.length, loading, paymentSearch, payments.length]);
 
   useEffect(() => {
     loadDashboard();
@@ -113,11 +150,23 @@ export default function AdminPaymentsPage() {
       billing_cycle: fee.billing_cycle,
       is_optional: fee.is_optional,
     });
+    setIsFeeCatalogOpen(false);
+    setIsFeeFormOpen(true);
   }
 
   function resetForm() {
     setEditingFeeId(null);
     setFeeForm(blankFeeForm);
+  }
+
+  function closeFeeFormModal() {
+    resetForm();
+    setIsFeeFormOpen(false);
+  }
+
+  function openCreateFeeModal() {
+    resetForm();
+    setIsFeeFormOpen(true);
   }
 
   async function handleFeeSubmit(event: React.FormEvent) {
@@ -148,6 +197,7 @@ export default function AdminPaymentsPage() {
         await createFee(payload);
       }
       resetForm();
+      setIsFeeFormOpen(false);
       await loadDashboard();
     } catch (err: any) {
       console.error(err);
@@ -176,7 +226,7 @@ export default function AdminPaymentsPage() {
   return (
     <>
       <Navbar />
-      <main className="min-h-screen bg-slate-50/70">
+      <main className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
         <div className="mx-auto max-w-6xl px-4 py-8">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -190,9 +240,19 @@ export default function AdminPaymentsPage() {
                 Pantau bayaran ibu bapa, urus jenis yuran dan kemas kini koleksi Billplz.
               </p>
             </div>
-            <Button variant="outline" onClick={loadDashboard} disabled={loading}>
-              Segarkan Data
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                onClick={openCreateFeeModal}
+                className="bg-blue-600 text-white hover:bg-blue-700"
+              >
+                <Plus className="h-4 w-4" />
+                Tambah Yuran
+              </Button>
+              <Button variant="outline" onClick={() => setIsFeeCatalogOpen(true)}>
+                <Layers className="h-4 w-4" />
+                Urus Jenis Yuran
+              </Button>
+            </div>
           </div>
 
           {error && (
@@ -204,71 +264,87 @@ export default function AdminPaymentsPage() {
           <div className="mt-6 grid gap-6 lg:grid-cols-3">
             <Card className="lg:col-span-2">
               <CardHeader>
-                <CardTitle>Transaksi terkini</CardTitle>
-                <p className="text-sm text-slate-500">
-                  {loading ? "Memuatkan transaksi..." : `${payments.length} rekod terkini dipaparkan.`}
-                </p>
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <CardTitle>Transaksi terkini</CardTitle>
+                    <p className="text-sm text-slate-500">{paymentSummary}</p>
+                  </div>
+                  <Input
+                    value={paymentSearch}
+                    onChange={(event) => setPaymentSearch(event.target.value)}
+                    placeholder="Cari nama, status atau item"
+                    className="lg:w-72"
+                    aria-label="Cari transaksi mengikut nama, status atau item"
+                  />
+                </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Ibu Bapa</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Jumlah</TableHead>
-                      <TableHead>Dibuat</TableHead>
-                      <TableHead>Item</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {payments.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={5} className="text-center text-slate-500">
-                          Tiada rekod pembayaran ditemui.
-                        </TableCell>
-                      </TableRow>
-                    )}
-                    {payments.map((payment) => (
-                      <TableRow key={payment.id}>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-medium">
-                              {(payment as any).parent?.name ?? "Tanpa Nama"}
-                            </span>
-                            <span className="text-xs text-slate-500">
-                              {(payment as any).parent?.email ?? "—"}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <span
-                            className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
-                              statusStyles[payment.status] ?? "bg-slate-100 text-slate-600"
-                            }`}
-                          >
-                            {payment.status}
-                          </span>
-                        </TableCell>
-                        <TableCell className="font-semibold">
-                          {formatRinggit(payment.total_amount_cents ?? 0)}
-                        </TableCell>
-                        <TableCell className="text-sm text-slate-500">
-                          {payment.created_at
-                            ? new Date(payment.created_at).toLocaleString("ms-MY", {
-                                dateStyle: "medium",
-                                timeStyle: "short",
-                              })
-                            : "-"}
-                        </TableCell>
-                        <TableCell className="max-w-xs text-xs text-slate-500">
-                          {(payment as any).line_items
-                            ?.map((item: any) => item.label)
-                            .join(", ") || "—"}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <div className="overflow-x-auto">
+                  <div className="max-h-96 overflow-y-auto pr-2">
+                    <Table>
+                      <TableHeader className="sticky top-0 bg-white">
+                        <TableRow>
+                          <TableHead>Ibu Bapa</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Jumlah</TableHead>
+                          <TableHead>Dibuat</TableHead>
+                          <TableHead>Item</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredPayments.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={5} className="text-center text-slate-500">
+                              {paymentSearch.trim()
+                                ? "Tiada transaksi yang sepadan dengan carian."
+                                : "Tiada rekod pembayaran ditemui."}
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          filteredPayments.map((payment) => (
+                            <TableRow key={payment.id}>
+                              <TableCell>
+                                <div className="flex flex-col">
+                                  <span className="font-medium">
+                                    {(payment as any).parent?.name ?? "Tanpa Nama"}
+                                  </span>
+                                  <span className="text-xs text-slate-500">
+                                    {(payment as any).parent?.email ?? "—"}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <span
+                                  className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
+                                    statusStyles[payment.status] ?? "bg-slate-100 text-slate-600"
+                                  }`}
+                                >
+                                  {payment.status}
+                                </span>
+                              </TableCell>
+                              <TableCell className="font-semibold">
+                                {formatRinggit(payment.total_amount_cents ?? 0)}
+                              </TableCell>
+                              <TableCell className="text-sm text-slate-500">
+                                {payment.created_at
+                                  ? new Date(payment.created_at).toLocaleString("ms-MY", {
+                                      dateStyle: "medium",
+                                      timeStyle: "short",
+                                    })
+                                  : "-"}
+                              </TableCell>
+                              <TableCell className="max-w-xs text-xs text-slate-500">
+                                {(payment as any).line_items
+                                  ?.map((item: any) => item.label)
+                                  .join(", ") || "—"}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
@@ -297,78 +373,125 @@ export default function AdminPaymentsPage() {
             </Card>
           </div>
 
-          <div className="mt-8 grid gap-6 lg:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>Jenis yuran</CardTitle>
-                <p className="text-sm text-slate-500">
-                  Senarai semua item dalam katalog Billplz/portal ibu bapa.
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Nama</TableHead>
-                      <TableHead>Kategori</TableHead>
-                      <TableHead>Harga</TableHead>
-                      <TableHead></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {fees.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={4} className="text-center text-slate-500">
-                          Belum ada yuran ditetapkan.
-                        </TableCell>
-                      </TableRow>
-                    )}
-                    {fees.map((fee) => (
-                      <TableRow key={fee.id}>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-medium">{fee.name}</span>
-                            {fee.description && (
-                              <span className="text-xs text-slate-500">{fee.description}</span>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm capitalize">
-                          {fee.category}
-                          <span className="block text-xs text-slate-500">{fee.billing_cycle}</span>
-                        </TableCell>
-                        <TableCell className="font-semibold">
-                          {formatRinggit(fee.amount_cents)}
-                        </TableCell>
-                        <TableCell className="space-x-2 text-right">
-                          <Button variant="ghost" size="sm" onClick={() => startEditing(fee)}>
-                            Edit
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-rose-600 hover:text-rose-700"
-                            onClick={() => handleDeleteFee(fee.id)}
-                          >
-                            Padam
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
+          {isFeeCatalogOpen && (
+            <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 px-4 py-8 backdrop-blur-sm">
+              <div className="w-full max-w-4xl rounded-2xl bg-white shadow-2xl">
+                <div className="flex items-start justify-between border-b border-slate-200 px-6 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-xl bg-blue-50 p-2">
+                      <Layers className="h-5 w-5 text-blue-600" />
+                    </div>
+                    <div>
+                      <h2 className="text-xl font-semibold text-slate-900">Jenis yuran</h2>
+                      <p className="text-sm text-slate-500">
+                        Senarai semua item dalam katalog Billplz/portal ibu bapa.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setIsFeeCatalogOpen(false)}
+                    className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100"
+                    aria-label="Tutup modal jenis yuran"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-6 py-3">
+                  <p className="text-sm text-slate-500">
+                    {fees.length > 0
+                      ? `${fees.length} yuran aktif dalam katalog.`
+                      : "Belum ada yuran ditetapkan."}
+                  </p>
+                  <Button size="sm" onClick={openCreateFeeModal}>
+                    <Plus className="h-4 w-4" />
+                    Tambah yuran baharu
+                  </Button>
+                </div>
+                <div className="px-6 pb-6 pt-4">
+                  <div className="max-h-[60vh] overflow-y-auto pr-2">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Nama</TableHead>
+                          <TableHead>Kategori</TableHead>
+                          <TableHead>Harga</TableHead>
+                          <TableHead></TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {fees.length === 0 && (
+                          <TableRow>
+                            <TableCell colSpan={4} className="text-center text-slate-500">
+                              Belum ada yuran ditetapkan.
+                            </TableCell>
+                          </TableRow>
+                        )}
+                        {fees.map((fee) => (
+                          <TableRow key={fee.id}>
+                            <TableCell>
+                              <div className="flex flex-col">
+                                <span className="font-medium">{fee.name}</span>
+                                {fee.description && (
+                                  <span className="text-xs text-slate-500">{fee.description}</span>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-sm capitalize">
+                              {fee.category}
+                              <span className="block text-xs text-slate-500">{fee.billing_cycle}</span>
+                            </TableCell>
+                            <TableCell className="font-semibold">
+                              {formatRinggit(fee.amount_cents)}
+                            </TableCell>
+                            <TableCell className="space-x-2 text-right">
+                              <Button variant="ghost" size="sm" onClick={() => startEditing(fee)}>
+                                Edit
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-rose-600 hover:text-rose-700"
+                                onClick={() => handleDeleteFee(fee.id)}
+                              >
+                                Padam
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
-            <Card>
-              <CardHeader>
-                <CardTitle>{editingFeeId ? "Kemaskini yuran" : "Tambah yuran baharu"}</CardTitle>
-                <p className="text-sm text-slate-500">
-                  Masukkan butiran yuran agar muncul dalam portal ibu bapa.
-                </p>
-              </CardHeader>
-              <CardContent>
-                <form className="space-y-4" onSubmit={handleFeeSubmit}>
+          {isFeeFormOpen && (
+            <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 px-4 py-8 backdrop-blur-sm">
+              <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
+                <div className="flex items-start justify-between border-b border-slate-200 px-6 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-xl bg-blue-50 p-2">
+                      <Plus className="h-5 w-5 text-blue-600" />
+                    </div>
+                    <div>
+                      <h2 className="text-xl font-semibold text-slate-900">
+                        {editingFeeId ? "Kemaskini yuran" : "Tambah yuran baharu"}
+                      </h2>
+                      <p className="text-sm text-slate-500">
+                        Masukkan butiran yuran agar muncul dalam portal ibu bapa.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={closeFeeFormModal}
+                    className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100"
+                    aria-label="Tutup modal yuran"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+                <form className="space-y-4 px-6 py-6" onSubmit={handleFeeSubmit}>
                   <div>
                     <label className="text-sm font-medium text-slate-700">Nama yuran</label>
                     <Input
@@ -441,22 +564,18 @@ export default function AdminPaymentsPage() {
                       onCheckedChange={(checked) => handleFeeInputChange("is_optional", checked)}
                     />
                   </div>
-                  <div className="flex items-center justify-between gap-3">
-                    {editingFeeId && (
-                      <Button type="button" variant="ghost" onClick={resetForm}>
-                        Batal
-                      </Button>
-                    )}
-                    <div className="flex-1 text-right">
-                      <Button type="submit" disabled={savingFee}>
-                        {savingFee ? "Menyimpan..." : editingFeeId ? "Kemaskini Yuran" : "Tambah Yuran"}
-                      </Button>
-                    </div>
+                  <div className="flex items-center justify-end gap-3 border-t border-slate-200 pt-4">
+                    <Button type="button" variant="ghost" onClick={closeFeeFormModal}>
+                      Batal
+                    </Button>
+                    <Button type="submit" disabled={savingFee}>
+                      {savingFee ? "Menyimpan..." : editingFeeId ? "Kemaskini Yuran" : "Tambah Yuran"}
+                    </Button>
                   </div>
                 </form>
-              </CardContent>
-            </Card>
-          </div>
+              </div>
+            </div>
+          )}
         </div>
       </main>
     </>

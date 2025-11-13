@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import EditJuzTestForm from './EditJuzTestForm';
 
@@ -82,13 +82,7 @@ export default function JuzTestHistoryModal({
   const [searchTerm, setSearchTerm] = useState('');
 
   // Fetch tests when modal opens
-  useEffect(() => {
-    if (isOpen && studentId) {
-      fetchTests();
-    }
-  }, [isOpen, studentId]);
-
-  const fetchTests = async () => {
+  const fetchTests = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -115,7 +109,13 @@ export default function JuzTestHistoryModal({
     } finally {
       setLoading(false);
     }
-  };
+  }, [studentId]);
+
+  useEffect(() => {
+    if (isOpen && studentId) {
+      fetchTests();
+    }
+  }, [fetchTests, isOpen, studentId]);
 
   const calculateTotalPercentage = (tajweedScore: number, recitationScore: number): number => {
     const total = tajweedScore + recitationScore;
@@ -516,4 +516,3 @@ export default function JuzTestHistoryModal({
     </div>
   );
 }
-

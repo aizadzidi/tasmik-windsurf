@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { supabase } from "@/lib/supabaseClient";
 import { createClient } from '@supabase/supabase-js';
 
 interface CreateExamData {
@@ -220,7 +219,12 @@ export async function POST(request: Request) {
       const map = subjectConfigByClass || {};
       if (map && Object.keys(map).length > 0) {
         // Resolve subject IDs by name used in request
-        const subjectsByName = new Map((subjectData || []).map((s: any) => [String(s.name), String(s.id)]));
+        const subjectRows = (subjectData ?? []) as Array<{ id: string; name: string | null }>;
+        const subjectsByName = new Map(
+          subjectRows
+            .filter((s) => typeof s.name === 'string')
+            .map((s) => [String(s.name), String(s.id)])
+        );
         const ecsRows: Array<{ exam_id: string; class_id: string; subject_id: string }> = [];
         for (const [classId, subjectNames] of Object.entries(map)) {
           if (!isValidUuid(classId)) continue;
@@ -252,7 +256,10 @@ export async function POST(request: Request) {
           .select('id, class_id')
           .in('id', allIds);
         if (rosterErr) throw rosterErr;
-        const classByStudent = new Map<string, string | null>((roster || []).map((r: any) => [String(r.id), r.class_id ? String(r.class_id) : null]));
+        const rosterRows = (roster ?? []) as Array<{ id: string; class_id: string | null }>;
+        const classByStudent = new Map<string, string | null>(
+          rosterRows.map((r) => [String(r.id), r.class_id ? String(r.class_id) : null])
+        );
 
         // Build insert list; only include if student_id belongs to a selected class (if provided)
         for (const [klassId, studentIds] of Object.entries(map)) {
@@ -415,7 +422,12 @@ export async function PUT(request: Request) {
           .from('subjects')
           .select('id, name');
         if (subjErr) throw subjErr;
-        const byName = new Map((allSubjects || []).map((s: any) => [String(s.name), String(s.id)]));
+        const subjectRows = (allSubjects ?? []) as Array<{ id: string; name: string | null }>;
+        const byName = new Map(
+          subjectRows
+            .filter((s) => typeof s.name === 'string')
+            .map((s) => [String(s.name), String(s.id)])
+        );
         const ecsRows: Array<{ exam_id: string; class_id: string; subject_id: string }> = [];
         for (const [classId, subjectNames] of Object.entries(map)) {
           if (!isValidUuid(classId)) continue;
@@ -450,7 +462,10 @@ export async function PUT(request: Request) {
             .select('id, class_id')
             .in('id', allIds);
           if (rosterErr) throw rosterErr;
-          const classByStudent = new Map<string, string | null>((roster || []).map((r: any) => [String(r.id), r.class_id ? String(r.class_id) : null]));
+          const rosterRows = (roster ?? []) as Array<{ id: string; class_id: string | null }>;
+          const classByStudent = new Map<string, string | null>(
+            rosterRows.map((r) => [String(r.id), r.class_id ? String(r.class_id) : null])
+          );
           for (const [klassId, studentIds] of Object.entries(map)) {
             for (const sid of (studentIds || [])) {
               const actualClassId = classByStudent.get(String(sid)) ?? null;

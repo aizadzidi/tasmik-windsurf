@@ -7,7 +7,12 @@ import { FamilyFeeSelector } from "@/components/payments/FamilyFeeSelector";
 import { PaymentBreakdown } from "@/components/payments/PaymentBreakdown";
 import { PaymentStatusBanner } from "@/components/payments/PaymentStatusBanner";
 import { PaymentHistory } from "@/components/payments/PaymentHistory";
-import type { ChildFeeAssignment, FeeCatalogItem, PaymentRecord } from "@/types/payments";
+import type {
+  ChildFeeAssignment,
+  FeeCatalogItem,
+  PaymentLineItem,
+  PaymentRecord
+} from "@/types/payments";
 import type { FamilyFeeItem, FeeSelectionState, MonthOption } from "@/components/payments/types";
 import { MERCHANT_FEE_CENTS, buildPaymentPreview } from "@/lib/payments/pricingUtils";
 import type { PaymentCartItem } from "@/types/payments";
@@ -29,6 +34,8 @@ interface ParentProfile {
   phone?: string | null;
   email?: string | null;
 }
+
+type PaymentWithItems = PaymentRecord & { line_items?: PaymentLineItem[] };
 
 function buildMonthOptions(count = 6): MonthOption[] {
   const now = new Date();
@@ -55,7 +62,7 @@ export default function ParentPaymentsPage() {
   });
   const [children, setChildren] = useState<{ id: string; name: string }[]>([]);
   const [assignments, setAssignments] = useState<RawAssignment[]>([]);
-  const [payments, setPayments] = useState<PaymentRecord[]>([]);
+  const [payments, setPayments] = useState<PaymentWithItems[]>([]);
   const [selections, setSelections] = useState<Record<string, FeeSelectionState>>({});
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -150,7 +157,9 @@ export default function ParentPaymentsPage() {
             .eq("is_active", true),
           supabase
             .from("payments")
-            .select("id,parent_id,status,currency,total_amount_cents,merchant_fee_cents,redirect_url,billplz_id,created_at,paid_at")
+            .select(
+              "id,parent_id,status,currency,total_amount_cents,merchant_fee_cents,redirect_url,billplz_id,created_at,paid_at,line_items:payment_line_items(id,label,metadata,child_id,fee_id)"
+            )
             .eq("parent_id", parentId)
             .order("created_at", { ascending: false })
             .limit(5)
@@ -192,7 +201,7 @@ export default function ParentPaymentsPage() {
       }
 
       setAssignments(effectiveAssignments);
-      setPayments((paymentRows ?? []) as PaymentRecord[]);
+      setPayments((paymentRows ?? []) as PaymentWithItems[]);
     } catch (err: any) {
       console.error("Failed to load payments data", err);
       setError(err.message ?? "Gagal memuatkan data pembayaran");
@@ -359,20 +368,17 @@ export default function ParentPaymentsPage() {
   return (
     <>
       <Navbar />
-      <main className="min-h-screen bg-slate-50/70">
+      <main className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
         <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-4 py-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
-                <p className="text-sm uppercase tracking-wide text-slate-500">Pembayaran</p>
+                <p className="text-sm uppercase tracking-wide text-primary/70">Pembayaran</p>
                 <h1 className="text-3xl font-semibold text-slate-900">Bil anak & Billplz</h1>
                 <p className="text-sm text-slate-600">
                   Pilih yuran, semak jumlah dan teruskan ke Billplz dalam beberapa klik.
                 </p>
               </div>
-              <Button variant="outline" onClick={loadData} disabled={loading}>
-                Segarkan Data
-              </Button>
             </div>
 
             <div className="sticky top-14 z-30 rounded-2xl border border-white/60 bg-white/80 p-2 shadow-sm backdrop-blur">
@@ -387,8 +393,8 @@ export default function ParentPaymentsPage() {
                       onClick={() => setActiveTab(tab.id)}
                       className={`rounded-xl border px-4 py-3 text-left transition ${
                         isActive
-                          ? "border-sky-200 bg-sky-50 shadow-sm"
-                          : "border-transparent bg-transparent hover:border-slate-200 hover:bg-white"
+                          ? "border-primary/40 bg-gradient-to-r from-primary/10 to-secondary/10 text-primary shadow-md"
+                          : "border-transparent bg-transparent text-slate-600 hover:border-white/40 hover:bg-white/50 hover:text-slate-900"
                       }`}
                     >
                       <p className="text-sm font-semibold text-slate-900">{tab.label}</p>
@@ -407,18 +413,23 @@ export default function ParentPaymentsPage() {
 
             {activeTab === "payment" ? (
               <>
-                <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                <section className="rounded-3xl border border-white/30 bg-white/80 p-6 shadow-xl backdrop-blur">
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
-                      <p className="text-sm font-semibold text-slate-500">Maklumat hubungan</p>
+                      <p className="text-sm font-semibold text-primary/70">Maklumat hubungan</p>
                       <h2 className="text-xl font-semibold text-slate-900">Anda membayar sebagai {contactInputs.name || "—"}</h2>
                     </div>
-                    <Button variant="ghost" onClick={loadData} className="text-slate-500 hover:text-slate-800" disabled={loading}>
+                    <Button
+                      variant="ghost"
+                      onClick={loadData}
+                      className="text-primary hover:text-secondary"
+                      disabled={loading}
+                    >
                       Segarkan profil
                     </Button>
                   </div>
                   <div className="mt-4 grid gap-4 md:grid-cols-3">
-                    <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 md:col-span-3">
+                    <label className="flex flex-col gap-1 text-sm font-medium text-slate-800 md:col-span-3">
                       Nama penuh
                       <Input
                         value={contactInputs.name}
@@ -426,7 +437,7 @@ export default function ParentPaymentsPage() {
                         placeholder="Nama ibu/bapa"
                       />
                     </label>
-                    <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
+                    <label className="flex flex-col gap-1 text-sm font-medium text-slate-800">
                       Alamat emel
                       <Input
                         type="email"
@@ -435,7 +446,7 @@ export default function ParentPaymentsPage() {
                         placeholder="nama@contoh.com"
                       />
                     </label>
-                    <label className="flex flex-col gap-1 text-sm font-medium text-slate-700 md:col-span-2">
+                    <label className="flex flex-col gap-1 text-sm font-medium text-slate-800 md:col-span-2">
                       Telefon bimbit
                       <Input
                         value={contactInputs.phone}
@@ -444,9 +455,9 @@ export default function ParentPaymentsPage() {
                       />
                     </label>
                   </div>
-                  <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-500">
+                  <div className="mt-4 rounded-2xl border border-dashed border-primary/30 bg-gradient-to-r from-primary/5 to-secondary/5 px-4 py-3 text-sm text-primary/80">
                     {(!parentProfile.email || !parentProfile.phone) ? (
-                      <span className="font-medium text-amber-700">Sila lengkapkan kedua-dua emel dan telefon sebelum meneruskan pembayaran.</span>
+                      <span className="font-medium text-secondary">Sila lengkapkan kedua-dua emel dan telefon sebelum meneruskan pembayaran.</span>
                     ) : (
                       "Maklumat ini hanya digunakan untuk bil semasa. Simpan perubahan kekal di halaman profil anda."
                     )}
@@ -458,7 +469,7 @@ export default function ParentPaymentsPage() {
                 )}
 
                 {loading ? (
-                  <div className="rounded-xl border border-slate-100 bg-white p-6 text-center text-slate-500 shadow-sm">
+                  <div className="rounded-xl border border-white/30 bg-white/70 p-6 text-center text-slate-600 shadow-xl backdrop-blur">
                     Memuatkan data pembayaran…
                   </div>
                 ) : (
@@ -486,15 +497,15 @@ export default function ParentPaymentsPage() {
                 )}
               </>
             ) : (
-              <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <section className="rounded-3xl border border-white/30 bg-white/80 p-6 shadow-xl backdrop-blur">
                 <div className="flex flex-col gap-1">
-                  <p className="text-sm font-semibold text-slate-500">Rekod pembayaran</p>
+                  <p className="text-sm font-semibold text-primary/70">Rekod pembayaran</p>
                   <h2 className="text-2xl font-semibold text-slate-900">Sejarah transaksi</h2>
                   <p className="text-sm text-slate-600">Semak status dan rujukan setiap bil Billplz anda.</p>
                 </div>
                 <div className="mt-6">
                   {loading ? (
-                    <div className="rounded-xl border border-slate-100 bg-white p-6 text-center text-slate-500 shadow-sm">
+                    <div className="rounded-xl border border-white/30 bg-white/70 p-6 text-center text-slate-600 shadow-xl backdrop-blur">
                       Memuatkan rekod pembayaran…
                     </div>
                   ) : (

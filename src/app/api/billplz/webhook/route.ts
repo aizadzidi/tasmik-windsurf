@@ -63,10 +63,11 @@ export async function POST(request: NextRequest) {
     await recordPaymentEvent(payment.id, 'billplz', 'webhook', payload as Record<string, unknown>);
 
     return NextResponse.json({ ok: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Billplz webhook error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to process webhook';
     return NextResponse.json(
-      { error: error?.message ?? 'Failed to process webhook' },
+      { error: message },
       { status: 500 }
     );
   }

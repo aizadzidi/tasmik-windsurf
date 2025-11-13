@@ -1,6 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
 
+type StudentRow = {
+  id: string;
+  name: string | null;
+  assigned_teacher_id: string | null;
+  class_id: string | null;
+  memorization_completed: string | null;
+  memorization_completed_date: string | null;
+  users?: { name?: string | null } | null;
+  classes?: { name?: string | null } | null;
+};
+
+type MemorizationReportRow = {
+  student_id: string;
+  juzuk: number | null;
+};
+
+type JuzTestRow = {
+  student_id: string;
+  juz_number: number | null;
+  test_date?: string | null;
+  passed?: boolean | null;
+  total_percentage?: number | null;
+  examiner_name?: string | null;
+  test_hizb?: string | null;
+};
+
+type ReportRow = {
+  id: string;
+  student_id: string;
+  type?: string | null;
+  date?: string | null;
+  [key: string]: unknown;
+};
+
 // GET - Fetch student progress data for admin reports page
 export async function GET(request: NextRequest) {
   try {
@@ -24,11 +58,13 @@ export async function GET(request: NextRequest) {
 
       if (studentsError) throw studentsError;
 
-      if (!studentsData || studentsData.length === 0) {
+      const studentsSafe = (studentsData ?? []) as StudentRow[];
+
+      if (studentsSafe.length === 0) {
         return [];
       }
 
-      const studentIds = studentsData.map(s => s.id);
+      const studentIds = studentsSafe.map(s => s.id);
 
       if (viewMode === 'juz_tests') {
         // Fetch juz test related data
@@ -57,22 +93,26 @@ export async function GET(request: NextRequest) {
         ]);
 
         // Process juz test data
-        const memorizationByStudent = memorizationResults.data?.reduce((acc, item) => {
+        const memorizationRows = (memorizationResults.data ?? []) as MemorizationReportRow[];
+        const memorizationByStudent = memorizationRows.reduce<Record<string, number[]>>((acc, item) => {
           if (!acc[item.student_id]) acc[item.student_id] = [];
-          acc[item.student_id].push(item.juzuk);
+          if (typeof item.juzuk === 'number') {
+            acc[item.student_id].push(item.juzuk);
+          }
           return acc;
-        }, {} as Record<string, number[]>) || {};
+        }, {});
 
-        const juzTestsByStudent = juzTestResults.data?.reduce((acc, test) => {
+        const juzTestRows = (juzTestResults.data ?? []) as JuzTestRow[];
+        const juzTestsByStudent = juzTestRows.reduce<Record<string, JuzTestRow[]>>((acc, test) => {
           if (!acc[test.student_id]) acc[test.student_id] = [];
           acc[test.student_id].push(test);
           return acc;
-        }, {} as Record<string, any[]>) || {};
+        }, {});
 
-        return studentsData.map(student => ({
+        return studentsSafe.map(student => ({
           ...student,
-          teacher_name: (student.users as { name?: string } | null)?.name || null,
-          class_name: (student.classes as { name?: string } | null)?.name || null,
+          teacher_name: student.users?.name || null,
+          class_name: student.classes?.name || null,
           memorized_juzuks: memorizationByStudent[student.id] || [],
           juz_tests: juzTestsByStudent[student.id] || [],
           latestTasmikReport: null,
@@ -90,22 +130,23 @@ export async function GET(request: NextRequest) {
         if (reportsError) throw reportsError;
 
         // Group reports by student and type
-        const reportsByStudent = reportsData?.reduce((acc, report) => {
+        const reportRows = (reportsData ?? []) as ReportRow[];
+        const reportsByStudent = reportRows.reduce<Record<string, { tasmik: ReportRow[], murajaah: ReportRow[] }>>((acc, report) => {
           if (!acc[report.student_id]) {
             acc[report.student_id] = { tasmik: [], murajaah: [] };
           }
           const type = report.type?.toLowerCase() === 'tasmi' ? 'tasmik' : 'murajaah';
           acc[report.student_id][type].push(report);
           return acc;
-        }, {} as Record<string, { tasmik: any[], murajaah: any[] }>) || {};
+        }, {});
 
-        return studentsData.map(student => {
+        return studentsSafe.map(student => {
           const studentReports = reportsByStudent[student.id] || { tasmik: [], murajaah: [] };
           
           return {
             ...student,
-            teacher_name: (student.users as { name?: string } | null)?.name || null,
-            class_name: (student.classes as { name?: string } | null)?.name || null,
+            teacher_name: student.users?.name || null,
+            class_name: student.classes?.name || null,
             latestTasmikReport: studentReports.tasmik[0] || null,
             latestMurajaahReport: studentReports.murajaah[0] || null,
             memorized_juzuks: [],
@@ -116,10 +157,11 @@ export async function GET(request: NextRequest) {
     });
     
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Admin reports fetch error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to fetch reports data';
     return NextResponse.json(
-      { error: error.message || 'Failed to fetch reports data' },
+      { error: message },
       { status: 500 }
     );
   }

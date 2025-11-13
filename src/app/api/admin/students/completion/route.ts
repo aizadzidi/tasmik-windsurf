@@ -36,11 +36,13 @@ export async function PUT(request: NextRequest) {
     });
     
     return NextResponse.json({ success: true, students: updatedStudents });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Admin completion toggle error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to update completion status';
+    const status = message.includes('Admin access required') ? 403 : 500;
     return NextResponse.json(
-      { error: error.message || 'Failed to update completion status' },
-      { status: error.message.includes('Admin access required') ? 403 : 500 }
+      { error: message },
+      { status }
     );
   }
 }

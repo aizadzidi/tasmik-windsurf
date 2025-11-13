@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
+import { ok, fail } from '@/types/http';
+import { normalizeId } from '@/lib/ids';
 
 const TABLE = 'subject_opt_outs';
 
-const normalizeId = (value: unknown) => {
-  if (value === null || value === undefined) return null;
-  return String(value);
+type SubjectOptOutRow = {
+  exam_id: string | number | null;
+  subject_id: string | number | null;
+  student_id: string | number | null;
 };
 
 export async function GET(request: NextRequest) {
@@ -28,27 +31,31 @@ export async function GET(request: NextRequest) {
       }
       const { data, error } = await query;
       if (error) throw error;
-      return data || [];
+      return (data ?? []) as SubjectOptOutRow[];
     });
 
     if (subjectId) {
       const studentIds = entries
-        .map((row: any) => normalizeId(row?.student_id))
+        .map((row) => normalizeId(row.student_id))
         .filter((id): id is string => Boolean(id));
-      return NextResponse.json({ studentIds });
+      const payload = ok({ studentIds });
+      return NextResponse.json(payload.data);
     }
 
-    const normalized = entries.map((row: any) => ({
-      examId: normalizeId(row?.exam_id),
-      subjectId: normalizeId(row?.subject_id),
-      studentId: normalizeId(row?.student_id),
+    const normalized = entries.map((row) => ({
+      examId: normalizeId(row.exam_id),
+      subjectId: normalizeId(row.subject_id),
+      studentId: normalizeId(row.student_id),
     })).filter((row) => row.examId && row.subjectId && row.studentId);
 
-    return NextResponse.json({ entries: normalized });
-  } catch (error: any) {
-    const message = String(error?.message || '');
+    const payload = ok({ entries: normalized });
+    return NextResponse.json(payload.data);
+  } catch (error: unknown) {
+    const message =
+      error instanceof Error ? error.message : '';
     if (message.includes(`relation "${TABLE}" does not exist`)) {
-      return NextResponse.json({ error: `${TABLE} table not found. Please run the provided SQL migration.` }, { status: 500 });
+      const errorResult = fail(`${TABLE} table not found. Please run the provided SQL migration.`);
+      return NextResponse.json({ error: errorResult.error }, { status: 500 });
     }
     console.error('Subject opt-outs fetch failed', error);
     return NextResponse.json({ error: 'Failed to load subject opt-outs' }, { status: 500 });
@@ -75,10 +82,12 @@ export async function POST(request: Request) {
     });
 
     return NextResponse.json({ success: true });
-  } catch (error: any) {
-    const message = String(error?.message || '');
+  } catch (error: unknown) {
+    const message =
+      error instanceof Error ? error.message : '';
     if (message.includes(`relation "${TABLE}" does not exist`)) {
-      return NextResponse.json({ error: `${TABLE} table not found. Please run the provided SQL migration.` }, { status: 500 });
+      const errorResult = fail(`${TABLE} table not found. Please run the provided SQL migration.`);
+      return NextResponse.json({ error: errorResult.error }, { status: 500 });
     }
     console.error('Subject opt-outs insert failed', error);
     return NextResponse.json({ error: 'Failed to save subject opt-out' }, { status: 500 });
@@ -108,10 +117,12 @@ export async function DELETE(request: NextRequest) {
     });
 
     return NextResponse.json({ success: true });
-  } catch (error: any) {
-    const message = String(error?.message || '');
+  } catch (error: unknown) {
+    const message =
+      error instanceof Error ? error.message : '';
     if (message.includes(`relation "${TABLE}" does not exist`)) {
-      return NextResponse.json({ error: `${TABLE} table not found. Please run the provided SQL migration.` }, { status: 500 });
+      const errorResult = fail(`${TABLE} table not found. Please run the provided SQL migration.`);
+      return NextResponse.json({ error: errorResult.error }, { status: 500 });
     }
     console.error('Subject opt-outs delete failed', error);
     return NextResponse.json({ error: 'Failed to remove subject opt-out' }, { status: 500 });

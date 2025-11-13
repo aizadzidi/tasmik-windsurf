@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
 
+const adminErrorDetails = (error: unknown, fallback: string) => {
+  const message = error instanceof Error ? error.message : fallback;
+  const status = message.includes('Admin access required') ? 403 : 500;
+  return { message, status };
+};
+
 // GET - Fetch students (admin only) - optionally filter by ID
 export async function GET(request: NextRequest) {
   try {
@@ -25,12 +31,10 @@ export async function GET(request: NextRequest) {
     });
     
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Admin students fetch error:', error);
-    return NextResponse.json(
-      { error: error.message || 'Failed to fetch students' },
-      { status: error.message.includes('Admin access required') ? 403 : 500 }
-    );
+    const { message, status } = adminErrorDetails(error, 'Failed to fetch students');
+    return NextResponse.json({ error: message }, { status });
   }
 }
 
@@ -64,12 +68,10 @@ export async function POST(request: NextRequest) {
     });
     
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Admin student creation error:', error);
-    return NextResponse.json(
-      { error: error.message || 'Failed to create student' },
-      { status: error.message.includes('Admin access required') ? 403 : 500 }
-    );
+    const { message, status } = adminErrorDetails(error, 'Failed to create student');
+    return NextResponse.json({ error: message }, { status });
   }
 }
 
@@ -104,12 +106,10 @@ export async function PUT(request: NextRequest) {
     });
     
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Admin student update error:', error);
-    return NextResponse.json(
-      { error: error.message || 'Failed to update student' },
-      { status: error.message.includes('Admin access required') ? 403 : 500 }
-    );
+    const { message, status } = adminErrorDetails(error, 'Failed to update student');
+    return NextResponse.json({ error: message }, { status });
   }
 }
 
@@ -136,11 +136,9 @@ export async function DELETE(request: NextRequest) {
     });
     
     return NextResponse.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Admin student deletion error:', error);
-    return NextResponse.json(
-      { error: error.message || 'Failed to delete student' },
-      { status: error.message.includes('Admin access required') ? 403 : 500 }
-    );
+    const { message, status } = adminErrorDetails(error, 'Failed to delete student');
+    return NextResponse.json({ error: message }, { status });
   }
 }

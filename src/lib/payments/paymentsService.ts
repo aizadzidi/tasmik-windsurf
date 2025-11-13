@@ -1,6 +1,7 @@
 import { supabaseService } from '@/lib/supabaseServiceClient';
 import type {
   PaymentCartItem,
+  PaymentLineItem,
   PaymentRecord,
   PaymentStatus
 } from '@/types/payments';
@@ -25,6 +26,10 @@ interface UpdatePaymentInput {
   expiresAt?: string | null;
   redirectUrl?: string | null;
 }
+
+type PaymentRecordWithLines = PaymentRecord & {
+  line_items?: PaymentLineItem[] | null;
+};
 
 export async function createPaymentRecord(input: CreatePaymentInput): Promise<PaymentRecord> {
   const { data, error } = await supabaseService
@@ -57,7 +62,11 @@ export async function createPaymentRecord(input: CreatePaymentInput): Promise<Pa
       quantity: item.quantity,
       unit_amount_cents: item.unitAmountCents,
       subtotal_cents: item.subtotalCents,
-      metadata: { months: item.months }
+      metadata: {
+        months: item.months,
+        childName: item.childName,
+        feeName: item.feeName
+      }
     }));
 
     const { error: lineError } = await supabaseService
@@ -135,7 +144,7 @@ export async function getPaymentByBillplzId(billId: string) {
     throw new Error(error.message);
   }
 
-  return data as (PaymentRecord & { line_items?: any[] }) | null;
+  return data as PaymentRecordWithLines | null;
 }
 
 export async function getPaymentById(paymentId: string) {
@@ -150,5 +159,5 @@ export async function getPaymentById(paymentId: string) {
     throw new Error(error.message);
   }
 
-  return data as (PaymentRecord & { line_items?: any[] }) | null;
+  return data as PaymentRecordWithLines | null;
 }

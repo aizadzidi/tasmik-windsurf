@@ -33,21 +33,70 @@ const SURAHS = [
 const REPORT_TYPES = ["Tasmi", "Murajaah"];
 const GRADES = ["mumtaz", "jayyid jiddan", "jayyid"];
 
-function FetchActiveSchedules({ students, onData }: { students: string[]; onData: (map: Record<string, any>) => void }) {
-  React.useEffect(() => {
-    async function run() {
-      if (!Array.isArray(students) || students.length === 0) { onData({}); return; }
-      const params = new URLSearchParams({ student_ids: students.join(',') });
-      const res = await fetch(`/api/juz-test-schedule?${params.toString()}`);
-      const raw = await res.json();
-      if (res.ok && raw && raw.activeByStudent) {
-        onData(raw.activeByStudent as Record<string, any>);
-      } else {
-        onData({});
-      }
+type ActiveSession = {
+  scheduled_date: string;
+  slot_number: number | null;
+  status: string | null;
+};
+
+type ActiveSessionMap = Record<string, ActiveSession>;
+
+type SmartSuggestion = {
+  surah: string;
+  juzuk: number;
+  ayatFrom: number;
+  ayatTo: number;
+  pageFrom: number | null;
+  pageTo: number | null | undefined;
+} | undefined;
+
+type ReportRow = Report & { students?: { name?: string | null } | null };
+
+const isActiveSessionMap = (value: unknown): value is ActiveSessionMap => {
+  if (!value || typeof value !== 'object') return false;
+  return Object.values(value as Record<string, unknown>).every((session) => {
+    if (!session || typeof session !== 'object') return false;
+    const record = session as { scheduled_date?: unknown; slot_number?: unknown; status?: unknown };
+    return (
+      typeof record.scheduled_date === 'string' &&
+      (record.slot_number === null || typeof record.slot_number === 'number') &&
+      (record.status === null || typeof record.status === 'string')
+    );
+  });
+};
+
+const mapReportsWithStudentName = (rows: ReportRow[]): Report[] =>
+  rows.map((row) => ({
+    ...row,
+    student_name: row.students?.name || "",
+  }));
+
+function FetchActiveSchedules({ students, onData }: { students: string[]; onData: (map: ActiveSessionMap) => void }) {
+  const studentParams = useMemo(() => {
+    if (!Array.isArray(students) || students.length === 0) {
+      return null;
     }
-    run();
-  }, [JSON.stringify(students)]);
+    return new URLSearchParams({ student_ids: students.join(',') }).toString();
+  }, [students]);
+
+  const fetchSchedules = useCallback(async () => {
+    if (!studentParams) {
+      onData({});
+      return;
+    }
+
+    const res = await fetch(`/api/juz-test-schedule?${studentParams}`);
+    const raw = await res.json();
+    if (res.ok && raw && isActiveSessionMap(raw.activeByStudent)) {
+      onData(raw.activeByStudent);
+    } else {
+      onData({});
+    }
+  }, [studentParams, onData]);
+
+  useEffect(() => {
+    fetchSchedules();
+  }, [fetchSchedules]);
   return null;
 }
 
@@ -71,7 +120,7 @@ export default function TeacherPage() {
   const [quickModalData, setQuickModalData] = useState<{
     student: Student;
     reportType: "Tasmi" | "Murajaah";
-    suggestions?: any;
+    suggestions?: SmartSuggestion;
   } | null>(null);
 
   // Edit modal
@@ -88,19 +137,27 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [scheduleStudent, setScheduleStudent] = useState<Student | null>(null);
   // Active test sessions (by student)
-  const [activeSessionsByStudent, setActiveSessionsByStudent] = useState<Record<string, { scheduled_date: string; slot_number: number; status: string }>>({});
+  const [activeSessionsByStudent, setActiveSessionsByStudent] = useState<ActiveSessionMap>({});
 
   // Refetch helper to immediately reflect schedule/cancel actions
   const refetchActiveSchedules = useCallback(async (ids: string[]) => {
     try {
-      if (!Array.isArray(ids) || ids.length === 0) { setActiveSessionsByStudent({}); return; }
+      if (!Array.isArray(ids) || ids.length === 0) {
+        setActiveSessionsByStudent({});
+        return;
+      }
       const params = new URLSearchParams({ student_ids: ids.join(',') });
       const res = await fetch(`/api/juz-test-schedule?${params.toString()}`);
       const raw = await res.json();
-      if (res.ok && raw && raw.activeByStudent) {
-        setActiveSessionsByStudent(raw.activeByStudent as Record<string, { scheduled_date: string; slot_number: number; status: string }>);
+      if (res.ok && raw && isActiveSessionMap(raw.activeByStudent)) {
+        setActiveSessionsByStudent(raw.activeByStudent);
+      } else {
+        setActiveSessionsByStudent({});
       }
-    } catch {}
+    } catch (error) {
+      console.error('Failed to refresh active schedules', error);
+      setActiveSessionsByStudent({});
+    }
   }, []);
   const [juzTestHistoryStudent, setJuzTestHistoryStudent] = useState<Student | null>(null);
 
@@ -163,14 +220,14 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
         .order("date", { ascending: false })
         .order("created_at", { ascending: false });
       if (!error && data) {
-        setReports(data.map((r: any) => ({ ...r, student_name: r.students?.name || "" })));
+        setReports(mapReportsWithStudentName(data as ReportRow[]));
       }
     }
     fetchReports();
   }, [userId]);
 
   // Smart suggestions for next progression
-  const getSmartSuggestions = (studentId: string, reportType: "Tasmi" | "Murajaah") => {
+  const getSmartSuggestions = useCallback((studentId: string, reportType: "Tasmi" | "Murajaah"): SmartSuggestion => {
     const studentReports = reports.filter(r => r.student_id === studentId);
     
     if (reportType === "Tasmi") {
@@ -247,7 +304,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
     }
     
     return undefined;
-  };
+  }, [reports]);
 
   // Debounce search term
   useEffect(() => {
@@ -303,11 +360,12 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
         .order("created_at", { ascending: false });
       
       // Group reports by student
-      const reportsByStudent = (allReports || []).reduce((acc, report) => {
+      const reportRows = (allReports ?? []) as Report[];
+      const reportsByStudent = reportRows.reduce<Record<string, Report[]>>((acc, report) => {
         if (!acc[report.student_id]) acc[report.student_id] = [];
         acc[report.student_id].push(report);
         return acc;
-      }, {} as Record<string, any[]>);
+      }, {});
 
       const studentProgressPromises = studentsData.map(async (student) => {
         if (viewMode === 'juz_tests') {
@@ -442,7 +500,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
     if (userId) {
       fetchMonitorData();
     }
-  }, [viewMode, userId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fetchMonitorData, userId]);
 
   // Filtered and sorted students (optimized with debounced search)
   const filteredMonitorStudents = useMemo(() => {
@@ -502,7 +560,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
     const suggestions = getSmartSuggestions(student.id, reportType);
     setQuickModalData({ student, reportType, suggestions });
     setShowQuickModal(true);
-  }, [reports, getSmartSuggestions]);
+  }, [getSmartSuggestions]);
 
   // Handle edit report (memoized)
   const handleEditReport = useCallback((report: Report) => {
@@ -541,7 +599,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
         .order("date", { ascending: false })
         .order("created_at", { ascending: false });
       if (!error && data) {
-        setReports(data.map((r: any) => ({ ...r, student_name: r.students?.name || "" })));
+        setReports(mapReportsWithStudentName(data as ReportRow[]));
       }
       fetchMonitorData();
     }
@@ -557,7 +615,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
         .order("created_at", { ascending: false })
         .then(({ data, error }) => {
           if (!error && data) {
-            setReports(data.map((r: any) => ({ ...r, student_name: r.students?.name || "" })));
+            setReports(mapReportsWithStudentName(data as ReportRow[]));
           }
         });
       

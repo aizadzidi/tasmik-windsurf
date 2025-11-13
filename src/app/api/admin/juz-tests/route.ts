@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
 
+type JuzTestPayload = {
+  id?: string;
+  student_id?: string;
+  juz_number?: number;
+  [key: string]: unknown;
+};
+
 export async function POST(request: NextRequest) {
   try {
-    const testData = await request.json();
+    const testData = (await request.json()) as JuzTestPayload;
     
     // Validate required fields
     if (!testData.student_id || !testData.juz_number) {
@@ -40,12 +47,13 @@ export async function POST(request: NextRequest) {
           "examiner_name",
         ] as const;
 
-        const updatePayload = fieldsToPreserve.reduce((acc, field) => {
+        type PreservedField = (typeof fieldsToPreserve)[number];
+        const updatePayload = fieldsToPreserve.reduce<Partial<Record<PreservedField, unknown>>>((acc, field) => {
           if (testData[field] !== undefined) {
             acc[field] = testData[field];
           }
           return acc;
-        }, {} as Record<string, any>);
+        }, {});
 
         if (record && Object.keys(updatePayload).length > 0) {
           const { data: enforcedData, error: enforceError } = await client
@@ -66,10 +74,11 @@ export async function POST(request: NextRequest) {
     });
 
     return NextResponse.json(insertedRecord, { status: 201 });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("API error:", error);
+    const message = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json(
-      { error: (error as any)?.message || "Internal server error" },
+      { error: message },
       { status: 500 }
     );
   }
@@ -99,10 +108,11 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.json(data);
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("API error:", error);
+    const message = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json(
-      { error: (error as any)?.message || "Internal server error" },
+      { error: message },
       { status: 500 }
     );
   }
@@ -133,10 +143,11 @@ export async function PUT(request: NextRequest) {
     });
 
     return NextResponse.json(data[0]);
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("API error:", error);
+    const message = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json(
-      { error: (error as any)?.message || "Internal server error" },
+      { error: message },
       { status: 500 }
     );
   }
@@ -164,10 +175,11 @@ export async function DELETE(request: NextRequest) {
     });
 
     return NextResponse.json({ success: true });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("API error:", error);
+    const message = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json(
-      { error: (error as any)?.message || "Internal server error" },
+      { error: message },
       { status: 500 }
     );
   }

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { X, FileText, Users, CheckSquare, ChevronDown, Calendar, Award } from 'lucide-react';
 import { DateRangePicker } from "@/components/ui/date-picker";
 import { DateRange } from "react-day-picker";
@@ -176,46 +176,45 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
   }, [exam, isOpen]);
 
   // Load students for the selected classes
+  const loadStudents = useCallback(async () => {
+    const classIds = formData.classIds;
+    if (!exam || !isOpen || !classIds || classIds.length === 0) {
+      setStudentsByClass({});
+      return;
+    }
+    setLoadingStudents(true);
+    try {
+      const { data, error } = await supabase
+        .from('students')
+        .select('id, name, class_id')
+        .in('class_id', classIds)
+        .order('name');
+      if (error) throw error;
+      const byClass: Record<string, Array<{ id: string; name: string }>> = {};
+      const typedStudents = (data ?? []) as Array<{ id: string | number; name: string; class_id: string | number | null }>;
+      typedStudents.forEach((s) => {
+        const cid = String(s.class_id);
+        if (!byClass[cid]) byClass[cid] = [];
+        byClass[cid].push({ id: String(s.id), name: s.name });
+      });
+      setStudentsByClass(byClass);
+      setFormData(prev => {
+        const next = { ...prev.excludedStudentIdsByClass };
+        classIds.forEach(cid => { if (!next[cid]) next[cid] = []; });
+        Object.keys(next).forEach(cid => { if (!classIds.includes(cid)) delete next[cid]; });
+        return { ...prev, excludedStudentIdsByClass: next };
+      });
+    } catch (error) {
+      console.error('Failed to load class students', error);
+      setStudentsByClass({});
+    } finally {
+      setLoadingStudents(false);
+    }
+  }, [exam, formData.classIds, isOpen]);
+
   useEffect(() => {
-    const loadStudents = async () => {
-      const classIds = formData.classIds;
-      if (!exam || !isOpen || !classIds || classIds.length === 0) {
-        setStudentsByClass({});
-        return;
-      }
-      setLoadingStudents(true);
-      try {
-        const { data, error } = await supabase
-          .from('students')
-          .select('id, name, class_id')
-          .in('class_id', classIds)
-          .order('name');
-        if (error) throw error;
-        const byClass: Record<string, Array<{ id: string; name: string }>> = {};
-        (data || []).forEach((s: any) => {
-          const cid = String(s.class_id);
-          if (!byClass[cid]) byClass[cid] = [];
-          byClass[cid].push({ id: String(s.id), name: s.name });
-        });
-        setStudentsByClass(byClass);
-        // Ensure exclusion keys exist for newly selected classes
-        setFormData(prev => {
-          const next = { ...prev.excludedStudentIdsByClass };
-          classIds.forEach(cid => { if (!next[cid]) next[cid] = []; });
-          // prune removed classes
-          Object.keys(next).forEach(cid => { if (!classIds.includes(cid)) delete next[cid]; });
-          return { ...prev, excludedStudentIdsByClass: next };
-        });
-      } catch (e) {
-        console.error('Failed to load class students', e);
-        setStudentsByClass({});
-      } finally {
-        setLoadingStudents(false);
-      }
-    };
     loadStudents();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formData.classIds.join(','), isOpen, exam?.id]);
+  }, [loadStudents]);
 
   const handleInputChange = (field: keyof ExamFormData, value: string | number | string[] | Date | DateRange | { [key: string]: number } | undefined) => {
     setFormData(prev => ({

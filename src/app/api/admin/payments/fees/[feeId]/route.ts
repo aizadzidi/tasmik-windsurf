@@ -30,10 +30,11 @@ export async function PUT(req: NextRequest, context: FeeRouteContext) {
     });
 
     return NextResponse.json({ fee });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Admin fee update error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to update fee';
     return NextResponse.json(
-      { error: error?.message ?? 'Failed to update fee' },
+      { error: message },
       { status: 500 }
     );
   }
@@ -55,10 +56,11 @@ export async function DELETE(_req: NextRequest, context: FeeRouteContext) {
     });
 
     return NextResponse.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Admin fee delete error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to delete fee';
     return NextResponse.json(
-      { error: error?.message ?? 'Failed to delete fee' },
+      { error: message },
       { status: 500 }
     );
   }

@@ -23,11 +23,13 @@ export async function GET(request: NextRequest) {
     });
     
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Admin users fetch error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to fetch users';
+    const status = message.includes('Admin access required') ? 403 : 500;
     return NextResponse.json(
-      { error: error.message || 'Failed to fetch users' },
-      { status: error.message.includes('Admin access required') ? 403 : 500 }
+      { error: message },
+      { status }
     );
   }
 }
@@ -65,11 +67,13 @@ export async function PUT(request: NextRequest) {
     });
     
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Admin user update error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to update user';
+    const status = message.includes('Admin access required') ? 403 : 500;
     return NextResponse.json(
-      { error: error.message || 'Failed to update user' },
-      { status: error.message.includes('Admin access required') ? 403 : 500 }
+      { error: message },
+      { status }
     );
   }
 }

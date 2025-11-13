@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { getWeekBoundaries } from "@/lib/gradeUtils";
 import type { ViewMode } from "@/types/teacher";
@@ -44,21 +44,7 @@ export default function FullRecordsModal({
   const [deletingReport, setDeletingReport] = useState<Report | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-  useEffect(() => {
-    fetchStudentReports();
-  }, [student.id, userId, viewMode]);
-
-  // Memoize filtered reports to avoid unnecessary re-renders
-  const filteredReports = useMemo(() => {
-    if (viewMode === 'tasmik') {
-      return reports.filter(r => r.type === 'Tasmi');
-    } else if (viewMode === 'murajaah') {
-      return reports.filter(r => ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type));
-    }
-    return reports;
-  }, [reports, viewMode]);
-
-  const fetchStudentReports = async () => {
+  const fetchStudentReports = useCallback(async () => {
     // Only show loading spinner on initial load, not on view mode changes
     if (initialLoad) {
       setLoading(true);
@@ -83,7 +69,21 @@ export default function FullRecordsModal({
       setLoading(false);
       setInitialLoad(false);
     }
-  };
+  }, [initialLoad, student.id]);
+
+  useEffect(() => {
+    fetchStudentReports();
+  }, [fetchStudentReports, student.id, userId, viewMode]);
+
+  // Memoize filtered reports to avoid unnecessary re-renders
+  const filteredReports = useMemo(() => {
+    if (viewMode === 'tasmik') {
+      return reports.filter(r => r.type === 'Tasmi');
+    } else if (viewMode === 'murajaah') {
+      return reports.filter(r => ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type));
+    }
+    return reports;
+  }, [reports, viewMode]);
 
   const handleDelete = async (reportId: string) => {
     try {

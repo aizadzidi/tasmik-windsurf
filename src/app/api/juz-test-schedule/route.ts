@@ -1,5 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
+import { ok } from '@/types/http';
+
+type TestSessionRow = {
+  id: string;
+  student_id: string;
+  scheduled_date: string;
+  slot_number: number | null;
+  status: string | null;
+  juz_number?: number | string | null;
+  notes?: string | null;
+  students?: {
+    name?: string | null;
+    users?: {
+      name?: string | null;
+    } | null;
+  } | null;
+};
+
+type BasicSessionRow = Pick<TestSessionRow, 'id' | 'student_id' | 'scheduled_date' | 'slot_number' | 'status'>;
+type SessionUpdatePayload = Partial<Pick<TestSessionRow, 'scheduled_date' | 'slot_number' | 'status' | 'notes' | 'juz_number'>>;
+
+const getPostgrestCode = (error: unknown) => {
+  if (error && typeof error === 'object' && 'code' in error) {
+    const code = (error as { code?: string }).code;
+    return typeof code === 'string' ? code : undefined;
+  }
+  return undefined;
+};
 
 // Helper: parse YYYY-MM-DD safely
 function toDateOnlyString(d: Date) {
@@ -13,7 +42,11 @@ function isWeekend(dateStr: string) {
   return day === 0 || day === 6;
 }
 
-async function pickFirstAvailableSlot(client: any, dateStr: string, excludeSessionId?: string) {
+async function pickFirstAvailableSlot(
+  client: SupabaseClient,
+  dateStr: string,
+  excludeSessionId?: string
+) {
   const { data: existing, error } = await client
     .from('test_sessions')
     .select('id, slot_number')
@@ -21,9 +54,12 @@ async function pickFirstAvailableSlot(client: any, dateStr: string, excludeSessi
     .neq('status', 'cancelled');
   if (error) throw error;
   const used = new Set<number>();
-  for (const row of existing || []) {
+  const existingRows = (existing ?? []) as Array<Pick<TestSessionRow, 'id' | 'slot_number'>>;
+  for (const row of existingRows) {
     if (excludeSessionId && row.id === excludeSessionId) continue;
-    used.add(row.slot_number);
+    if (typeof row.slot_number === 'number') {
+      used.add(row.slot_number);
+    }
   }
   for (let slot = 1; slot <= 5; slot++) {
     if (!used.has(slot)) return slot;
@@ -56,14 +92,15 @@ export async function GET(request: NextRequest) {
         }
         const { data, error } = await query;
         if (error) throw error;
-        return { sessions: data, countsByDate: {}, capacityPerDay: 5 };
+        const rows = (data ?? []) as TestSessionRow[];
+        return { sessions: rows, countsByDate: {}, capacityPerDay: 5 };
       }
 
       // Bulk active schedule lookup by student IDs
       if (studentIdsCsv) {
         const ids = studentIdsCsv.split(',').map(s => s.trim()).filter(Boolean);
         if (ids.length === 0) return { sessions: [], countsByDate: {}, capacityPerDay: 5, activeByStudent: {} };
-        let query = client
+        const query = client
           .from('test_sessions')
           .select('student_id, scheduled_date, slot_number, status')
           .in('student_id', ids)
@@ -72,12 +109,13 @@ export async function GET(request: NextRequest) {
           .order('slot_number', { ascending: true });
         const { data, error } = await query;
         if (error) throw error;
-        const map: Record<string, any> = {};
-        for (const row of data || []) {
+        const rows = (data ?? []) as BasicSessionRow[];
+        const map: Record<string, BasicSessionRow> = {};
+        for (const row of rows) {
           // Keep earliest upcoming by default
           if (!map[row.student_id]) map[row.student_id] = row;
         }
-        return { sessions: data, countsByDate: {}, capacityPerDay: 5, activeByStudent: map };
+        return { sessions: rows, countsByDate: {}, capacityPerDay: 5, activeByStudent: map };
       }
 
       // Default: date range view
@@ -95,27 +133,83 @@ export async function GET(request: NextRequest) {
       if (error) throw error;
 
       // Build counts per day
+      const rows = (data ?? []) as TestSessionRow[];
       const counts: Record<string, number> = {};
-      for (const row of data || []) {
+      for (const row of rows) {
         const key = row.scheduled_date as string;
         counts[key] = (counts[key] || 0) + 1;
       }
 
-      return { sessions: data, countsByDate: counts, capacityPerDay: 5 };
+      return { sessions: rows, countsByDate: counts, capacityPerDay: 5 };
     });
 
-    return NextResponse.json(result);
-  } catch (error: any) {
+    const payload = ok(result);
+    return NextResponse.json(payload.data);
+  } catch (error: unknown) {
     console.error('Schedule GET error:', error);
-    return NextResponse.json({ error: error.message || 'Failed to fetch schedule' }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Failed to fetch schedule';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
 // POST - create a session
 // Body: { student_id, scheduled_date(YYYY-MM-DD), slot_number(1..5), juz_number?, notes?, requested_by? }
+type SessionRequestBody = {
+  student_id?: string;
+  scheduled_date?: string;
+  slot_number?: number | null;
+  juz_number?: number | null;
+  notes?: string | null;
+  requested_by?: string | null;
+};
+
+type SessionPatchBody = {
+  scheduled_date?: string;
+  slot_number?: number | null;
+  status?: string;
+  notes?: string | null;
+  juz_number?: number | null;
+};
+
+function isSessionPatchBody(value: unknown): value is SessionPatchBody {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  if (
+    record.scheduled_date !== undefined &&
+    typeof record.scheduled_date !== 'string'
+  ) {
+    return false;
+  }
+  if (
+    record.slot_number !== undefined &&
+    record.slot_number !== null &&
+    typeof record.slot_number !== 'number'
+  ) {
+    return false;
+  }
+  if (record.status !== undefined && typeof record.status !== 'string') {
+    return false;
+  }
+  if (
+    record.notes !== undefined &&
+    record.notes !== null &&
+    typeof record.notes !== 'string'
+  ) {
+    return false;
+  }
+  if (
+    record.juz_number !== undefined &&
+    record.juz_number !== null &&
+    typeof record.juz_number !== 'number'
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body = (await request.json()) as SessionRequestBody;
     const { student_id, scheduled_date, slot_number, juz_number, notes, requested_by } = body || {};
 
 if (!student_id || !scheduled_date) {
@@ -154,18 +248,19 @@ if (!student_id || !scheduled_date) {
         .insert([{ student_id, scheduled_date, slot_number: finalSlot, juz_number, notes, scheduled_by: requested_by }])
         .select();
       if (error) {
-        if ((error as any)?.code === '23505') {
+        if (getPostgrestCode(error) === '23505') {
           throw new Error('That slot is already booked for the selected day. Please choose another slot.');
         }
         throw error;
       }
-      return data?.[0];
+      return (data ?? [])[0] as TestSessionRow | undefined;
     });
 
     return NextResponse.json({ success: true, session: data }, { status: 201 });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Schedule POST error:', error);
-    return NextResponse.json({ error: error.message || 'Failed to create session' }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Failed to create session';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
@@ -177,12 +272,17 @@ export async function PATCH(request: NextRequest) {
     const id = searchParams.get('id');
     if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
 
-    const body = await request.json();
-    const allowed: any = {};
+    const rawBody = await request.json();
+    if (!isSessionPatchBody(rawBody)) {
+      return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+    }
+    const body = rawBody;
+    const allowed: SessionUpdatePayload = {};
     if (body.scheduled_date) allowed.scheduled_date = body.scheduled_date;
-    if (body.slot_number) allowed.slot_number = body.slot_number;
+    if (body.slot_number !== undefined) allowed.slot_number = body.slot_number;
     if (body.status) allowed.status = body.status;
     if (body.notes !== undefined) allowed.notes = body.notes;
+    if (body.juz_number !== undefined) allowed.juz_number = body.juz_number;
 
     const data = await adminOperationSimple(async (client) => {
 // Fetch current session
@@ -192,15 +292,16 @@ export async function PATCH(request: NextRequest) {
         .eq('id', id)
         .single();
       if (currentErr) throw currentErr;
+      const currentSession = current as BasicSessionRow | null;
 
       // Weekend guard on date change
-      const nextDate = (allowed as any).scheduled_date || (current as any)?.scheduled_date;
+      const nextDate = allowed.scheduled_date || currentSession?.scheduled_date;
       if (nextDate && isWeekend(nextDate)) {
         throw new Error('Scheduling is only allowed Monday–Friday.');
       }
 
       // If changing date and slot not provided, pick first available
-      if (!allowed.slot_number && allowed.scheduled_date && allowed.scheduled_date !== (current as any)?.scheduled_date) {
+      if (!allowed.slot_number && allowed.scheduled_date && allowed.scheduled_date !== currentSession?.scheduled_date) {
         const picked = await pickFirstAvailableSlot(client, allowed.scheduled_date, id as string);
         if (!picked) throw new Error('Selected day is full. Please choose another day.');
         allowed.slot_number = picked;
@@ -212,18 +313,19 @@ export async function PATCH(request: NextRequest) {
         .eq('id', id)
         .select();
       if (error) {
-        if ((error as any)?.code === '23505') {
+        if (getPostgrestCode(error) === '23505') {
           throw new Error('Selected slot is no longer available. Please choose another.');
         }
         throw error;
       }
-      return data?.[0];
+      return (data ?? [])[0] as TestSessionRow | undefined;
     });
 
     return NextResponse.json({ success: true, session: data });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Schedule PATCH error:', error);
-    return NextResponse.json({ error: error.message || 'Failed to update session' }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Failed to update session';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
@@ -245,8 +347,9 @@ export async function DELETE(request: NextRequest) {
     });
 
     return NextResponse.json({ success: true, session: data });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Schedule DELETE error:', error);
-    return NextResponse.json({ error: error.message || 'Failed to cancel session' }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Failed to cancel session';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { X, FileText, Users, CheckSquare, ChevronDown, Calendar, Award } from 'lucide-react';
 import { DateRangePicker } from "@/components/ui/date-picker";
 import { DateRange } from "react-day-picker";
@@ -247,39 +247,39 @@ const { data: gradingSystems, loading: loadingGrading, error: gradingError } = u
     }
   };
 
-  // Load students for selected classes
+  const loadSelectedClassStudents = useCallback(async () => {
+    const classIds = formData.classIds;
+    if (!classIds || classIds.length === 0) {
+      setStudentsByClass({});
+      return;
+    }
+    setLoadingStudents(true);
+    try {
+      const { data, error } = await supabase
+        .from('students')
+        .select('id, name, class_id')
+        .in('class_id', classIds)
+        .order('name');
+      if (error) throw error;
+      const byClass: Record<string, Array<{ id: string; name: string }>> = {};
+      const typedStudents = (data ?? []) as Array<{ id: string | number; name: string; class_id: string | number | null }>;
+      typedStudents.forEach((s) => {
+        const cid = String(s.class_id);
+        if (!byClass[cid]) byClass[cid] = [];
+        byClass[cid].push({ id: String(s.id), name: s.name });
+      });
+      setStudentsByClass(byClass);
+    } catch (error) {
+      console.error('Failed to load class students', error);
+      setStudentsByClass({});
+    } finally {
+      setLoadingStudents(false);
+    }
+  }, [formData.classIds]);
+
   useEffect(() => {
-    const load = async () => {
-      const classIds = formData.classIds;
-      if (!classIds || classIds.length === 0) {
-        setStudentsByClass({});
-        return;
-      }
-      setLoadingStudents(true);
-      try {
-        const { data, error } = await supabase
-          .from('students')
-          .select('id, name, class_id')
-          .in('class_id', classIds)
-          .order('name');
-        if (error) throw error;
-        const byClass: Record<string, Array<{ id: string; name: string }>> = {};
-        (data || []).forEach((s: any) => {
-          const cid = String(s.class_id);
-          if (!byClass[cid]) byClass[cid] = [];
-          byClass[cid].push({ id: String(s.id), name: s.name });
-        });
-        setStudentsByClass(byClass);
-      } catch (e) {
-        console.error('Failed to load class students', e);
-        setStudentsByClass({});
-      } finally {
-        setLoadingStudents(false);
-      }
-    };
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formData.classIds.join(',')]);
+    loadSelectedClassStudents();
+  }, [loadSelectedClassStudents]);
 
   const handleExcludeToggle = (classId: string, studentId: string, isChecked: boolean) => {
     setFormData(prev => {

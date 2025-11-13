@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useRef, useState } from 'react';
-import { X, TrendingUp, TrendingDown, Award, AlertCircle, FileText, Loader2 } from 'lucide-react';
+import { X, TrendingUp, TrendingDown, Award, FileText, Loader2 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, BarChart, Bar } from 'recharts';
 import { ResponsiveRadar } from '@nivo/radar';
 import { motion, AnimatePresence } from 'framer-motion';

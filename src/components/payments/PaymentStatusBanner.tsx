@@ -47,13 +47,13 @@ const STATUS_STYLE: Record<
   PaymentRecord['status'],
   { container: string; accent: string; button?: string }
 > = {
-  draft: { container: 'border-slate-200 bg-slate-50 text-slate-800', accent: 'bg-slate-200' },
-  initiated: { container: 'border-slate-200 bg-slate-50 text-slate-800', accent: 'bg-slate-200' },
-  pending: { container: 'border-amber-200 bg-amber-50 text-amber-900', accent: 'bg-amber-400', button: 'text-amber-900 border-amber-200 hover:bg-amber-100' },
-  paid: { container: 'border-emerald-200 bg-emerald-50 text-emerald-900', accent: 'bg-emerald-400' },
-  failed: { container: 'border-rose-200 bg-rose-50 text-rose-900', accent: 'bg-rose-400', button: 'text-rose-900 border-rose-200 hover:bg-rose-100' },
-  expired: { container: 'border-slate-200 bg-slate-50 text-slate-800', accent: 'bg-slate-300', button: 'text-slate-700 border-slate-200 hover:bg-slate-100' },
-  refunded: { container: 'border-indigo-200 bg-indigo-50 text-indigo-900', accent: 'bg-indigo-400' }
+  draft: { container: 'border-primary/30 bg-gradient-to-r from-primary/5 to-secondary/5 text-primary/80', accent: 'bg-primary/80' },
+  initiated: { container: 'border-primary/30 bg-gradient-to-r from-primary/5 to-secondary/5 text-primary/80', accent: 'bg-primary/80' },
+  pending: { container: 'border-amber-200 bg-amber-50/80 text-amber-900', accent: 'bg-amber-400', button: 'text-amber-900 border-amber-200 hover:bg-amber-100/80' },
+  paid: { container: 'border-emerald-200 bg-emerald-50/80 text-emerald-900', accent: 'bg-emerald-400' },
+  failed: { container: 'border-rose-200 bg-rose-50/80 text-rose-900', accent: 'bg-rose-400', button: 'text-rose-900 border-rose-200 hover:bg-rose-100/80' },
+  expired: { container: 'border-white/30 bg-white/80 text-slate-800', accent: 'bg-slate-400', button: 'text-slate-800 border-white/40 hover:bg-white/70' },
+  refunded: { container: 'border-secondary/40 bg-secondary/10 text-secondary', accent: 'bg-secondary' }
 };
 
 export function PaymentStatusBanner({ payment, onRefresh }: PaymentStatusBannerProps) {
@@ -63,7 +63,7 @@ export function PaymentStatusBanner({ payment, onRefresh }: PaymentStatusBannerP
   const style = STATUS_STYLE[payment.status] ?? STATUS_STYLE.draft;
 
   return (
-    <div className={`rounded-2xl border px-4 py-3 shadow-sm ${style.container}`}>
+    <div className={`rounded-2xl border px-4 py-4 shadow-lg backdrop-blur ${style.container}`}>
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="flex items-start gap-3">
           <span className={`mt-1 h-2 w-2 rounded-full ${style.accent}`} aria-hidden="true" />
@@ -82,14 +82,14 @@ export function PaymentStatusBanner({ payment, onRefresh }: PaymentStatusBannerP
           {showContinue && (
             <Button
               variant="outline"
-              className={`rounded-full px-4 py-1 text-sm font-semibold ${style.button ?? 'text-slate-800 border-slate-200 hover:bg-slate-100'}`}
+              className={`rounded-full px-4 py-1 text-sm font-semibold ${style.button ?? 'border-primary/30 text-primary hover:bg-primary/10'}`}
               onClick={() => window.open(payment.redirect_url!, '_blank')}
             >
               Sambung di Billplz
             </Button>
           )}
           {onRefresh && (
-            <Button variant="ghost" className="text-sm font-medium text-current hover:bg-white/40" onClick={onRefresh}>
+            <Button variant="ghost" className="text-sm font-medium text-current hover:opacity-80" onClick={onRefresh}>
               Segarkan status
             </Button>
           )}

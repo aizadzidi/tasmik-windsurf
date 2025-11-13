@@ -38,10 +38,11 @@ export async function GET(_req: NextRequest, context: RefreshRouteContext) {
     await recordPaymentEvent(payment.id, 'app', 'billplz_refresh', { bill, updated });
 
     return NextResponse.json({ payment: updated, bill });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Refresh payment error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to refresh payment';
     return NextResponse.json(
-      { error: error?.message ?? 'Failed to refresh payment' },
+      { error: message },
       { status: 500 }
     );
   }

@@ -15,6 +15,32 @@ type MetaExam = {
   exam_classes?: { classes?: { id: string; name: string } }[];
 };
 
+type ExamMetadataResponse = {
+  exams?: MetaExam[];
+};
+
+type ExamStudentSummary = {
+  id?: string | null;
+  name?: string | null;
+  class?: string | null;
+  classId?: string | null;
+  subjects?: Record<string, {
+    score?: number;
+    trend?: number[];
+    grade?: string;
+    exams?: { name: string; score: number }[];
+    optedOut?: boolean;
+  }>;
+  conduct?: StudentData['conduct'];
+  conductPercentages?: StudentData['conductPercentages'];
+  overall?: StudentData['overall'];
+};
+
+type ExamSummaryResponse = {
+  subjects?: string[];
+  students?: ExamStudentSummary[];
+};
+
 export default function ParentExamPage() {
   const [parentId, setParentId] = React.useState<string | null>(null);
   const [children, setChildren] = React.useState<Child[]>([]);
@@ -31,64 +57,99 @@ export default function ParentExamPage() {
   const throttleMs = 800;
 
   const loadMetadata = React.useCallback(async () => {
-    const metaRes = await fetch("/api/admin/exam-metadata");
-    const meta = await metaRes.json();
-    const released = (meta.exams || []).filter((e: any) => e.released === true);
-    setExams(released);
-    if (!selectedExam && released.length > 0) setSelectedExam(released[0].id);
-  }, [selectedExam]);
+    try {
+      const metaRes = await fetch("/api/admin/exam-metadata");
+      const meta = (await metaRes.json()) as ExamMetadataResponse;
+      const released = (meta.exams ?? []).filter((exam) => exam.released === true);
+      setExams(released);
+      setSelectedExam((prev) => prev || (released[0]?.id ?? ""));
+    } catch (error: unknown) {
+      console.error("Failed to load exam metadata", error);
+      setExams([]);
+    }
+  }, []);
 
   const loadResults = React.useCallback(async (examId: string, kids: Child[]) => {
-    if (!examId || kids.length === 0) { setStudentRows([]); setSubjects([]); return; }
+    if (!examId || kids.length === 0) {
+      setStudentRows([]);
+      setSubjects([]);
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch(`/api/admin/exams?examId=${examId}`);
-      const json = await res.json();
+      const json = (await res.json()) as ExamSummaryResponse;
       const subjectNames: string[] = Array.isArray(json.subjects) ? json.subjects : [];
       setSubjects(subjectNames);
-      const byId = new Map<string, any>((json.students || []).map((s: any) => [String(s.id), s]));
-      // Only include children that appear in this exam (i.e., in exam classes)
-      const filtered = kids.filter(c => byId.has(String(c.id)));
-      const next: StudentData[] = filtered.map(c => {
-        const d = byId.get(String(c.id));
-        const subjectsObj: StudentData['subjects'] = {};
+
+      const studentsArray = Array.isArray(json.students) ? json.students : [];
+      const byId = new Map<string, ExamStudentSummary>();
+      studentsArray.forEach((student) => {
+        if (!student) return;
+        const sid = student.id;
+        if (sid === null || sid === undefined) return;
+        byId.set(String(sid), student);
+      });
+
+      const filtered = kids.filter((c) => byId.has(String(c.id)));
+      const next: StudentData[] = filtered.map((c) => {
+        const data = byId.get(String(c.id));
+        const subjectsObj: StudentData["subjects"] = {};
         subjectNames.forEach((name) => {
-          const sd = d?.subjects?.[name];
-          if (!sd) return;
-          const grade = typeof sd?.grade === 'string' ? sd.grade : '';
-          const isTH = grade.toUpperCase() === 'TH';
-          const hasScore = typeof sd?.score === 'number';
+          const subjectDetails = data?.subjects?.[name];
+          if (!subjectDetails) return;
+          const grade = typeof subjectDetails.grade === "string" ? subjectDetails.grade : "";
+          const isTH = grade.toUpperCase() === "TH";
+          const hasScore = typeof subjectDetails.score === "number";
           if (!hasScore && !isTH) return;
           subjectsObj[name] = {
-            score: hasScore ? sd.score : 0,
-            trend: Array.isArray(sd?.trend) ? sd.trend : [],
+            score: hasScore ? (subjectDetails.score as number) : 0,
+            trend: Array.isArray(subjectDetails.trend) ? subjectDetails.trend : [],
             grade,
+            exams: Array.isArray(subjectDetails.exams) ? subjectDetails.exams : undefined,
+            optedOut: subjectDetails.optedOut,
           };
         });
+        const conductFallback = {
+          discipline: 0,
+          effort: 0,
+          participation: 0,
+          motivationalLevel: 0,
+          character: 0,
+          leadership: 0,
+        };
+        const conduct = data?.conduct || conductFallback;
+        const conductPercentages =
+          data?.conductPercentages ||
+          (data?.conduct
+            ? {
+                discipline: (data.conduct.discipline || 0) * 20,
+                effort: (data.conduct.effort || 0) * 20,
+                participation: (data.conduct.participation || 0) * 20,
+                motivationalLevel: (data.conduct.motivationalLevel || 0) * 20,
+                character: (data.conduct.character || 0) * 20,
+                leadership: (data.conduct.leadership || 0) * 20,
+              }
+            : undefined);
         return {
           id: String(c.id),
           name: c.name,
-          class: String(d?.class || ''),
-          classId: typeof d?.classId === 'string' ? d.classId : undefined,
+          class: typeof data?.class === "string" ? data.class : "",
+          classId: typeof data?.classId === "string" ? data.classId : undefined,
           subjects: subjectsObj,
-          conduct: d?.conduct || { discipline: 0, effort: 0, participation: 0, motivationalLevel: 0, character: 0, leadership: 0 },
-          conductPercentages: d?.conductPercentages || (d?.conduct ? {
-            discipline: (d.conduct.discipline || 0) * 20,
-            effort: (d.conduct.effort || 0) * 20,
-            participation: (d.conduct.participation || 0) * 20,
-            motivationalLevel: (d.conduct.motivationalLevel || 0) * 20,
-            character: (d.conduct.character || 0) * 20,
-            leadership: (d.conduct.leadership || 0) * 20,
-          } : undefined),
-          overall: d?.overall || { average: 0, rank: 0, needsAttention: false }
-        } as StudentData;
+          conduct,
+          conductPercentages,
+          overall: data?.overall || { average: 0, rank: 0, needsAttention: false },
+        };
       });
       setStudentRows(next);
-    } catch (e) {
-      console.error('Failed to load exam summary for parents', e);
+    } catch (error: unknown) {
+      console.error("Failed to load exam summary for parents", error);
       setStudentRows([]);
+      setSubjects([]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   // Load user, children, and initial metadata
@@ -105,8 +166,7 @@ export default function ParentExamPage() {
 
       await loadMetadata();
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadMetadata]);
 
   // Load results when exam selection or children change
   React.useEffect(() => {

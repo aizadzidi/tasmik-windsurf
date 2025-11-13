@@ -1,28 +1,54 @@
 "use client";
 import React from 'react';
 
+const WEEKDAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
 interface ScheduleTestModalProps {
   student: { id: string; name: string };
   onClose: () => void;
-  onScheduled?: (session: any) => void;
+  onScheduled?: (session: SessionSummary | null | undefined) => void;
 }
+
+type SessionSummary = {
+  id: string;
+  student_id: string;
+  scheduled_date: string;
+  slot_number: number | null;
+  status: string | null;
+  juz_number?: number | null;
+  notes?: string | null;
+};
 
 type CountsResponse = {
   capacityPerDay: number;
   countsByDate: Record<string, number>;
-  sessions: Array<{ id: string; student_id: string; scheduled_date: string; slot_number: number; status: string; juz_number?: number; notes?: string }>;
+  sessions: SessionSummary[];
+};
+
+type SessionMutationResponse = {
+  success?: boolean;
+  session?: SessionSummary | null;
+  error?: string;
+};
+
+const isErrorPayload = (value: unknown): value is { error: string } => {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      'error' in value &&
+      typeof (value as { error?: unknown }).error === 'string'
+  );
 };
 
 export default function ScheduleTestModal({ student, onClose, onScheduled }: ScheduleTestModalProps) {
-  const weekdays = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [counts, setCounts] = React.useState<Record<string, number>>({});
   const [capacity, setCapacity] = React.useState(5);
-const [selectedDate, setSelectedDate] = React.useState<string>('');
+  const [selectedDate, setSelectedDate] = React.useState<string>('');
   const [juzNumber, setJuzNumber] = React.useState<number | ''>('');
   const [notes, setNotes] = React.useState('');
-  const [activeSession, setActiveSession] = React.useState<any | null>(null);
+  const [activeSession, setActiveSession] = React.useState<SessionSummary | null>(null);
 
 // Month navigation state
   const [viewMonthStart, setViewMonthStart] = React.useState(() => {
@@ -45,46 +71,57 @@ function monthLabel(date: Date) {
     return { from: fmt(first), to: fmt(last) };
   }
 
-  async function loadMonth(date: Date) {
+  const loadMonth = React.useCallback(async (date: Date) => {
     setLoading(true);
     setError(null);
     try {
       const { from, to } = monthRange(date);
       const res = await fetch(`/api/juz-test-schedule?from=${from}&to=${to}`);
       const raw = await res.json();
-      if (!res.ok || (raw && (raw as any).error)) throw new Error((raw as any)?.error || 'Failed to load schedule');
+      if (!res.ok || isErrorPayload(raw)) {
+        throw new Error(raw?.error || 'Failed to load schedule');
+      }
       const json = raw as CountsResponse;
       setCounts(json.countsByDate || {});
       setCapacity(json.capacityPerDay || 5);
 
       // Check if student has active schedule
       const res2 = await fetch(`/api/juz-test-schedule?student_id=${student.id}&activeOnly=1`);
-      const json2 = await res2.json();
-      const existing = Array.isArray(json2.sessions) ? json2.sessions[0] : (Array.isArray(json2) ? json2[0] : null);
+      const json2Raw = await res2.json();
+      if (!res2.ok || isErrorPayload(json2Raw)) {
+        throw new Error(json2Raw?.error || 'Failed to load schedule');
+      }
+      const json2 = json2Raw as CountsResponse;
+      const existing = Array.isArray(json2.sessions) ? json2.sessions[0] : null;
       if (existing) {
         setActiveSession(existing);
         setSelectedDate(existing.scheduled_date);
-        setJuzNumber(existing.juz_number || '');
-        setNotes(existing.notes || '');
+        setJuzNumber(existing.juz_number ?? '');
+        setNotes(existing.notes ?? '');
+      } else {
+        setActiveSession(null);
+        setSelectedDate('');
+        setJuzNumber('');
+        setNotes('');
       }
-    } catch (e: any) {
-      setError(e.message || 'Failed to load schedule');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to load schedule';
+      setError(message);
     } finally {
       setLoading(false);
     }
-  }
+  }, [student.id]);
 
   React.useEffect(() => {
     loadMonth(viewMonthStart);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [student.id, viewMonthStart]);
+  }, [loadMonth, viewMonthStart]);
 
   // Build days list for the next 28 days
 const days = React.useMemo(() => {
     const start = new Date(Date.UTC(viewMonthStart.getUTCFullYear(), viewMonthStart.getUTCMonth(), 1));
     const end = new Date(Date.UTC(viewMonthStart.getUTCFullYear(), viewMonthStart.getUTCMonth() + 1, 0));
     const out: { key: string; display: string; booked: number }[] = [];
-for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 24 * 60 * 60 * 1000)) {
+    for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 24 * 60 * 60 * 1000)) {
       const day = d.getUTCDay();
       if (day === 0 || day === 6) continue; // weekends
       // Hide past dates (UTC)
@@ -92,61 +129,67 @@ for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 24 * 60 * 60 
       const todayStart = new Date(Date.UTC(todayUTC.getUTCFullYear(), todayUTC.getUTCMonth(), todayUTC.getUTCDate()));
       if (d < todayStart) continue;
       const key = d.toISOString().split('T')[0];
-      out.push({ key, display: `${weekdays[d.getUTCDay()]} ${d.getUTCDate()}`, booked: counts[key] || 0 });
+      out.push({ key, display: `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()}`, booked: counts[key] || 0 });
     }
     return out;
   }, [viewMonthStart, counts]);
 
 // No slot picking UI; slot will be auto-assigned server-side
 
-  async function submit() {
-if (!selectedDate) {
+  const submit = React.useCallback(async () => {
+    if (!selectedDate) {
       alert('Please select a date.');
       return;
     }
     try {
       setLoading(true);
       setError(null);
-      let res: Response;
-      if (activeSession) {
-        res = await fetch(`/api/juz-test-schedule?id=${activeSession.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-body: JSON.stringify({ scheduled_date: selectedDate, status: 'scheduled', notes, juz_number: juzNumber || null }),
-        });
-      } else {
-        res = await fetch('/api/juz-test-schedule', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-body: JSON.stringify({ student_id: student.id, scheduled_date: selectedDate, juz_number: juzNumber || null, notes }),
-        });
+      const isUpdate = Boolean(activeSession);
+      const url = isUpdate
+        ? `/api/juz-test-schedule?id=${activeSession?.id}`
+        : '/api/juz-test-schedule';
+      const method = isUpdate ? 'PATCH' : 'POST';
+      const body = isUpdate
+        ? { scheduled_date: selectedDate, status: 'scheduled', notes, juz_number: juzNumber || null }
+        : { student_id: student.id, scheduled_date: selectedDate, juz_number: juzNumber || null, notes };
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const json = (await res.json()) as SessionMutationResponse;
+      if (!res.ok || (json.error && !json.success)) {
+        throw new Error(json.error || 'Failed to schedule');
       }
-      const json = await res.json();
-      if (!res.ok || json.error) throw new Error(json.error || 'Failed');
-      onScheduled?.(json.session || json);
+      onScheduled?.(json.session ?? null);
       onClose();
-    } catch (e: any) {
-      setError(e.message || 'Failed to schedule');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to schedule';
+      setError(message);
     } finally {
       setLoading(false);
     }
-  }
+  }, [activeSession, juzNumber, notes, onClose, onScheduled, selectedDate, student.id]);
 
-  async function cancelExisting() {
+  const cancelExisting = React.useCallback(async () => {
     if (!activeSession) return;
     try {
       setLoading(true);
       const res = await fetch(`/api/juz-test-schedule?id=${activeSession.id}`, { method: 'DELETE' });
-      const json = await res.json();
-      if (!res.ok || json.error) throw new Error(json.error || 'Failed');
-      onScheduled?.(json.session);
+      const json = (await res.json()) as SessionMutationResponse;
+      if (!res.ok || (json.error && !json.success)) {
+        throw new Error(json.error || 'Failed to cancel');
+      }
+      onScheduled?.(json.session ?? null);
       onClose();
-    } catch (e: any) {
-      setError(e.message || 'Failed to cancel');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to cancel';
+      setError(message);
     } finally {
       setLoading(false);
     }
-  }
+  }, [activeSession, onClose, onScheduled]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -219,8 +262,9 @@ return (
                   } else {
                     alert('No available weekday slots found in the next 6 months.');
                   }
-                } catch (e: any) {
-                  setError(e.message || 'Failed to search availability');
+                } catch (error: unknown) {
+                  const message = error instanceof Error ? error.message : 'Failed to search availability';
+                  setError(message);
                 } finally {
                   setLoading(false);
                 }

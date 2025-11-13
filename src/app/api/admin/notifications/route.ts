@@ -1,5 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
+import { ok } from '@/types/http';
+
+type NotificationRow = {
+  id: string;
+  student_id: string | null;
+  student_name: string | null;
+  teacher_id: string | null;
+  teacher_name: string | null;
+  status?: string | null;
+  created_at?: string | null;
+  [key: string]: unknown;
+};
+
+type LookupRow = {
+  id: string;
+  name: string | null;
+};
 
 // GET - Fetch juz test notifications with resolved names (service role)
 export async function GET(_request: NextRequest) {
@@ -14,43 +31,55 @@ export async function GET(_request: NextRequest) {
 
       if (error) throw error;
 
-      const notificationsSafe = notifications || [];
+      const notificationsSafe = (notifications ?? []) as NotificationRow[];
 
       // 2) Batch resolve missing names
       const missingStudentIds = Array.from(new Set(
         notificationsSafe
-          .filter(n => !n.student_name)
-          .map(n => n.student_id)
-          .filter(Boolean)
+          .filter((n) => !n.student_name)
+          .map((n) => n.student_id)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0)
       ));
       const missingTeacherIds = Array.from(new Set(
         notificationsSafe
-          .filter(n => !n.teacher_name)
-          .map(n => n.teacher_id)
-          .filter(Boolean)
+          .filter((n) => !n.teacher_name)
+          .map((n) => n.teacher_id)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0)
       ));
 
-      const [studentsLookupRes, teachersLookupRes] = await Promise.all([
-        missingStudentIds.length > 0
-          ? client.from('students').select('id, name').in('id', missingStudentIds)
-          : Promise.resolve({ data: [], error: null } as any),
-        missingTeacherIds.length > 0
-          ? client.from('users').select('id, name').in('id', missingTeacherIds)
-          : Promise.resolve({ data: [], error: null } as any)
+      const fetchLookupRows = async (table: 'students' | 'users', ids: string[]) => {
+        if (ids.length === 0) return [] as LookupRow[];
+        const { data, error } = await client
+          .from(table)
+          .select('id, name')
+          .in('id', ids);
+        if (error) throw error;
+        return (data ?? []) as LookupRow[];
+      };
+
+      const [studentsLookupRows, teachersLookupRows] = await Promise.all([
+        fetchLookupRows('students', missingStudentIds),
+        fetchLookupRows('users', missingTeacherIds)
       ]);
 
       const studentIdToName: Record<string, string> = Object.fromEntries(
-        (studentsLookupRes.data || []).map((s: any) => [s.id, s.name])
+        studentsLookupRows.map((s) => [s.id, s.name || ''])
       );
       const teacherIdToName: Record<string, string> = Object.fromEntries(
-        (teachersLookupRes.data || []).map((u: any) => [u.id, u.name])
+        teachersLookupRows.map((u) => [u.id, u.name || ''])
       );
 
-      const processed = notificationsSafe.map((n: any) => ({
-        ...n,
-        student_name: n.student_name || studentIdToName[n.student_id] || 'Unknown Student',
-        teacher_name: n.teacher_name || teacherIdToName[n.teacher_id] || 'Unknown Teacher'
-      }));
+      const processed = notificationsSafe.map((n) => {
+        const resolvedStudentName =
+          n.student_name || (n.student_id ? studentIdToName[n.student_id] : undefined) || 'Unknown Student';
+        const resolvedTeacherName =
+          n.teacher_name || (n.teacher_id ? teacherIdToName[n.teacher_id] : undefined) || 'Unknown Teacher';
+        return {
+          ...n,
+          student_name: resolvedStudentName,
+          teacher_name: resolvedTeacherName
+        };
+      });
 
       // 3) Best-effort persist newly resolved names so future reads are cheap
       const updates = processed
@@ -63,10 +92,13 @@ export async function GET(_request: NextRequest) {
       if (updates.length > 0) {
         await Promise.all(
           updates.map(u =>
-            client
-              .from('juz_test_notifications')
-              .update({ student_name: u.student_name, teacher_name: u.teacher_name })
-              .eq('id', u.id)
+            (async () => {
+              const { error: updateError } = await client
+                .from('juz_test_notifications')
+                .update({ student_name: u.student_name, teacher_name: u.teacher_name })
+                .eq('id', u.id);
+              if (updateError) throw updateError;
+            })()
           )
         );
       }
@@ -74,14 +106,14 @@ export async function GET(_request: NextRequest) {
       return processed;
     });
 
-    return NextResponse.json({ notifications: data });
-  } catch (error: any) {
+    const payload = ok({ notifications: data });
+    return NextResponse.json(payload.data);
+  } catch (error: unknown) {
     console.error('Admin notifications fetch error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to fetch notifications';
     return NextResponse.json(
-      { notifications: [], error: error.message || 'Failed to fetch notifications' },
+      { notifications: [], error: message },
       { status: 500 }
     );
   }
 }
-
-

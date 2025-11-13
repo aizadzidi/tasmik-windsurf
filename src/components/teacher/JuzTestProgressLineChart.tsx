@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { ResponsiveLine } from "@nivo/line";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -46,11 +46,7 @@ export default function JuzTestProgressLineChart({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchTestData();
-  }, [studentId]);
-
-  const fetchTestData = async () => {
+  const fetchTestData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -82,7 +78,11 @@ export default function JuzTestProgressLineChart({
     } finally {
       setLoading(false);
     }
-  };
+  }, [studentId]);
+
+  useEffect(() => {
+    fetchTestData();
+  }, [fetchTestData]);
 
   // Group tests by juz_number and get the latest (best) score for each juz
   const latestTestsByJuz = tests.reduce((acc, test) => {

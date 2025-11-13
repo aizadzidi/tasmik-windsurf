@@ -38,10 +38,11 @@ export async function GET(request: NextRequest) {
     });
     
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Admin student reports fetch error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to fetch student reports';
     return NextResponse.json(
-      { error: error.message || 'Failed to fetch student reports' },
+      { error: message },
       { status: 500 }
     );
   }

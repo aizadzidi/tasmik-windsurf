@@ -6,6 +6,7 @@ import {
   recordPaymentEvent,
   updatePayment
 } from '@/lib/payments/paymentsService';
+import { isBillplzCreateBody } from '@/types/payments';
 import type { PaymentCartItem } from '@/types/payments';
 
 const appBaseUrl =
@@ -13,26 +14,110 @@ const appBaseUrl =
 const callbackUrl =
   process.env.BILLPLZ_CALLBACK_URL ?? `${appBaseUrl.replace(/\/$/, '')}/api/billplz/webhook`;
 
+type PaymentCartItemInput = Omit<
+  PaymentCartItem,
+  'quantity' | 'unitAmountCents' | 'subtotalCents'
+> &
+  Partial<Pick<PaymentCartItem, 'quantity' | 'unitAmountCents' | 'subtotalCents'>>;
+
+type CreateBillplzRequestBody = {
+  parentId: string;
+  payer: {
+    name: string;
+    email: string;
+    mobile: string;
+  };
+  items: PaymentCartItemInput[];
+  redirectUrl?: string;
+  description?: string;
+  merchantFeeCents?: number;
+};
+
 function sanitizePhone(phone: string) {
   return phone.replace(/[^0-9+]/g, '');
 }
 
+function isPaymentCartItemInput(item: unknown): item is PaymentCartItemInput {
+  if (!item || typeof item !== 'object') return false;
+  const candidate = item as Record<string, unknown>;
+  const requiredStrings: Array<keyof PaymentCartItem> = ['childId', 'childName', 'feeId', 'feeName'];
+  if (!requiredStrings.every(field => typeof candidate[field] === 'string')) {
+    return false;
+  }
+  if (!Array.isArray(candidate.months) || !candidate.months.every(m => typeof m === 'string')) {
+    return false;
+  }
+  const optionalNumericFields: Array<keyof PaymentCartItem> = ['quantity', 'unitAmountCents', 'subtotalCents'];
+  if (
+    optionalNumericFields.some(field => field in candidate && typeof candidate[field] !== 'number')
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isCreateBillplzRequestBody(body: unknown): body is CreateBillplzRequestBody {
+  if (!body || typeof body !== 'object') return false;
+  const candidate = body as Record<string, unknown>;
+  if (typeof candidate.parentId !== 'string') return false;
+
+  const payer = candidate.payer;
+  if (
+    !payer ||
+    typeof payer !== 'object' ||
+    typeof (payer as Record<string, unknown>).name !== 'string' ||
+    typeof (payer as Record<string, unknown>).email !== 'string' ||
+    typeof (payer as Record<string, unknown>).mobile !== 'string'
+  ) {
+    return false;
+  }
+
+  if (!Array.isArray(candidate.items) || !candidate.items.every(isPaymentCartItemInput)) {
+    return false;
+  }
+
+  if (
+    'redirectUrl' in candidate &&
+    candidate.redirectUrl !== undefined &&
+    typeof candidate.redirectUrl !== 'string'
+  ) {
+    return false;
+  }
+
+  if (
+    'description' in candidate &&
+    candidate.description !== undefined &&
+    typeof candidate.description !== 'string'
+  ) {
+    return false;
+  }
+
+  if (
+    'merchantFeeCents' in candidate &&
+    candidate.merchantFeeCents !== undefined &&
+    typeof candidate.merchantFeeCents !== 'number'
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body: unknown = await request.json();
+
+    if (!isCreateBillplzRequestBody(body)) {
+      return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+    }
+
     const { parentId, payer, items, redirectUrl } = body;
 
-    if (!parentId) {
-      return NextResponse.json({ error: 'Missing parentId' }, { status: 400 });
-    }
-    if (!payer?.name || !payer?.email || !payer?.mobile) {
-      return NextResponse.json({ error: 'Missing payer details' }, { status: 400 });
-    }
-    if (!Array.isArray(items) || items.length === 0) {
+    if (items.length === 0) {
       return NextResponse.json({ error: 'At least one line item is required' }, { status: 400 });
     }
 
-    const normalizedItems: PaymentCartItem[] = items.map((item: PaymentCartItem) => {
+    const normalizedItems: PaymentCartItem[] = items.map(item => {
       const quantity = item.quantity ?? 1;
       const unitAmount = item.unitAmountCents ?? 0;
       return {
@@ -68,16 +153,30 @@ export async function POST(request: NextRequest) {
         payment.id
       )}`;
 
+    const amountCents = preview.totalCents + preview.merchantFeeCents;
+    const billPayloadCandidate = {
+      name: payer.name,
+      email: payer.email,
+      amount: amountCents,
+      description,
+      reference_1: payment.id,
+      reference_2: childrenSummary.slice(0, 20)
+    };
+
+    if (!isBillplzCreateBody(billPayloadCandidate)) {
+      return NextResponse.json({ error: 'Invalid Billplz payload' }, { status: 400 });
+    }
+
     const bill = await createBillplzBill({
       name: payer.name,
       email: payer.email,
       mobile: sanitizePhone(payer.mobile),
-      amountCents: preview.totalCents + preview.merchantFeeCents,
+      amountCents,
       description,
       callbackUrl,
       redirectUrl: redirect,
       reference1: payment.id,
-      reference2: childrenSummary.slice(0, 20)
+      reference2: billPayloadCandidate.reference_2
     });
 
     const updated = await updatePayment(payment.id, {
@@ -98,10 +197,13 @@ export async function POST(request: NextRequest) {
       billUrl: bill.url,
       due_at: bill.due_at
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Billplz create error:', error);
     return NextResponse.json(
-      { error: error?.message ?? 'Failed to create Billplz bill' },
+      {
+        error:
+          error instanceof Error ? error.message : 'Failed to create Billplz bill'
+      },
       { status: 500 }
     );
   }

@@ -80,9 +80,9 @@ export async function POST(request: Request) {
     });
 
     return NextResponse.json({ success: true, data: result });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error creating grading system:', error);
-    const msg = error?.message || 'Internal server error';
+    const msg = error instanceof Error ? error.message : 'Internal server error';
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
@@ -124,9 +124,9 @@ export async function PUT(request: Request) {
     });
 
     return NextResponse.json({ success: true, data: result });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error updating grading system:', error);
-    const msg = error?.message || 'Internal server error';
+    const msg = error instanceof Error ? error.message : 'Internal server error';
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
@@ -150,13 +150,15 @@ export async function DELETE(request: Request) {
     });
 
     return NextResponse.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error deleting grading system:', error);
-    const code = error?.code || '';
+    const code = typeof (error as { code?: string } | null)?.code === 'string'
+      ? (error as { code: string }).code
+      : '';
     if (code === '23503') {
       return NextResponse.json({ error: 'Grading system is in use by one or more exams', code }, { status: 400 });
     }
-    const msg = error?.message || 'Internal server error';
+    const msg = error instanceof Error ? error.message : 'Internal server error';
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

@@ -2,6 +2,12 @@ export type FeeCategory = 'tuition' | 'club' | 'donation' | 'program' | 'other';
 
 export type BillingCycle = 'monthly' | 'yearly' | 'one_time' | 'ad_hoc';
 
+export type Fee = {
+  id: string;
+  name: string;
+  amount_cents: number;
+};
+
 export interface FeeCatalogItem {
   id: string;
   slug: string;
@@ -83,13 +89,23 @@ export interface BillplzBill {
   paid_at?: string;
 }
 
-export interface BillplzCreateResponse {
+export type BillplzCreateBody = {
+  email?: string;
+  name?: string;
+  amount: number;
+  description?: string;
+  reference_1?: string;
+  reference_2?: string;
+  metadata?: Record<string, string | number | null>;
+};
+
+export type BillplzCreateResponse = {
   id: string;
   url: string;
-  due_at: string | null;
-  reference_1: string | null;
-  amount: number;
-}
+  due_at?: string | null;
+  reference_1?: string | null;
+  amount?: number;
+};
 
 export interface BillplzCallbackPayload {
   id: string;
@@ -120,4 +136,22 @@ export interface PaymentPreview {
   totalCents: number;
   merchantFeeCents: number;
   payableMonths: string[];
+}
+
+export function isBillplzCreateBody(x: unknown): x is BillplzCreateBody {
+  if (!x || typeof x !== 'object') return false;
+  const candidate = x as Record<string, unknown>;
+  if (!('amount' in candidate) || typeof candidate.amount !== 'number') {
+    return false;
+  }
+  if ('metadata' in candidate && candidate.metadata !== undefined) {
+    if (
+      candidate.metadata === null ||
+      typeof candidate.metadata !== 'object' ||
+      Array.isArray(candidate.metadata)
+    ) {
+      return false;
+    }
+  }
+  return true;
 }

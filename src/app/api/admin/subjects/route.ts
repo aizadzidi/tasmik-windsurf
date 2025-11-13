@@ -20,7 +20,7 @@ export async function GET() {
     }
 
     return NextResponse.json({ success: true, subjects });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Unexpected error fetching subjects:', error);
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
   }
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({ success: true, subject: newSubject });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Unexpected error creating subject:', error);
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
   }
@@ -119,7 +119,7 @@ export async function PUT(request: NextRequest) {
     }
 
     return NextResponse.json({ success: true, subject: updatedSubject });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Unexpected error updating subject:', error);
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
   }
@@ -184,7 +184,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     return NextResponse.json({ success: true });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Unexpected error deleting subject:', error);
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
   }

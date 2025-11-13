@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 interface JuzTest {
   id: string;
@@ -123,7 +123,7 @@ export default function EditJuzTestForm({ test, onSave, onCancel }: EditJuzTestF
   });
 
   // Calculate page range based on test type and juz number
-  const calculatePageRange = () => {
+  const calculatePageRange = useCallback(() => {
     const juzRanges = {
       1: { startPage: 1, endPage: 21 }, 2: { startPage: 22, endPage: 42 }, 3: { startPage: 43, endPage: 63 },
       4: { startPage: 64, endPage: 84 }, 5: { startPage: 85, endPage: 105 }, 6: { startPage: 106, endPage: 126 },
@@ -147,7 +147,7 @@ export default function EditJuzTestForm({ test, onSave, onCancel }: EditJuzTestF
       return { from: range.startPage, to: hizb1End };
     }
     return { from: range.startPage, to: range.endPage };
-  };
+  }, [formData.juz_number, formData.test_hizb]);
 
   // Update page range when test type or juz number changes
   useEffect(() => {
@@ -157,22 +157,22 @@ export default function EditJuzTestForm({ test, onSave, onCancel }: EditJuzTestF
       page_from: pageRange.from,
       page_to: pageRange.to
     }));
-    
-    // Reinitialize scores when test type changes
-    const config = getQuestionConfig(formData.test_hizb);
-    const newScores: { [key: string]: { [key: string]: number } } = {};
-    
-    Object.entries(config).forEach(([category, categoryConfig]) => {
-      newScores[category] = {};
-      categoryConfig.questionNumbers.forEach(questionNum => {
-        // Keep existing scores if available, otherwise default to 0
-        newScores[category][String(questionNum)] = 
-          section2Scores[category]?.[String(questionNum)] || 0;
+
+    setSection2Scores(prevScores => {
+      const config = getQuestionConfig(formData.test_hizb);
+      const nextScores: { [key: string]: { [key: string]: number } } = {};
+
+      Object.entries(config).forEach(([category, categoryConfig]) => {
+        nextScores[category] = {};
+        categoryConfig.questionNumbers.forEach(questionNum => {
+          nextScores[category][String(questionNum)] =
+            prevScores[category]?.[String(questionNum)] || 0;
+        });
       });
+
+      return nextScores;
     });
-    
-    setSection2Scores(newScores);
-  }, [formData.test_hizb, formData.juz_number]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [calculatePageRange, formData.test_hizb]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

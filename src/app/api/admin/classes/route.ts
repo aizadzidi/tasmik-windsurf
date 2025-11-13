@@ -15,11 +15,13 @@ export async function GET() {
     });
     
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Admin classes fetch error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to fetch classes';
+    const status = message.includes('Admin access required') ? 403 : 500;
     return NextResponse.json(
-      { error: error.message || 'Failed to fetch classes' },
-      { status: error.message.includes('Admin access required') ? 403 : 500 }
+      { error: message },
+      { status }
     );
   }
 }
@@ -49,11 +51,13 @@ export async function POST(request: NextRequest) {
     });
     
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Admin class creation error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to create class';
+    const status = message.includes('Admin access required') ? 403 : 500;
     return NextResponse.json(
-      { error: error.message || 'Failed to create class' },
-      { status: error.message.includes('Admin access required') ? 403 : 500 }
+      { error: message },
+      { status }
     );
   }
 }

@@ -26,10 +26,11 @@ export async function GET() {
     });
 
     return NextResponse.json({ fees });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Admin fee catalog fetch error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to fetch fee catalog';
     return NextResponse.json(
-      { error: error?.message ?? 'Failed to fetch fee catalog' },
+      { error: message },
       { status: 500 }
     );
   }
@@ -73,10 +74,11 @@ export async function POST(request: NextRequest) {
     });
 
     return NextResponse.json({ fee });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Admin fee create error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to create fee';
     return NextResponse.json(
-      { error: error?.message ?? 'Failed to create fee' },
+      { error: message },
       { status: 500 }
     );
   }

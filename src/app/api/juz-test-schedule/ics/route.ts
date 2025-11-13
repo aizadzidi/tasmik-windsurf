@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
 
+type SessionIcsRow = {
+  id: string;
+  scheduled_date: string;
+  slot_number: number | null;
+  status: string | null;
+  juz_number?: number | string | null;
+  students?: { name?: string | null } | null;
+};
+
 function formatDateTime(date: Date) {
   const pad = (n: number) => String(n).padStart(2, '0');
   return (
@@ -30,7 +39,7 @@ const to = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000);
         .order('scheduled_date', { ascending: true })
         .order('slot_number', { ascending: true });
       if (error) throw error;
-      return data || [];
+      return (data ?? []) as SessionIcsRow[];
     });
 
     // Map slot to a time for nicer calendar display
@@ -42,13 +51,13 @@ const to = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000);
 
     let ics = 'BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Tasmik Windsurf//Juz Test Schedule//EN\nCALSCALE:GREGORIAN\nMETHOD:PUBLISH\n';
     for (const row of data) {
-      const [y, m, d] = (row.scheduled_date as string).split('-').map((x: string) => parseInt(x, 10));
+      const [y, m, d] = row.scheduled_date.split('-').map((x: string) => parseInt(x, 10));
       const start = new Date(Date.UTC(y, (m - 1), d, 0, 0, 0));
-      const time = slotToTime((row.slot_number as number) || 1);
+      const time = slotToTime(row.slot_number || 1);
       // Combine date and slot time (UTC)
       start.setUTCHours(time.getUTCHours(), 0, 0, 0);
       const end = new Date(start.getTime() + 45 * 60 * 1000); // 45 min slot
-      const title = `Juz Test - ${(row as any).students?.name || 'Student'} (Slot ${row.slot_number})`;
+      const title = `Juz Test - ${row.students?.name || 'Student'} (Slot ${row.slot_number})`;
       const desc = `Status: ${row.status}${row.juz_number ? `\\nJuz: ${row.juz_number}` : ''}`;
 
       ics += 'BEGIN:VEVENT\n';
@@ -69,8 +78,9 @@ const to = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000);
         'Content-Disposition': 'attachment; filename="juz-tests.ics"'
       }
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('ICS error:', error);
-    return NextResponse.json({ error: error.message || 'Failed to generate ICS' }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Failed to generate ICS';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

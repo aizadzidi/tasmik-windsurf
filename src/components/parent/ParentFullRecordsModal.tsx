@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { getWeekBoundaries } from "@/lib/gradeUtils";
 import type { ViewMode } from "@/types/teacher";
@@ -56,18 +56,14 @@ export default function ParentFullRecordsModal({
   student, 
   onClose, 
   onRefresh: _onRefresh,
-  userId,
+  userId: _userId,
   viewMode = 'tasmik'
 }: ParentFullRecordsModalProps) {
   // onRefresh is not used in this component but kept for interface compatibility
   const [reports, setReports] = useState<Report[]>([]);
   const [juzTests, setJuzTests] = useState<JuzTestRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [initialLoad, setInitialLoad] = useState(true);
-
-  useEffect(() => {
-    fetchStudentReports();
-  }, [student.id, userId, viewMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  const initialLoadRef = useRef(true);
 
   // Memoize filtered reports to avoid unnecessary re-renders
   const filteredReports = useMemo(() => {
@@ -79,12 +75,11 @@ export default function ParentFullRecordsModal({
     return reports;
   }, [reports, viewMode]);
 
-  const fetchStudentReports = async () => {
-    // Only show loading spinner on initial load, not on view mode changes
-    if (initialLoad) {
+  const fetchStudentReports = useCallback(async () => {
+    if (initialLoadRef.current) {
       setLoading(true);
     }
-    
+
     try {
       if (viewMode === 'juz_tests') {
         const { data, error } = await supabase
@@ -99,25 +94,28 @@ export default function ParentFullRecordsModal({
           setJuzTests([]);
         }
       } else {
-        // Fetch all reports for this student
         const { data, error } = await supabase
           .from("reports")
           .select("*")
           .eq("student_id", student.id)
           .order("date", { ascending: false })
           .order("created_at", { ascending: false });
-        
+
         if (!error && data) {
           setReports(data);
         }
       }
-    } catch (err) {
-      console.error("Failed to fetch student reports:", err);
+    } catch (error: unknown) {
+      console.error("Failed to fetch student reports:", error);
     } finally {
       setLoading(false);
-      setInitialLoad(false);
+      initialLoadRef.current = false;
     }
-  };
+  }, [student.id, viewMode]);
+
+  useEffect(() => {
+    fetchStudentReports();
+  }, [fetchStudentReports]);
 
 
   // Function to get question category configuration

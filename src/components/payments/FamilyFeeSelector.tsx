@@ -1,5 +1,4 @@
 import { Fragment, useMemo, useState } from 'react';
-import { Input } from '@/components/ui/Input';
 import { formatRinggit } from '@/lib/payments/pricingUtils';
 import type { FamilyFeeItem, FeeSelectionState, MonthOption } from './types';
 
@@ -59,7 +58,7 @@ export function FamilyFeeSelector({
         return (
           <div
             key={childId}
-            className="rounded-3xl border border-slate-200 bg-white/80 shadow-sm transition hover:border-slate-300"
+            className="rounded-3xl border border-white/25 bg-white/80 shadow-xl backdrop-blur transition hover:border-primary/40"
           >
             <button
               type="button"
@@ -75,7 +74,7 @@ export function FamilyFeeSelector({
                 </p>
               </div>
               <div className="flex items-center gap-2 text-sm text-slate-500">
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide">
+                <span className="rounded-full bg-gradient-to-r from-primary/10 to-secondary/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
                   {group.fees.length} yuran
                 </span>
                 <svg
@@ -90,7 +89,7 @@ export function FamilyFeeSelector({
               </div>
             </button>
             <div className={`overflow-hidden transition-all ${isOpen ? 'max-h-[1200px]' : 'max-h-0'}`}>
-              <div className="border-t border-slate-100 px-5 py-4 space-y-4">
+              <div className="border-t border-white/20 px-5 py-4 space-y-4">
                 {group.fees.map(fee => {
                   const selection =
                     selections[fee.assignmentId] ?? ({ include: false, months: [], quantity: 1 } as FeeSelectionState);
@@ -101,14 +100,14 @@ export function FamilyFeeSelector({
 
                   return (
                     <Fragment key={fee.assignmentId}>
-                      <div className="rounded-2xl border border-slate-100 bg-white/70 px-4 py-3 shadow-sm">
+                      <div className="rounded-2xl border border-white/25 bg-white/80 px-4 py-3 shadow-lg backdrop-blur">
                         <div className="flex flex-wrap items-center gap-4">
                           <div className="min-w-0 flex-1">
                             <p className="text-base font-semibold text-slate-900">{fee.feeName}</p>
-                            <p className="text-sm text-slate-500">{fee.description || hint}</p>
+                            <p className="text-sm text-slate-600">{fee.description || hint}</p>
                           </div>
                           <div className="text-right">
-                            <p className="text-xs uppercase tracking-wide text-slate-400">{hint}</p>
+                            <p className="text-xs uppercase tracking-wide text-primary/60">{hint}</p>
                             <p className="text-lg font-semibold text-slate-900">{formatRinggit(fee.amountCents)}</p>
                           </div>
                           <button
@@ -116,8 +115,8 @@ export function FamilyFeeSelector({
                             onClick={() => handleToggle(fee.assignmentId, { include: !selection.include })}
                             className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${
                               selection.include
-                                ? 'bg-sky-600 text-white shadow-sm'
-                                : 'border border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                                ? 'bg-gradient-to-r from-primary to-secondary text-white shadow-md'
+                                : 'border border-white/40 bg-white/70 text-slate-600 hover:border-primary/30'
                             }`}
                           >
                             {selection.include ? 'Dipilih' : 'Tambah'}
@@ -128,7 +127,7 @@ export function FamilyFeeSelector({
                           <div className="mt-4 space-y-3">
                             {isMonthly ? (
                               <div>
-                                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-primary/70">
                                   Bulan terlibat
                                 </p>
                                 <div className="flex flex-wrap gap-2">
@@ -146,8 +145,8 @@ export function FamilyFeeSelector({
                                         }}
                                         className={`rounded-full px-3 py-1 text-sm font-medium transition ${
                                           active
-                                            ? 'bg-sky-600 text-white shadow-sm'
-                                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                            ? 'bg-gradient-to-r from-primary to-secondary text-white shadow-md'
+                                            : 'border border-white/30 bg-white/60 text-slate-600 hover:border-primary/30 hover:text-slate-900'
                                         }`}
                                       >
                                         {option.label}
@@ -158,11 +157,11 @@ export function FamilyFeeSelector({
                               </div>
                             ) : (
                               <div className="flex flex-col gap-2 text-sm text-slate-600">
-                                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Kuantiti</span>
-                                <div className="inline-flex items-center rounded-full border border-slate-200 bg-white text-base">
+                                <span className="text-xs font-semibold uppercase tracking-wide text-primary/70">Kuantiti</span>
+                                <div className="inline-flex items-center rounded-full border border-white/30 bg-white/70 text-base">
                                   <button
                                     type="button"
-                                    className="px-3 py-1 text-slate-600 hover:text-slate-900"
+                                    className="px-3 py-1 text-slate-600 hover:text-primary"
                                     onClick={() =>
                                       handleToggle(fee.assignmentId, {
                                         quantity: Math.max(1, quantity - 1)
@@ -174,7 +173,7 @@ export function FamilyFeeSelector({
                                   <span className="px-4 font-semibold text-slate-900">{quantity}</span>
                                   <button
                                     type="button"
-                                    className="px-3 py-1 text-slate-600 hover:text-slate-900"
+                                    className="px-3 py-1 text-slate-600 hover:text-primary"
                                     onClick={() =>
                                       handleToggle(fee.assignmentId, {
                                         quantity: quantity + 1

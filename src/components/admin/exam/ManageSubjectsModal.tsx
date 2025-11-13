@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect } from "react";
-import { X, Plus, Edit, Trash2, Check, Square } from "lucide-react";
+import { X, Plus, Edit, Trash2, Check } from "lucide-react";
 
 interface Subject {
   id: string;
