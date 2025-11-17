@@ -7,13 +7,20 @@ import { FamilyFeeSelector } from "@/components/payments/FamilyFeeSelector";
 import { PaymentBreakdown } from "@/components/payments/PaymentBreakdown";
 import { PaymentStatusBanner } from "@/components/payments/PaymentStatusBanner";
 import { PaymentHistory } from "@/components/payments/PaymentHistory";
+import { OutstandingBalanceCard } from "@/components/payments/OutstandingBalanceCard";
 import type {
   ChildFeeAssignment,
   FeeCatalogItem,
+  ParentOutstandingBreakdown,
   PaymentLineItem,
   PaymentRecord
 } from "@/types/payments";
-import type { FamilyFeeItem, FeeSelectionState, MonthOption } from "@/components/payments/types";
+import type {
+  FamilyFeeItem,
+  FeeSelectionState,
+  MonthOption,
+  OutstandingChildSummary
+} from "@/components/payments/types";
 import { MERCHANT_FEE_CENTS, buildPaymentPreview } from "@/lib/payments/pricingUtils";
 import type { PaymentCartItem } from "@/types/payments";
 import { Button } from "@/components/ui/Button";
@@ -45,10 +52,35 @@ function buildMonthOptions(count = 6): MonthOption[] {
     const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
     options.push({
       key,
-      label: date.toLocaleDateString("ms-MY", { month: "short", year: "numeric" })
+      label: date.toLocaleDateString("en-MY", { month: "short", year: "numeric" })
     });
   }
   return options;
+}
+
+function parseMonthKey(monthKey?: string | null) {
+  if (!monthKey) return null;
+  const [yearStr, monthStr] = monthKey.split("-");
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+  const date = new Date(year, month - 1, 1);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getCustomAmountForParent(
+  fee: FeeCatalogItem | undefined,
+  parentUserId?: string | null
+): number | null {
+  if (!fee || !parentUserId) return null;
+  const overrides = Array.isArray(fee.metadata?.customAmounts) ? fee.metadata?.customAmounts : [];
+  const match = overrides.find((entry) => entry?.userId === parentUserId);
+  if (!match) {
+    return null;
+  }
+
+  const amount = Number(match.amountCents);
+  return Number.isFinite(amount) ? amount : null;
 }
 
 export default function ParentPaymentsPage() {
@@ -66,9 +98,11 @@ export default function ParentPaymentsPage() {
   const [selections, setSelections] = useState<Record<string, FeeSelectionState>>({});
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [outstandingLedger, setOutstandingLedger] = useState<ParentOutstandingBreakdown | null>(null);
+  const [outstandingLedgerLoading, setOutstandingLedgerLoading] = useState(false);
   const tabs = [
-    { id: "payment", label: "Pembayaran", description: "Pilih yuran dan semak ringkasan bil." },
-    { id: "history", label: "Rekod Bayaran", description: "Jejak transaksi dan status terdahulu." }
+    { id: "payment", label: "Payments", description: "Select fees and review the bill summary." },
+    { id: "history", label: "Payment History", description: "Track past transactions and statuses." }
   ] as const;
   type TabId = (typeof tabs)[number]["id"];
   const [activeTab, setActiveTab] = useState<TabId>("payment");
@@ -79,11 +113,31 @@ export default function ParentPaymentsPage() {
     [monthOptions]
   );
 
+  const applyCustomAmounts = useCallback(
+    (assignmentList: RawAssignment[]): RawAssignment[] => {
+      if (!parentId) return assignmentList;
+      return assignmentList.map((assignment) => {
+        if (
+          assignment.custom_amount_cents !== null &&
+          assignment.custom_amount_cents !== undefined
+        ) {
+          return assignment;
+        }
+        const customAmount = getCustomAmountForParent(assignment.fee, parentId);
+        if (customAmount === null) {
+          return assignment;
+        }
+        return { ...assignment, custom_amount_cents: customAmount };
+      });
+    },
+    [parentId]
+  );
+
   useEffect(() => {
     async function bootstrap() {
       const { data, error: authError } = await supabase.auth.getUser();
       if (authError || !data?.user) {
-        setError("Sila log masuk semula.");
+        setError("Please log in again.");
         setLoading(false);
         return;
       }
@@ -123,6 +177,25 @@ export default function ParentPaymentsPage() {
     []
   );
 
+  const refreshOutstandingLedger = useCallback(async (parentIdValue: string) => {
+    setOutstandingLedgerLoading(true);
+    try {
+      const response = await fetch(`/api/parent/payments/outstanding?parentId=${parentIdValue}`, {
+        cache: "no-store",
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Failed to fetch outstanding balance.");
+      }
+      setOutstandingLedger(payload as ParentOutstandingBreakdown);
+    } catch (ledgerError) {
+      console.error("Failed to fetch outstanding ledger", ledgerError);
+      setOutstandingLedger(null);
+    } finally {
+      setOutstandingLedgerLoading(false);
+    }
+  }, []);
+
   const loadData = useCallback(async () => {
     if (!parentId) return;
     setLoading(true);
@@ -145,6 +218,7 @@ export default function ParentPaymentsPage() {
       if (childIds.length === 0) {
         setAssignments([]);
         setPayments([]);
+        await refreshOutstandingLedger(parentId);
         return;
       }
 
@@ -200,15 +274,17 @@ export default function ParentPaymentsPage() {
         }));
       }
 
-      setAssignments(effectiveAssignments);
+      const assignmentsWithCustomAmounts = applyCustomAmounts(effectiveAssignments);
+      setAssignments(assignmentsWithCustomAmounts);
       setPayments((paymentRows ?? []) as PaymentWithItems[]);
+      await refreshOutstandingLedger(parentId);
     } catch (err: any) {
       console.error("Failed to load payments data", err);
-      setError(err.message ?? "Gagal memuatkan data pembayaran");
+      setError(err.message ?? "Failed to load payment data");
     } finally {
       setLoading(false);
     }
-  }, [parentId, fetchParentProfile]);
+  }, [applyCustomAmounts, parentId, fetchParentProfile, refreshOutstandingLedger]);
 
   useEffect(() => {
     if (!parentId) return;
@@ -243,6 +319,60 @@ export default function ParentPaymentsPage() {
     [children]
   );
 
+  const outstandingSummary = useMemo(() => {
+    const defaultSummary = {
+      totalCents: outstandingLedger?.totalOutstandingCents ?? 0,
+      earliestDueMonth: null as string | null,
+      childSummaries: [] as OutstandingChildSummary[]
+    };
+    if (!outstandingLedger) {
+      return defaultSummary;
+    }
+
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    let earliestMonth: string | null = null;
+
+    const childSummaries: OutstandingChildSummary[] = outstandingLedger.childBreakdown
+      .filter(child => child.childId && child.outstandingCents > 0)
+      .map(child => {
+        const months = [...(child.dueMonths ?? [])].sort();
+        months.forEach(monthKey => {
+          if (!earliestMonth || monthKey < earliestMonth) {
+            earliestMonth = monthKey;
+          }
+        });
+        let status: OutstandingChildSummary["status"] = "upcoming";
+        months.forEach(monthKey => {
+          const parsed = parseMonthKey(monthKey);
+          if (!parsed) return;
+          if (parsed < startOfMonth) {
+            status = "past_due";
+          } else if (
+            parsed.getFullYear() === startOfMonth.getFullYear() &&
+            parsed.getMonth() === startOfMonth.getMonth() &&
+            status !== "past_due"
+          ) {
+            status = "due_now";
+          }
+        });
+        return {
+          childId: child.childId!,
+          childName: child.childName,
+          amountCents: child.outstandingCents,
+          months,
+          status
+        };
+      })
+      .sort((a, b) => b.amountCents - a.amountCents);
+
+    return {
+      totalCents: outstandingLedger.totalOutstandingCents,
+      earliestDueMonth: earliestMonth,
+      childSummaries
+    };
+  }, [outstandingLedger]);
+
   const familyFeeItems: FamilyFeeItem[] = useMemo(
     () =>
       assignments.map(assignment => {
@@ -250,9 +380,9 @@ export default function ParentPaymentsPage() {
         return {
         assignmentId,
         childId: assignment.child_id,
-        childName: assignment.child?.name ?? childLookup[assignment.child_id] ?? "Anak",
+        childName: assignment.child?.name ?? childLookup[assignment.child_id] ?? "Child",
         feeId: assignment.fee_id,
-        feeName: assignment.fee?.name ?? "Yuran",
+        feeName: assignment.fee?.name ?? "Fee",
         description: assignment.fee?.description,
         amountCents: assignment.custom_amount_cents ?? assignment.fee?.amount_cents ?? 0,
         billingCycle: (assignment.fee?.billing_cycle as FamilyFeeItem["billingCycle"]) ?? "monthly",
@@ -314,11 +444,11 @@ export default function ParentPaymentsPage() {
   const handleCheckout = useCallback(async () => {
     if (!parentId) return;
     if (!cartItems.length) {
-      setError("Pilih sekurang-kurangnya satu yuran.");
+      setError("Select at least one fee.");
       return;
     }
     if (!parentProfile.email || !parentProfile.phone) {
-      setError("Lengkapkan emel dan nombor telefon dalam profil anda sebelum membuat bayaran.");
+      setError("Add your email and phone number to your profile before paying.");
       return;
     }
     setSubmitting(true);
@@ -331,7 +461,7 @@ export default function ParentPaymentsPage() {
         body: JSON.stringify({
           parentId,
           payer: {
-            name: parentProfile.name ?? "Ibu Bapa",
+            name: parentProfile.name ?? "Parent",
             email: parentProfile.email,
             mobile: parentProfile.phone
           },
@@ -342,14 +472,14 @@ export default function ParentPaymentsPage() {
 
       if (!response.ok) {
         const payload = await response.json();
-        throw new Error(payload.error || "Tidak dapat menjana bil Billplz.");
+        throw new Error(payload.error || "Unable to generate a Billplz bill.");
       }
 
       const payload = await response.json();
       window.location.href = payload.billUrl;
     } catch (err: any) {
       console.error("checkout error", err);
-      setError(err.message ?? "Gagal meneruskan pembayaran");
+      setError(err.message ?? "Failed to continue with the payment");
     } finally {
       setSubmitting(false);
     }
@@ -373,19 +503,19 @@ export default function ParentPaymentsPage() {
           <div className="flex flex-col gap-4 py-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
-                <p className="text-sm uppercase tracking-wide text-primary/70">Pembayaran</p>
-                <h1 className="text-3xl font-semibold text-slate-900">Bil anak & Billplz</h1>
+                <p className="text-sm uppercase tracking-wide text-primary/70">Payments</p>
+                <h1 className="text-3xl font-semibold text-slate-900">Student billing & Billplz</h1>
                 <p className="text-sm text-slate-600">
-                  Pilih yuran, semak jumlah dan teruskan ke Billplz dalam beberapa klik.
+                  Choose fees, review the total, and head to Billplz in just a few clicks.
                 </p>
               </div>
             </div>
 
             <div className="sticky top-14 z-30 rounded-2xl border border-white/60 bg-white/80 p-2 shadow-sm backdrop-blur">
               <div className="grid grid-cols-2 gap-2">
-                {tabs.map(tab => {
-                  const isActive = activeTab === tab.id;
-                  return (
+            {tabs.map(tab => {
+              const isActive = activeTab === tab.id;
+              return (
                     <button
                       key={tab.id}
                       type="button"
@@ -411,13 +541,24 @@ export default function ParentPaymentsPage() {
               </div>
             )}
 
+            <OutstandingBalanceCard
+              totalCents={outstandingSummary.totalCents}
+              earliestDueMonth={outstandingSummary.earliestDueMonth}
+              childSummaries={outstandingSummary.childSummaries}
+              isLoading={(loading && assignments.length === 0) || outstandingLedgerLoading}
+              onPayNow={() => setActiveTab("payment")}
+              onViewHistory={() => setActiveTab("history")}
+            />
+
             {activeTab === "payment" ? (
               <>
                 <section className="rounded-3xl border border-white/30 bg-white/80 p-6 shadow-xl backdrop-blur">
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
-                      <p className="text-sm font-semibold text-primary/70">Maklumat hubungan</p>
-                      <h2 className="text-xl font-semibold text-slate-900">Anda membayar sebagai {contactInputs.name || "—"}</h2>
+                      <p className="text-sm font-semibold text-primary/70">Contact information</p>
+                      <h2 className="text-xl font-semibold text-slate-900">
+                        You are paying as {contactInputs.name || "-"}
+                      </h2>
                     </div>
                     <Button
                       variant="ghost"
@@ -425,29 +566,29 @@ export default function ParentPaymentsPage() {
                       className="text-primary hover:text-secondary"
                       disabled={loading}
                     >
-                      Segarkan profil
+                      Refresh profile
                     </Button>
                   </div>
                   <div className="mt-4 grid gap-4 md:grid-cols-3">
                     <label className="flex flex-col gap-1 text-sm font-medium text-slate-800 md:col-span-3">
-                      Nama penuh
+                      Full name
                       <Input
                         value={contactInputs.name}
                         onChange={event => handleContactChange("name", event.target.value)}
-                        placeholder="Nama ibu/bapa"
+                        placeholder="Parent name"
                       />
                     </label>
                     <label className="flex flex-col gap-1 text-sm font-medium text-slate-800">
-                      Alamat emel
+                      Email address
                       <Input
                         type="email"
                         value={contactInputs.email}
                         onChange={event => handleContactChange("email", event.target.value)}
-                        placeholder="nama@contoh.com"
+                        placeholder="name@example.com"
                       />
                     </label>
                     <label className="flex flex-col gap-1 text-sm font-medium text-slate-800 md:col-span-2">
-                      Telefon bimbit
+                      Mobile number
                       <Input
                         value={contactInputs.phone}
                         onChange={event => handleContactChange("phone", event.target.value)}
@@ -457,9 +598,11 @@ export default function ParentPaymentsPage() {
                   </div>
                   <div className="mt-4 rounded-2xl border border-dashed border-primary/30 bg-gradient-to-r from-primary/5 to-secondary/5 px-4 py-3 text-sm text-primary/80">
                     {(!parentProfile.email || !parentProfile.phone) ? (
-                      <span className="font-medium text-secondary">Sila lengkapkan kedua-dua emel dan telefon sebelum meneruskan pembayaran.</span>
+                      <span className="font-medium text-secondary">
+                        Please provide both an email and phone number before continuing with payment.
+                      </span>
                     ) : (
-                      "Maklumat ini hanya digunakan untuk bil semasa. Simpan perubahan kekal di halaman profil anda."
+                      "This information is only used for this bill. Save permanent updates on your profile page."
                     )}
                   </div>
                 </section>
@@ -470,7 +613,7 @@ export default function ParentPaymentsPage() {
 
                 {loading ? (
                   <div className="rounded-xl border border-white/30 bg-white/70 p-6 text-center text-slate-600 shadow-xl backdrop-blur">
-                    Memuatkan data pembayaran…
+                    Loading payment data...
                   </div>
                 ) : (
                   <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -499,14 +642,14 @@ export default function ParentPaymentsPage() {
             ) : (
               <section className="rounded-3xl border border-white/30 bg-white/80 p-6 shadow-xl backdrop-blur">
                 <div className="flex flex-col gap-1">
-                  <p className="text-sm font-semibold text-primary/70">Rekod pembayaran</p>
-                  <h2 className="text-2xl font-semibold text-slate-900">Sejarah transaksi</h2>
-                  <p className="text-sm text-slate-600">Semak status dan rujukan setiap bil Billplz anda.</p>
+                  <p className="text-sm font-semibold text-primary/70">Payment records</p>
+                  <h2 className="text-2xl font-semibold text-slate-900">Transaction history</h2>
+                  <p className="text-sm text-slate-600">Review the status and reference for each Billplz bill.</p>
                 </div>
                 <div className="mt-6">
                   {loading ? (
                     <div className="rounded-xl border border-white/30 bg-white/70 p-6 text-center text-slate-600 shadow-xl backdrop-blur">
-                      Memuatkan rekod pembayaran…
+                      Loading payment records...
                     </div>
                   ) : (
                     <PaymentHistory payments={payments} />

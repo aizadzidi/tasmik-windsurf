@@ -1,4 +1,12 @@
-import type { FeeCatalogItem, PaymentRecord } from '@/types/payments';
+import type {
+  AdminOutstandingSummary,
+  AdminParentUser,
+  FeeCatalogItem,
+  FeeMetadata,
+  ParentBalanceAdjustment,
+  ParentOutstandingRow,
+  PaymentRecord
+} from '@/types/payments';
 
 const ADMIN_PAYMENTS_BASE = '/api/admin/payments';
 
@@ -27,6 +35,7 @@ export interface FeePayload {
   category: FeeCatalogItem['category'];
   billing_cycle: FeeCatalogItem['billing_cycle'];
   is_optional: boolean;
+  metadata?: FeeMetadata;
   slug?: string;
 }
 
@@ -53,4 +62,49 @@ export async function deleteFee(id: string) {
     method: 'DELETE'
   });
   return handleResponse<{ success: boolean }>(response);
+}
+
+export async function fetchOutstandingSummary() {
+  const response = await fetch(`${ADMIN_PAYMENTS_BASE}/summary`, { cache: 'no-store' });
+  return handleResponse<{ summary: AdminOutstandingSummary }>(response);
+}
+
+export async function fetchOutstandingParents(limit = 50) {
+  const response = await fetch(
+    `${ADMIN_PAYMENTS_BASE}/outstanding?limit=${encodeURIComponent(limit)}`,
+    { cache: 'no-store' }
+  );
+  return handleResponse<{ parents: ParentOutstandingRow[] }>(response);
+}
+
+export interface BalanceAdjustmentPayload {
+  parentId: string;
+  childId?: string | null;
+  feeId?: string | null;
+  monthKey?: string | null;
+  amountCents: number;
+  reason: string;
+  createdBy?: string | null;
+}
+
+export async function listBalanceAdjustments(limit = 50) {
+  const response = await fetch(
+    `${ADMIN_PAYMENTS_BASE}/adjustments?limit=${encodeURIComponent(limit)}`,
+    { cache: 'no-store' }
+  );
+  return handleResponse<{ adjustments: ParentBalanceAdjustment[] }>(response);
+}
+
+export async function createBalanceAdjustment(payload: BalanceAdjustmentPayload) {
+  const response = await fetch(`${ADMIN_PAYMENTS_BASE}/adjustments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  return handleResponse<{ adjustment: ParentBalanceAdjustment }>(response);
+}
+
+export async function fetchParentUsers() {
+  const response = await fetch(`${ADMIN_PAYMENTS_BASE}/parents`, { cache: 'no-store' });
+  return handleResponse<{ parents: AdminParentUser[] }>(response);
 }

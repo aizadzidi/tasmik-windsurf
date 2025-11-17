@@ -2,6 +2,16 @@ export type FeeCategory = 'tuition' | 'club' | 'donation' | 'program' | 'other';
 
 export type BillingCycle = 'monthly' | 'yearly' | 'one_time' | 'ad_hoc';
 
+export interface FeeCustomAmount {
+  userId: string;
+  amountCents: number;
+  note?: string | null;
+}
+
+export type FeeMetadata = {
+  customAmounts?: FeeCustomAmount[];
+} & Record<string, unknown>;
+
 export type Fee = {
   id: string;
   name: string;
@@ -19,7 +29,13 @@ export interface FeeCatalogItem {
   is_optional: boolean;
   is_active: boolean;
   sort_order: number;
-  metadata?: Record<string, unknown>;
+  metadata?: FeeMetadata;
+}
+
+export interface AdminParentUser {
+  id: string;
+  name: string | null;
+  email: string | null;
 }
 
 export interface ChildFeeAssignment {
@@ -136,6 +152,51 @@ export interface PaymentPreview {
   totalCents: number;
   merchantFeeCents: number;
   payableMonths: string[];
+}
+
+export interface AdminOutstandingSummary {
+  totalOutstandingCents: number;
+  totalDueCents: number;
+  totalPaidAgainstDueCents: number;
+  totalAdjustmentsCents: number;
+  totalCollectedCents: number;
+}
+
+export interface ParentOutstandingRow {
+  parentId: string;
+  parent: { name: string | null; email: string | null } | null;
+  outstandingCents: number;
+  totalDueCents: number;
+  totalPaidCents: number;
+  totalAdjustmentCents: number;
+}
+
+export interface ParentBalanceAdjustment {
+  id: string;
+  parentId: string;
+  childId?: string | null;
+  feeId?: string | null;
+  monthKey?: string | null;
+  amountCents: number;
+  reason: string;
+  createdBy?: string | null;
+  createdAt: string;
+}
+
+export interface ParentOutstandingBreakdown {
+  totalOutstandingCents: number;
+  totalDueCents: number;
+  totalPaidCents: number;
+  totalAdjustmentCents: number;
+  childBreakdown: Array<{
+    childId: string | null;
+    childName: string;
+    outstandingCents: number;
+    totalDueCents: number;
+    totalPaidCents: number;
+    totalAdjustmentCents: number;
+    dueMonths: string[];
+  }>;
 }
 
 export function isBillplzCreateBody(x: unknown): x is BillplzCreateBody {

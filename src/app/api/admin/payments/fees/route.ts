@@ -46,12 +46,16 @@ export async function POST(request: NextRequest) {
       category = DEFAULT_CATEGORY,
       billing_cycle = DEFAULT_BILLING,
       is_optional = false,
-      slug
+      slug,
+      metadata = {}
     } = body || {};
 
     if (!name || typeof amount_cents !== 'number') {
       return NextResponse.json({ error: 'Name and amount are required' }, { status: 400 });
     }
+
+    const safeMetadata =
+      metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
 
     const payload = {
       name,
@@ -60,7 +64,8 @@ export async function POST(request: NextRequest) {
       category,
       billing_cycle,
       is_optional,
-      slug: slug && slug.length > 0 ? slug : slugify(name)
+      slug: slug && slug.length > 0 ? slug : slugify(name),
+      metadata: safeMetadata
     };
 
     const fee = await adminOperationSimple(async client => {

@@ -31,3 +31,13 @@ export interface PaymentBreakdownProps {
   isSubmitting: boolean;
   onCheckout: () => void;
 }
+
+export type OutstandingStatus = 'past_due' | 'due_now' | 'upcoming';
+
+export interface OutstandingChildSummary {
+  childId: string;
+  childName: string;
+  amountCents: number;
+  months: string[];
+  status: OutstandingStatus;
+}

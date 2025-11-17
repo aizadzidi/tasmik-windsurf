@@ -13,12 +13,19 @@ export async function PUT(req: NextRequest, context: FeeRouteContext) {
     }
 
     const updates = await req.json();
+    const parsedUpdates = { ...updates };
+
+    if ('metadata' in parsedUpdates) {
+      const meta = parsedUpdates.metadata;
+      parsedUpdates.metadata =
+        meta && typeof meta === 'object' && !Array.isArray(meta) ? meta : {};
+    }
 
     const fee = await adminOperationSimple(async client => {
       const { data, error } = await client
         .from('payment_fee_catalog')
         .update({
-          ...updates,
+          ...parsedUpdates,
           updated_at: new Date().toISOString()
         })
         .eq('id', feeId)
