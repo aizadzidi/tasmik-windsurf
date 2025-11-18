@@ -1,6 +1,8 @@
 import type {
   AdminOutstandingSummary,
   AdminParentUser,
+  AdminStudent,
+  AdminMonthlyLedgerPoint,
   FeeCatalogItem,
   FeeMetadata,
   ParentBalanceAdjustment,
@@ -66,7 +68,9 @@ export async function deleteFee(id: string) {
 
 export async function fetchOutstandingSummary() {
   const response = await fetch(`${ADMIN_PAYMENTS_BASE}/summary`, { cache: 'no-store' });
-  return handleResponse<{ summary: AdminOutstandingSummary }>(response);
+  return handleResponse<{ summary: AdminOutstandingSummary; monthlyLedger: AdminMonthlyLedgerPoint[] }>(
+    response
+  );
 }
 
 export async function fetchOutstandingParents(limit = 50) {
@@ -81,7 +85,7 @@ export interface BalanceAdjustmentPayload {
   parentId: string;
   childId?: string | null;
   feeId?: string | null;
-  monthKey?: string | null;
+  monthKey: string;
   amountCents: number;
   reason: string;
   createdBy?: string | null;
@@ -104,7 +108,21 @@ export async function createBalanceAdjustment(payload: BalanceAdjustmentPayload)
   return handleResponse<{ adjustment: ParentBalanceAdjustment }>(response);
 }
 
+export async function updateBalanceAdjustment(id: string, payload: BalanceAdjustmentPayload) {
+  const response = await fetch(`${ADMIN_PAYMENTS_BASE}/adjustments/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  return handleResponse<{ adjustment: ParentBalanceAdjustment }>(response);
+}
+
 export async function fetchParentUsers() {
   const response = await fetch(`${ADMIN_PAYMENTS_BASE}/parents`, { cache: 'no-store' });
   return handleResponse<{ parents: AdminParentUser[] }>(response);
+}
+
+export async function fetchAdminStudents() {
+  const response = await fetch('/api/admin/students', { cache: 'no-store' });
+  return handleResponse<AdminStudent[]>(response);
 }

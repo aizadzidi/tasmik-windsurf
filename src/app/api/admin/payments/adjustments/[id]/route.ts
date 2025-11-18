@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
 
 type AdjustmentPayload = {
@@ -25,44 +25,19 @@ function normalizeMonthKey(input: string | null | undefined): string {
   return `${match[1]}-${match[2]}-01`;
 }
 
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const limit = Math.min(Math.max(Number(searchParams.get('limit')) || 50, 1), 200);
+type AdjustmentRouteContext = {
+  params: Promise<{ id: string }>;
+};
 
-  try {
-    const adjustments = await adminOperationSimple(async client => {
-      const { data, error } = await client
-        .from('parent_balance_adjustments')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(limit);
+export async function PUT(request: NextRequest, context: AdjustmentRouteContext) {
+  const { id: adjustmentId } = await context.params;
 
-      if (error) throw error;
-      return (data ?? []).map(row => ({
-        id: row.id,
-        parentId: row.parent_id,
-        childId: row.child_id,
-        feeId: row.fee_id,
-        monthKey: row.month_key,
-        amountCents: row.amount_cents,
-        reason: row.reason,
-        createdBy: row.created_by,
-        createdAt: row.created_at
-      }));
-    });
-
-    return NextResponse.json({ adjustments });
-  } catch (error: unknown) {
-    console.error('List adjustments error:', error);
-    const message = error instanceof Error ? error.message : 'Unable to fetch adjustments';
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
-}
-
-export async function POST(request: Request) {
   try {
     const payload = (await request.json()) as AdjustmentPayload;
 
+    if (!adjustmentId) {
+      return NextResponse.json({ error: 'Adjustment ID is required' }, { status: 400 });
+    }
     if (!payload.parentId) {
       return NextResponse.json({ error: 'parentId is required' }, { status: 400 });
     }
@@ -80,10 +55,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'reason is required' }, { status: 400 });
     }
 
-    const inserted = await adminOperationSimple(async client => {
+    const updated = await adminOperationSimple(async client => {
       const { data, error } = await client
         .from('parent_balance_adjustments')
-        .insert({
+        .update({
           parent_id: payload.parentId,
           child_id: payload.childId ?? null,
           fee_id: payload.feeId ?? null,
@@ -92,6 +67,7 @@ export async function POST(request: Request) {
           reason: payload.reason.trim(),
           created_by: payload.createdBy ?? null
         })
+        .eq('id', adjustmentId)
         .select('*')
         .single();
 
@@ -109,10 +85,10 @@ export async function POST(request: Request) {
       };
     });
 
-    return NextResponse.json({ adjustment: inserted });
+    return NextResponse.json({ adjustment: updated });
   } catch (error: unknown) {
-    console.error('Create adjustment error:', error);
-    const message = error instanceof Error ? error.message : 'Unable to create adjustment';
+    console.error('Update adjustment error:', error);
+    const message = error instanceof Error ? error.message : 'Unable to update adjustment';
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

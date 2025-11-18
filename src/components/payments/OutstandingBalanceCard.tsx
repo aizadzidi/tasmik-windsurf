@@ -53,16 +53,24 @@ export function OutstandingBalanceCard({
   onPayNow,
   onViewHistory
 }: OutstandingBalanceCardProps) {
-  const hasOutstanding = totalCents > 0 && childSummaries.length > 0;
+  const normalizedTotal = Math.abs(totalCents);
+  const hasBalance = normalizedTotal > 0;
+  const isOutstanding = normalizedTotal > 0;
   const visibleChildren = childSummaries.slice(0, 3);
   const remainingChildren = childSummaries.length - visibleChildren.length;
   const dueMonthLabel = formatDueMonth(earliestDueMonth);
+
+  const renderItemLabel = (months: string[]) => {
+    if (months.length) return humanizeMonths(months);
+    if (dueMonthLabel) return `Tunggakan bermula ${dueMonthLabel}`;
+    return 'Yuran khas';
+  };
 
   return (
     <Card
       className={cn(
         'rounded-3xl border shadow-xl backdrop-blur',
-        hasOutstanding ? 'border-amber-200/70 bg-amber-50/80' : 'border-emerald-200/60 bg-emerald-50/70'
+        isOutstanding ? 'border-rose-200/70 bg-rose-50/80' : 'border-emerald-200/60 bg-emerald-50/70'
       )}
     >
       <CardContent className="space-y-6 p-6">
@@ -73,28 +81,30 @@ export function OutstandingBalanceCard({
               <span
                 className={cn(
                   'text-3xl font-semibold',
-                  hasOutstanding ? 'text-amber-700' : 'text-emerald-700'
+                  isOutstanding ? 'text-rose-700' : 'text-emerald-700'
                 )}
               >
-                {formatRinggit(totalCents)}
+                {formatRinggit(normalizedTotal)}
               </span>
-              {dueMonthLabel && hasOutstanding && (
-                <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-amber-800 shadow-sm">
+              {dueMonthLabel && isOutstanding && (
+                <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-rose-800 shadow-sm">
                   Tamat tempoh {dueMonthLabel}
                 </span>
               )}
             </div>
             <p className="text-sm text-slate-600">
-              {hasOutstanding
-                ? 'Selesaikan yuran tertangguh untuk mengelak gangguan pembelajaran anak.'
-                : 'Hebat! Semua yuran anak anda telah dikemas kini.'}
+              {isOutstanding
+                ? 'Yuran tertunggak masih ada. Selesaikan bayaran untuk mengelak gangguan pembelajaran anak.'
+                : hasBalance
+                  ? 'Anda mempunyai baki kredit. Baki ini akan ditolak daripada caj seterusnya.'
+                  : 'Hebat! Semua yuran anak anda telah dikemas kini.'}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button
               className="rounded-2xl px-5 text-sm font-semibold shadow-lg"
               onClick={onPayNow}
-              disabled={!hasOutstanding || !onPayNow}
+              disabled={!onPayNow}
             >
               Bayar sekarang
             </Button>
@@ -114,31 +124,42 @@ export function OutstandingBalanceCard({
             <div className="h-4 rounded-full bg-slate-200/70" />
             <div className="h-4 rounded-full bg-slate-200/70" />
           </div>
-        ) : hasOutstanding ? (
-          <div className="grid gap-4 md:grid-cols-2">
-            {visibleChildren.map(child => {
-              const style = STATUS_STYLES[child.status];
-              return (
-                <div
-                  key={child.childId}
-                  className={cn(
-                    'flex flex-col gap-2 rounded-2xl border bg-white/70 p-4 shadow-sm',
-                    style.accent
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-slate-900">{child.childName}</p>
-                    <span className={cn('rounded-full px-3 py-1 text-xs font-semibold', style.badge)}>
-                      {style.label}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-600">
-                    {child.months.length ? humanizeMonths(child.months) : 'Yuran khas'}
-                  </p>
-                  <p className="text-lg font-semibold text-slate-900">{formatRinggit(child.amountCents)}</p>
-                </div>
-              );
-            })}
+        ) : isOutstanding ? (
+          <>
+            {childSummaries.length > 0 ? (
+              <div className="space-y-3">
+                {visibleChildren.map(child => {
+                  const style = STATUS_STYLES[child.status];
+                  return (
+                    <div
+                      key={child.childId}
+                      className={cn(
+                        'flex flex-col gap-2 rounded-2xl border bg-white/70 p-4 shadow-sm'
+                      )}
+                    >
+                      <p className="text-sm font-semibold text-slate-900">{child.childName}</p>
+                      <p className="text-xs text-slate-600">{renderItemLabel(child.months)}</p>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-lg font-semibold text-slate-900">{formatRinggit(child.amountCents)}</p>
+                        <span className={cn('rounded-full px-3 py-1 text-xs font-semibold', style.badge)}>
+                          {style.label}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-rose-100 bg-white/70 px-4 py-3 text-sm text-rose-700">
+                Caj tertunggak telah dikonfigurasi oleh pentadbir
+                {dueMonthLabel ? ` (bermula ${dueMonthLabel})` : ''}. Sila rujuk butiran bil atau tekan “Bayar
+                sekarang” untuk melihat jumlah yang perlu dilangsaikan.
+              </div>
+            )}
+          </>
+        ) : hasBalance ? (
+          <div className="rounded-2xl border border-emerald-200 bg-white/70 px-4 py-3 text-sm text-emerald-700">
+            Tiada yuran tertunggak buat masa ini. Baki kredit anda akan digunakan untuk bil akan datang.
           </div>
         ) : (
           <div className="rounded-2xl border border-emerald-200 bg-white/70 px-4 py-3 text-sm text-emerald-700">
@@ -146,13 +167,13 @@ export function OutstandingBalanceCard({
           </div>
         )}
 
-        {remainingChildren > 0 && hasOutstanding && (
+        {remainingChildren > 0 && isOutstanding && (
           <p className="text-xs text-slate-600">
             +{remainingChildren} anak lagi mempunyai yuran tertunggak. Pergi ke Rekod Bayaran untuk senarai penuh.
           </p>
         )}
 
-        {hasOutstanding && (
+        {isOutstanding && (
           <p className="text-xs text-slate-500">
             Jika bayaran telah dibuat di luar sistem, hubungi pentadbir supaya bulan berkenaan ditanda sebagai selesai.
           </p>

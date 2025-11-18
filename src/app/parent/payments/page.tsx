@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import Navbar from "@/components/Navbar";
 import { supabase } from "@/lib/supabaseClient";
 import { FamilyFeeSelector } from "@/components/payments/FamilyFeeSelector";
@@ -98,6 +98,7 @@ export default function ParentPaymentsPage() {
   const [selections, setSelections] = useState<Record<string, FeeSelectionState>>({});
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const paymentSectionRef = useRef<HTMLDivElement | null>(null);
   const [outstandingLedger, setOutstandingLedger] = useState<ParentOutstandingBreakdown | null>(null);
   const [outstandingLedgerLoading, setOutstandingLedgerLoading] = useState(false);
   const tabs = [
@@ -322,7 +323,7 @@ export default function ParentPaymentsPage() {
   const outstandingSummary = useMemo(() => {
     const defaultSummary = {
       totalCents: outstandingLedger?.totalOutstandingCents ?? 0,
-      earliestDueMonth: null as string | null,
+      earliestDueMonth: outstandingLedger?.earliestDueMonth ?? null,
       childSummaries: [] as OutstandingChildSummary[]
     };
     if (!outstandingLedger) {
@@ -331,10 +332,10 @@ export default function ParentPaymentsPage() {
 
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    let earliestMonth: string | null = null;
+    let earliestMonth: string | null = outstandingLedger.earliestDueMonth ?? null;
 
     const childSummaries: OutstandingChildSummary[] = outstandingLedger.childBreakdown
-      .filter(child => child.childId && child.outstandingCents > 0)
+      .filter(child => child.outstandingCents !== 0)
       .map(child => {
         const months = [...(child.dueMonths ?? [])].sort();
         months.forEach(monthKey => {
@@ -357,9 +358,9 @@ export default function ParentPaymentsPage() {
           }
         });
         return {
-          childId: child.childId!,
-          childName: child.childName,
-          amountCents: child.outstandingCents,
+          childId: child.childId ?? "manual-adjustment",
+          childName: child.childName ?? "Pelarasan pentadbir",
+          amountCents: Math.abs(child.outstandingCents),
           months,
           status
         };
@@ -367,7 +368,7 @@ export default function ParentPaymentsPage() {
       .sort((a, b) => b.amountCents - a.amountCents);
 
     return {
-      totalCents: outstandingLedger.totalOutstandingCents,
+      totalCents: Math.abs(outstandingLedger.totalOutstandingCents),
       earliestDueMonth: earliestMonth,
       childSummaries
     };
@@ -546,8 +547,18 @@ export default function ParentPaymentsPage() {
               earliestDueMonth={outstandingSummary.earliestDueMonth}
               childSummaries={outstandingSummary.childSummaries}
               isLoading={(loading && assignments.length === 0) || outstandingLedgerLoading}
-              onPayNow={() => setActiveTab("payment")}
-              onViewHistory={() => setActiveTab("history")}
+              onPayNow={() => {
+                setActiveTab("payment");
+                requestAnimationFrame(() => {
+                  paymentSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                });
+              }}
+              onViewHistory={() => {
+                setActiveTab("history");
+                requestAnimationFrame(() => {
+                  paymentSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                });
+              }}
             />
 
             {activeTab === "payment" ? (
@@ -607,37 +618,39 @@ export default function ParentPaymentsPage() {
                   </div>
                 </section>
 
-                {pendingPayment && (
-                  <PaymentStatusBanner payment={pendingPayment} onRefresh={refreshPendingStatus} />
-                )}
+                <div ref={paymentSectionRef}>
+                  {pendingPayment && (
+                    <PaymentStatusBanner payment={pendingPayment} onRefresh={refreshPendingStatus} />
+                  )}
 
-                {loading ? (
-                  <div className="rounded-xl border border-white/30 bg-white/70 p-6 text-center text-slate-600 shadow-xl backdrop-blur">
-                    Loading payment data...
-                  </div>
-                ) : (
-                  <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-                    <div className="space-y-6">
+                  {loading ? (
+                    <div className="rounded-xl border border-white/30 bg-white/70 p-6 text-center text-slate-600 shadow-xl backdrop-blur">
+                      Loading payment data...
+                    </div>
+                  ) : (
+                    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+                      <div className="space-y-6">
+                        <div className="scroll-mt-32">
+                          <FamilyFeeSelector
+                            items={familyFeeItems}
+                            selections={selections}
+                            monthOptions={monthOptions}
+                            onSelectionChange={handleSelectionChange}
+                          />
+                        </div>
+                      </div>
                       <div className="scroll-mt-32">
-                        <FamilyFeeSelector
-                          items={familyFeeItems}
-                          selections={selections}
-                          monthOptions={monthOptions}
-                          onSelectionChange={handleSelectionChange}
+                        <PaymentBreakdown
+                          cartItems={cartItems}
+                          totalCents={preview.totalCents}
+                          merchantFeeCents={preview.merchantFeeCents}
+                          isSubmitting={submitting}
+                          onCheckout={handleCheckout}
                         />
                       </div>
                     </div>
-                    <div className="scroll-mt-32">
-                      <PaymentBreakdown
-                        cartItems={cartItems}
-                        totalCents={preview.totalCents}
-                        merchantFeeCents={preview.merchantFeeCents}
-                        isSubmitting={submitting}
-                        onCheckout={handleCheckout}
-                      />
-                    </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </>
             ) : (
               <section className="rounded-3xl border border-white/30 bg-white/80 p-6 shadow-xl backdrop-blur">

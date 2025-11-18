@@ -38,6 +38,12 @@ export interface AdminParentUser {
   email: string | null;
 }
 
+export interface AdminStudent {
+  id: string;
+  name: string | null;
+  parent_id: string | null;
+}
+
 export interface ChildFeeAssignment {
   id: string;
   child_id: string;
@@ -162,13 +168,24 @@ export interface AdminOutstandingSummary {
   totalCollectedCents: number;
 }
 
+export interface AdminMonthlyLedgerPoint {
+  month: string; // YYYY-MM
+  dueCents: number;
+  paidCents: number;
+  adjustmentCents: number;
+  outstandingCents: number;
+  collectedCents: number;
+}
+
 export interface ParentOutstandingRow {
   parentId: string;
-  parent: { name: string | null; email: string | null } | null;
+  parentName: string | null;
+  email: string | null;
   outstandingCents: number;
   totalDueCents: number;
   totalPaidCents: number;
   totalAdjustmentCents: number;
+  earliestDueMonth?: string | null;
 }
 
 export interface ParentBalanceAdjustment {
@@ -188,6 +205,7 @@ export interface ParentOutstandingBreakdown {
   totalDueCents: number;
   totalPaidCents: number;
   totalAdjustmentCents: number;
+  earliestDueMonth?: string | null;
   childBreakdown: Array<{
     childId: string | null;
     childName: string;

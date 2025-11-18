@@ -127,8 +127,8 @@ adjustment_totals AS (
 SELECT
   COALESCE(d.parent_id, p.parent_id, a.parent_id) AS parent_id,
   COALESCE(d.due_cents, 0)
-    - COALESCE(p.paid_cents, 0)
-    - COALESCE(a.adjustment_cents, 0) AS outstanding_cents,
+    + COALESCE(a.adjustment_cents, 0)
+    - COALESCE(p.paid_cents, 0) AS outstanding_cents,
   COALESCE(d.due_cents, 0) AS total_due_cents,
   COALESCE(p.paid_cents, 0) AS total_paid_cents,
   COALESCE(a.adjustment_cents, 0) AS total_adjustment_cents
@@ -165,6 +165,15 @@ due_months AS (
   FROM public.due_fee_months
   GROUP BY parent_id, child_id
 ),
+adjustment_months AS (
+  SELECT
+    parent_id,
+    child_id,
+    ARRAY_AGG(DISTINCT to_char(month_key, 'YYYY-MM') ORDER BY to_char(month_key, 'YYYY-MM')) AS months
+  FROM public.parent_balance_adjustments
+  WHERE month_key IS NOT NULL
+  GROUP BY parent_id, child_id
+),
 parent_child_keys AS (
   SELECT parent_id, child_id FROM due_totals
   UNION
@@ -176,12 +185,18 @@ SELECT
   keys.parent_id,
   keys.child_id,
   COALESCE(d.due_cents, 0)
-    - COALESCE(p.paid_cents, 0)
-    - COALESCE(a.adjustment_cents, 0) AS outstanding_cents,
+    + COALESCE(a.adjustment_cents, 0)
+    - COALESCE(p.paid_cents, 0) AS outstanding_cents,
   COALESCE(d.due_cents, 0) AS total_due_cents,
   COALESCE(p.paid_cents, 0) AS total_paid_cents,
   COALESCE(a.adjustment_cents, 0) AS total_adjustment_cents,
-  COALESCE(dm.months, ARRAY[]::text[]) AS due_months
+  (
+    SELECT array(
+      SELECT DISTINCT m
+      FROM unnest(COALESCE(dm.months, ARRAY[]::text[]) || COALESCE(am.months, ARRAY[]::text[])) AS t(m)
+      ORDER BY m
+    )
+  ) AS due_months
 FROM parent_child_keys keys
 LEFT JOIN due_totals d
   ON d.parent_id = keys.parent_id AND d.child_id IS NOT DISTINCT FROM keys.child_id
@@ -190,6 +205,8 @@ LEFT JOIN paid_totals p
 LEFT JOIN adjustment_totals a
   ON a.parent_id = keys.parent_id AND a.child_id IS NOT DISTINCT FROM keys.child_id
 LEFT JOIN due_months dm
-  ON dm.parent_id = keys.parent_id AND dm.child_id IS NOT DISTINCT FROM keys.child_id;
+  ON dm.parent_id = keys.parent_id AND dm.child_id IS NOT DISTINCT FROM keys.child_id
+LEFT JOIN adjustment_months am
+  ON am.parent_id = keys.parent_id AND am.child_id IS NOT DISTINCT FROM keys.child_id;
 
 COMMIT;

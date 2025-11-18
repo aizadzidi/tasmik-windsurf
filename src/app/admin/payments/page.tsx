@@ -6,8 +6,26 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Switch } from "@/components/ui/Switch";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { Layers, Plus, X } from "lucide-react";
+import { ChevronsUpDown, Check, Layers, Plus, X } from "lucide-react";
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import {
   Table,
   TableBody,
@@ -22,16 +40,20 @@ import {
   deleteFee,
   fetchAdminPayments,
   fetchFeeCatalog,
+  fetchAdminStudents,
   fetchParentUsers,
   fetchOutstandingParents,
   fetchOutstandingSummary,
   listBalanceAdjustments,
   updateFee,
+  updateBalanceAdjustment,
 } from "@/lib/payments/adminApi";
 import { formatRinggit } from "@/lib/payments/pricingUtils";
 import type {
   AdminOutstandingSummary,
   AdminParentUser,
+  AdminStudent,
+  AdminMonthlyLedgerPoint,
   FeeCatalogItem,
   FeeCustomAmount,
   FeeMetadata,
@@ -89,16 +111,16 @@ const buildBlankFeeForm = (): FeeFormState => ({
   metadata: {},
 });
 
-const blankAdjustmentForm = {
-  parentId: "",
+const buildBlankAdjustmentForm = (parentId = "") => ({
+  parentId,
   childId: "",
   feeId: "",
-  monthKey: "",
+  monthKey: new Date().toISOString().slice(0, 7),
   amount: "",
   reason: "",
-};
+});
 
-type AdjustmentFormState = typeof blankAdjustmentForm;
+type AdjustmentFormState = ReturnType<typeof buildBlankAdjustmentForm>;
 
 export default function AdminPaymentsPage() {
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
@@ -115,10 +137,16 @@ export default function AdminPaymentsPage() {
   const [outstandingParents, setOutstandingParents] = useState<ParentOutstandingRow[]>([]);
   const [adjustments, setAdjustments] = useState<ParentBalanceAdjustment[]>([]);
   const [isAdjustmentFormOpen, setIsAdjustmentFormOpen] = useState(false);
-  const [adjustmentForm, setAdjustmentForm] = useState<AdjustmentFormState>(blankAdjustmentForm);
+  const [adjustmentForm, setAdjustmentForm] = useState<AdjustmentFormState>(buildBlankAdjustmentForm());
   const [savingAdjustment, setSavingAdjustment] = useState(false);
+  const [editingAdjustmentId, setEditingAdjustmentId] = useState<string | null>(null);
+  const [monthlyLedger, setMonthlyLedger] = useState<AdminMonthlyLedgerPoint[]>([]);
   const [parentOptions, setParentOptions] = useState<AdminParentUser[]>([]);
   const [loadingParents, setLoadingParents] = useState(false);
+  const [studentOptions, setStudentOptions] = useState<AdminStudent[]>([]);
+  const [loadingStudents, setLoadingStudents] = useState(false);
+  const [hasLoadedStudents, setHasLoadedStudents] = useState(false);
+  const [isStudentPickerOpen, setIsStudentPickerOpen] = useState(false);
 
   const totalCollected = useMemo(
     () =>
@@ -130,6 +158,39 @@ export default function AdminPaymentsPage() {
 
   const outstandingAmount = ledgerSummary?.totalOutstandingCents ?? 0;
   const collectedAmount = ledgerSummary?.totalCollectedCents ?? totalCollected;
+
+  const chartConfig: ChartConfig = {
+    collection: { label: "Monthly collection", color: "#0ea5e9" },
+    outstanding: { label: "Monthly outstanding", color: "#6366f1" },
+  };
+
+  const asMonthKey = (value: string | null | undefined) => (value ? value.slice(0, 7) : null);
+
+  function formatMonthKey(monthKey: string | null | undefined): string {
+    if (!monthKey) return "-";
+    const [year, month] = monthKey.split("-");
+    const date = new Date(Number(year), Number(month) - 1, 1);
+    return date.toLocaleDateString("en-MY", {
+      month: "short",
+      year: "numeric",
+    });
+  }
+
+  const formatMonth = (value: string) => formatMonthKey(value);
+
+  const monthlyChartData = useMemo(() => {
+    const sorted = [...monthlyLedger].sort((a, b) => a.month.localeCompare(b.month));
+    return sorted.map((item) => ({
+      month: formatMonth(item.month),
+      collection: Number((item.collectedCents / 100).toFixed(2)),
+      outstanding: Number((Math.max(item.outstandingCents, 0) / 100).toFixed(2)),
+    }));
+  }, [monthlyLedger]);
+
+  const hasMonthlyChartData = useMemo(
+    () => monthlyChartData.some((point) => point.collection !== 0 || point.outstanding !== 0),
+    [monthlyChartData]
+  );
 
   const filteredPayments = useMemo(() => {
     const query = paymentSearch.trim().toLowerCase();
@@ -164,6 +225,11 @@ export default function AdminPaymentsPage() {
     return `${payments.length} recent records shown.`;
   }, [filteredPayments.length, loading, paymentSearch, payments.length]);
 
+  const selectedStudent = useMemo(
+    () => studentOptions.find((student) => student.id === adjustmentForm.childId) ?? null,
+    [adjustmentForm.childId, studentOptions]
+  );
+
 
   useEffect(() => {
     loadDashboard();
@@ -181,14 +247,30 @@ export default function AdminPaymentsPage() {
       .finally(() => setLoadingParents(false));
   }, [isFeeFormOpen, loadingParents, parentOptions.length]);
 
+  useEffect(() => {
+    if (!isAdjustmentFormOpen || loadingStudents || hasLoadedStudents) return;
+    setLoadingStudents(true);
+    fetchAdminStudents()
+      .then((res) => setStudentOptions(res ?? []))
+      .catch((err) => {
+        console.error(err);
+        setError((prev) => prev ?? "Failed to load students.");
+      })
+      .finally(() => {
+        setLoadingStudents(false);
+        setHasLoadedStudents(true);
+      });
+  }, [hasLoadedStudents, isAdjustmentFormOpen, loadingStudents]);
+
   async function reloadLedgerData() {
     try {
       const [summaryRes, outstandingRes, adjustmentsRes] = await Promise.all([
         fetchOutstandingSummary(),
         fetchOutstandingParents(50),
-        listBalanceAdjustments(20),
+        listBalanceAdjustments(50),
       ]);
       setLedgerSummary(summaryRes.summary ?? null);
+      setMonthlyLedger(summaryRes.monthlyLedger ?? []);
       setOutstandingParents(outstandingRes.parents ?? []);
       setAdjustments(adjustmentsRes.adjustments ?? []);
     } catch (err: any) {
@@ -229,6 +311,24 @@ export default function AdminPaymentsPage() {
 
   const handleAdjustmentInputChange = (field: keyof AdjustmentFormState, value: string) => {
     setAdjustmentForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleStudentSelect = (studentId: string) => {
+    if (studentId === adjustmentForm.childId) {
+      setAdjustmentForm((prev) => ({ ...prev, childId: "", parentId: "" }));
+      setIsStudentPickerOpen(false);
+      return;
+    }
+
+    const student = studentOptions.find((item) => item.id === studentId);
+    if (!student) return;
+
+    setAdjustmentForm((prev) => ({
+      ...prev,
+      childId: student.id,
+      parentId: student.parent_id ?? "",
+    }));
+    setIsStudentPickerOpen(false);
   };
 
   function extractCustomAmounts(meta?: FeeMetadata | null): CustomAmountEntry[] {
@@ -326,16 +426,40 @@ export default function AdminPaymentsPage() {
   }
 
   function openAdjustmentForm(parentId?: string) {
-    setAdjustmentForm({
-      ...blankAdjustmentForm,
-      parentId: parentId ?? "",
-    });
+    setEditingAdjustmentId(null);
+    setAdjustmentForm(buildBlankAdjustmentForm(parentId ?? ""));
+    setIsStudentPickerOpen(false);
     setIsAdjustmentFormOpen(true);
   }
 
   function closeAdjustmentForm() {
-    setAdjustmentForm(blankAdjustmentForm);
+    setAdjustmentForm(buildBlankAdjustmentForm());
+    setIsStudentPickerOpen(false);
+    setEditingAdjustmentId(null);
     setIsAdjustmentFormOpen(false);
+  }
+
+  function startEditingAdjustment(adjustment: ParentBalanceAdjustment) {
+    setEditingAdjustmentId(adjustment.id);
+    setAdjustmentForm({
+      parentId: adjustment.parentId ?? "",
+      childId: adjustment.childId ?? "",
+      feeId: adjustment.feeId ?? "",
+      monthKey: asMonthKey(adjustment.monthKey) ?? new Date().toISOString().slice(0, 7),
+      amount: (adjustment.amountCents / 100).toString(),
+      reason: adjustment.reason ?? "",
+    });
+    setIsStudentPickerOpen(false);
+    setIsAdjustmentFormOpen(true);
+  }
+
+  function handleAdjustParent(parentId: string) {
+    const existing = adjustments.find((adjustment) => adjustment.parentId === parentId);
+    if (existing) {
+      startEditingAdjustment(existing);
+      return;
+    }
+    openAdjustmentForm(parentId);
   }
 
   async function handleFeeSubmit(event: React.FormEvent) {
@@ -415,20 +539,30 @@ export default function AdminPaymentsPage() {
       setError("Invalid adjustment amount.");
       return;
     }
+    const monthKey = adjustmentForm.monthKey.trim();
+    if (!monthKey) {
+      setError("Pick the month the outstanding belongs to.");
+      return;
+    }
 
     setSavingAdjustment(true);
     setError(null);
     const amountCents = Math.round(amountNumber * 100);
+    const payload = {
+      parentId: adjustmentForm.parentId.trim(),
+      childId: adjustmentForm.childId.trim() || null,
+      feeId: adjustmentForm.feeId.trim() || null,
+      monthKey,
+      amountCents,
+      reason: adjustmentForm.reason.trim(),
+    };
 
     try {
-      await createBalanceAdjustment({
-        parentId: adjustmentForm.parentId.trim(),
-        childId: adjustmentForm.childId.trim() || null,
-        feeId: adjustmentForm.feeId.trim() || null,
-        monthKey: adjustmentForm.monthKey || null,
-        amountCents,
-        reason: adjustmentForm.reason.trim(),
-      });
+      if (editingAdjustmentId) {
+        await updateBalanceAdjustment(editingAdjustmentId, payload);
+      } else {
+        await createBalanceAdjustment(payload);
+      }
       closeAdjustmentForm();
       await reloadLedgerData();
     } catch (err: any) {
@@ -489,50 +623,109 @@ export default function AdminPaymentsPage() {
             </div>
           )}
 
-          <div className="mt-6 grid gap-6 md:grid-cols-2">
-            <Card>
+          <div className="mt-6 grid gap-6 lg:grid-cols-3">
+            <Card className="lg:col-span-2">
               <CardHeader>
-                <CardTitle>Collection status</CardTitle>
-                <p className="text-sm text-slate-500">Total received (Billplz)</p>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <p className="text-3xl font-semibold text-slate-900">
-                  {formatRinggit(collectedAmount)}
+                <CardTitle>Monthly trend</CardTitle>
+                <p className="text-sm text-slate-500">
+                  Track collections against outstanding balances by billing month.
                 </p>
-                <div className="rounded-lg border border-slate-200 bg-white/80 p-3 text-sm text-slate-600">
-                  <p className="font-semibold text-slate-900">Quick notes</p>
-                  <ul className="mt-2 list-disc space-y-1 pl-4">
-                    <li>Only the latest 100 transactions are shown.</li>
-                    <li>Open the Billplz status to view the full transaction and bank reference.</li>
-                    <li>Update fee types in the panel on the right for parent visibility.</li>
-                  </ul>
+              </CardHeader>
+              <CardContent>
+                <div className="h-[320px]">
+                  {hasMonthlyChartData ? (
+                    <ChartContainer config={chartConfig} className="h-full w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={monthlyChartData} margin={{ top: 12, right: 16, left: 4 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                          <XAxis
+                            dataKey="month"
+                            tickLine={false}
+                            axisLine={false}
+                            tickMargin={8}
+                            minTickGap={12}
+                          />
+                          <YAxis
+                            tickLine={false}
+                            axisLine={false}
+                            tickMargin={8}
+                            width={72}
+                            tickFormatter={(value) => `RM ${value}`}
+                          />
+                          <ChartTooltip content={<ChartTooltipContent />} />
+                          <Line
+                            type="monotone"
+                            dataKey="collection"
+                            name={chartConfig.collection.label}
+                            stroke="var(--color-collection)"
+                            strokeWidth={2.5}
+                            dot={false}
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="outstanding"
+                            name={chartConfig.outstanding.label}
+                            stroke="var(--color-outstanding)"
+                            strokeWidth={2.5}
+                            dot={false}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </ChartContainer>
+                  ) : (
+                    <div className="flex h-full items-center justify-center rounded-md border border-dashed border-slate-200 bg-white/60 p-6 text-center text-sm text-slate-600">
+                      No monthly billing activity yet. New payments and fee schedules will appear here.
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
 
-            <Card className="border-blue-100 bg-blue-50/40">
-              <CardHeader>
-                <CardTitle>Outstanding total</CardTitle>
-                <p className="text-sm text-slate-500">Mandatory amount as of this month</p>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <p className="text-3xl font-semibold text-slate-900">
-                  {formatRinggit(outstandingAmount)}
-                </p>
-                <p className="text-sm text-slate-600">
-                  Includes {formatRinggit(ledgerSummary?.totalDueCents ?? 0)} in mandatory fees minus{" "}
-                  {formatRinggit(ledgerSummary?.totalPaidAgainstDueCents ?? 0)} recorded payments and{" "}
-                  {formatRinggit(ledgerSummary?.totalAdjustmentsCents ?? 0)} manual adjustments.
-                </p>
-                <Button
-                  variant="outline"
-                  onClick={() => openAdjustmentForm()}
-                  className="w-full justify-center"
-                >
-                  Adjust parent balance
-                </Button>
-              </CardContent>
-            </Card>
+            <div className="flex flex-col gap-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Collection status</CardTitle>
+                  <p className="text-sm text-slate-500">Total received (Billplz)</p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-3xl font-semibold text-slate-900">
+                    {formatRinggit(collectedAmount)}
+                  </p>
+                  <div className="rounded-lg border border-slate-200 bg-white/80 p-3 text-sm text-slate-600">
+                    <p className="font-semibold text-slate-900">Quick notes</p>
+                    <ul className="mt-2 list-disc space-y-1 pl-4">
+                      <li>Only the latest 100 transactions are shown.</li>
+                      <li>Open the Billplz status to view the full transaction and bank reference.</li>
+                      <li>Update fee types in the panel on the right for parent visibility.</li>
+                    </ul>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-blue-100 bg-blue-50/40">
+                <CardHeader>
+                  <CardTitle>Outstanding total</CardTitle>
+                  <p className="text-sm text-slate-500">Mandatory amount as of this month</p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-3xl font-semibold text-slate-900">
+                    {formatRinggit(outstandingAmount)}
+                  </p>
+                  <p className="text-sm text-slate-600">
+                    Includes {formatRinggit(ledgerSummary?.totalDueCents ?? 0)} in mandatory fees minus{" "}
+                    {formatRinggit(ledgerSummary?.totalPaidAgainstDueCents ?? 0)} recorded payments and{" "}
+                    {formatRinggit(ledgerSummary?.totalAdjustmentsCents ?? 0)} manual adjustments.
+                  </p>
+                  <Button
+                    variant="outline"
+                    onClick={() => openAdjustmentForm()}
+                    className="w-full justify-center"
+                  >
+                    Adjust parent balance
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
           </div>
 
           <div className="mt-6 grid gap-6 lg:grid-cols-2">
@@ -557,28 +750,46 @@ export default function AdminPaymentsPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {outstandingParents.map((parent) => (
-                          <TableRow key={parent.parentId}>
-                            <TableCell>
-                              <p className="font-semibold text-slate-900">
-                                {parent.parent?.name ?? "Unnamed"}
-                              </p>
-                              <p className="text-xs text-slate-500">{parent.parent?.email ?? parent.parentId}</p>
-                            </TableCell>
-                            <TableCell className="text-right font-semibold">
-                              {formatRinggit(parent.outstandingCents)}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => openAdjustmentForm(parent.parentId)}
+                        {outstandingParents.map((parent) => {
+                          const balance = parent.outstandingCents ?? 0;
+                          const earliestMonth = formatMonthKey(parent.earliestDueMonth);
+                          return (
+                            <TableRow key={parent.parentId}>
+                              <TableCell>
+                                <p className="font-semibold text-slate-900">
+                                  {parent.parentName ?? "Unnamed"}
+                                </p>
+                                <p className="text-xs text-slate-500">
+                                  {parent.email ?? parent.parentId}
+                                </p>
+                              </TableCell>
+                              <TableCell
+                                className={cn(
+                                  "text-right font-semibold",
+                                  balance > 0
+                                    ? "text-rose-700"
+                                    : balance < 0
+                                      ? "text-emerald-700"
+                                      : "text-slate-700"
+                                )}
                               >
-                                Adjust
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                                {formatRinggit(balance)}
+                                <span className="block text-xs font-normal text-slate-500">
+                                  {`Outstanding month: ${earliestMonth}`}
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleAdjustParent(parent.parentId)}
+                                >
+                                  Adjust
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </div>
@@ -602,43 +813,55 @@ export default function AdminPaymentsPage() {
               </CardHeader>
               <CardContent className="space-y-3">
                 {adjustments.length ? (
-                  adjustments.map((adjustment) => (
-                    <div
-                      key={adjustment.id}
-                      className="rounded-lg border border-slate-200 bg-white/70 p-3 text-sm text-slate-700"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <p className="font-semibold text-slate-900">{formatRinggit(adjustment.amountCents)}</p>
-                          <p className="text-xs text-slate-500">
-                            {new Date(adjustment.createdAt).toLocaleString("en-MY", {
-                              day: "numeric",
-                              month: "short",
-                              year: "numeric",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </p>
+                  adjustments.map((adjustment) => {
+                    const monthLabel = formatMonthKey(asMonthKey(adjustment.monthKey));
+                    return (
+                      <div
+                        key={adjustment.id}
+                        className="rounded-lg border border-slate-200 bg-white/70 p-3 text-sm text-slate-700"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <p className="font-semibold text-slate-900">{formatRinggit(adjustment.amountCents)}</p>
+                            <p className="text-xs text-slate-500">
+                              {new Date(adjustment.createdAt).toLocaleString("en-MY", {
+                                day: "numeric",
+                                month: "short",
+                                year: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => startEditingAdjustment(adjustment)}
+                            >
+                              Edit
+                            </Button>
+                            <span
+                              className={cn(
+                                "rounded-full px-3 py-1 text-xs font-semibold",
+                                adjustment.amountCents >= 0
+                                  ? "bg-rose-100 text-rose-700"
+                                  : "bg-emerald-100 text-emerald-700"
+                              )}
+                            >
+                              {adjustment.amountCents >= 0 ? "Add to balance" : "Reduce balance"}
+                            </span>
+                          </div>
                         </div>
-                        <span
-                          className={cn(
-                            "rounded-full px-3 py-1 text-xs font-semibold",
-                            adjustment.amountCents >= 0
-                              ? "bg-rose-100 text-rose-700"
-                              : "bg-emerald-100 text-emerald-700"
-                          )}
-                        >
-                          {adjustment.amountCents >= 0 ? "Add to balance" : "Reduce balance"}
-                        </span>
+                        <p className="mt-2 text-xs text-slate-500">
+                          Parent: {adjustment.parentId}
+                          {adjustment.childId ? ` · Child: ${adjustment.childId}` : ""}
+                          {adjustment.monthKey ? ` · Month: ${monthLabel}` : ""}
+                        </p>
+                        <p className="mt-2 text-sm text-slate-700">{adjustment.reason}</p>
                       </div>
-                      <p className="mt-2 text-xs text-slate-500">
-                        Parent: {adjustment.parentId}
-                        {adjustment.childId ? ` · Child: ${adjustment.childId}` : ""}
-                        {adjustment.monthKey ? ` · Month: ${adjustment.monthKey.slice(0, 7)}` : ""}
-                      </p>
-                      <p className="mt-2 text-sm text-slate-700">{adjustment.reason}</p>
-                    </div>
-                  ))
+                    );
+                  })
                 ) : (
                   <p className="text-sm text-slate-600">No adjustments recorded yet.</p>
                 )}
@@ -651,7 +874,9 @@ export default function AdminPaymentsPage() {
               <CardHeader>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <CardTitle>Add balance adjustment</CardTitle>
+                    <CardTitle>
+                      {editingAdjustmentId ? "Edit balance adjustment" : "Add balance adjustment"}
+                    </CardTitle>
                     <p className="text-sm text-slate-500">
                       Positive values increase the outstanding balance; negative values reduce it.
                     </p>
@@ -664,69 +889,113 @@ export default function AdminPaymentsPage() {
               </CardHeader>
               <CardContent>
                 <form className="space-y-4" onSubmit={handleAdjustmentSubmit}>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div>
-                      <label className="text-sm font-medium text-slate-700">Parent ID *</label>
-                      <Input
-                        value={adjustmentForm.parentId}
-                        onChange={(event) => handleAdjustmentInputChange("parentId", event.target.value)}
-                        placeholder="e.g. user UUID"
-                        required
-                      />
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-700">Student *</label>
+                      <Popover open={isStudentPickerOpen} onOpenChange={setIsStudentPickerOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={isStudentPickerOpen}
+                            className="w-full justify-between"
+                            disabled={loadingStudents && studentOptions.length === 0}
+                          >
+                            {selectedStudent?.name ?? "Select student..."}
+                            <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[320px] p-0">
+                          <Command>
+                            <CommandInput placeholder="Search student..." className="h-9" />
+                            <CommandList>
+                              {loadingStudents ? (
+                                <CommandEmpty>Loading students...</CommandEmpty>
+                              ) : (
+                                <CommandEmpty>No students found.</CommandEmpty>
+                              )}
+                              <CommandGroup>
+                                {studentOptions.map((student) => {
+                                  const isSelected = student.id === selectedStudent?.id;
+                                  const disabled = !student.parent_id;
+                                  return (
+                                    <CommandItem
+                                      key={student.id}
+                                      value={`${student.name ?? ""} ${student.parent_id ?? ""} ${student.id}`}
+                                      disabled={disabled}
+                                      onSelect={() => handleStudentSelect(student.id)}
+                                    >
+                                      <div className="min-w-0 flex-1">
+                                        <p className="truncate font-medium">
+                                          {student.name ?? "Unnamed student"}
+                                        </p>
+                                        <p className="truncate text-xs text-slate-500">
+                                          {student.parent_id
+                                            ? `Parent ID: ${student.parent_id}`
+                                            : "No parent ID on record"}
+                                        </p>
+                                      </div>
+                                      <Check
+                                        className={cn(
+                                          "ml-2 h-4 w-4",
+                                          isSelected ? "opacity-100" : "opacity-0"
+                                        )}
+                                      />
+                                    </CommandItem>
+                                  );
+                                })}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
+                      <p className="text-xs text-slate-500">
+                        {selectedStudent
+                          ? selectedStudent.parent_id
+                            ? `Parent ID will use ${selectedStudent.parent_id}.`
+                            : "This student has no parent ID on record."
+                          : adjustmentForm.parentId
+                            ? `Parent ID preset: ${adjustmentForm.parentId}. Select a student to attach a child (optional).`
+                            : "Select a student to fill parent and child IDs."}
+                      </p>
                     </div>
                     <div>
-                      <label className="text-sm font-medium text-slate-700">Child ID (optional)</label>
-                      <Input
-                        value={adjustmentForm.childId}
-                        onChange={(event) => handleAdjustmentInputChange("childId", event.target.value)}
-                        placeholder="Set if specific to a child"
-                      />
-                    </div>
-                  </div>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div>
-                      <label className="text-sm font-medium text-slate-700">Fee ID (optional)</label>
-                      <Input
-                        value={adjustmentForm.feeId}
-                        onChange={(event) => handleAdjustmentInputChange("feeId", event.target.value)}
-                        placeholder="Refer to the fee catalog if needed"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium text-slate-700">Target month (optional)</label>
+                      <label className="text-sm font-medium text-slate-700">Target month *</label>
                       <Input
                         type="month"
                         value={adjustmentForm.monthKey}
                         onChange={(event) => handleAdjustmentInputChange("monthKey", event.target.value)}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div>
-                      <label className="text-sm font-medium text-slate-700">Amount (RM) *</label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={adjustmentForm.amount}
-                        onChange={(event) => handleAdjustmentInputChange("amount", event.target.value)}
-                        placeholder="Use a negative value to waive"
                         required
                       />
                     </div>
-                    <div>
-                      <label className="text-sm font-medium text-slate-700">Reason *</label>
-                      <Input
-                        value={adjustmentForm.reason}
-                        onChange={(event) => handleAdjustmentInputChange("reason", event.target.value)}
-                        placeholder="Example: Cash payment on 12 March"
-                        required
-                      />
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div>
+                        <label className="text-sm font-medium text-slate-700">Amount (RM) *</label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={adjustmentForm.amount}
+                          onChange={(event) => handleAdjustmentInputChange("amount", event.target.value)}
+                          placeholder="Use a negative value to waive"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-slate-700">Reason *</label>
+                        <Input
+                          value={adjustmentForm.reason}
+                          onChange={(event) => handleAdjustmentInputChange("reason", event.target.value)}
+                          placeholder="Example: Cash payment on 12 March"
+                          required
+                        />
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex gap-3">
-                    <Button type="submit" disabled={savingAdjustment}>
-                      {savingAdjustment ? "Saving..." : "Save adjustment"}
-                    </Button>
+                </div>
+                <div className="flex gap-3">
+                  <Button type="submit" disabled={savingAdjustment}>
+                    {savingAdjustment ? "Saving..." : editingAdjustmentId ? "Update adjustment" : "Save adjustment"}
+                  </Button>
                     <Button type="button" variant="outline" onClick={closeAdjustmentForm}>
                       Cancel
                     </Button>
