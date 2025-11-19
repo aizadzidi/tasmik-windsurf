@@ -30,6 +30,8 @@ export interface PaymentBreakdownProps {
   merchantFeeCents: number;
   isSubmitting: boolean;
   onCheckout: () => void;
+  outstandingSelection?: OutstandingTarget | null;
+  outstandingSelectionActive?: boolean;
 }
 
 export type OutstandingStatus = 'past_due' | 'due_now' | 'upcoming';
@@ -40,4 +42,10 @@ export interface OutstandingChildSummary {
   amountCents: number;
   months: string[];
   status: OutstandingStatus;
+}
+
+export interface OutstandingTarget {
+  childId: string;
+  childName: string;
+  monthKey: string;
 }

@@ -1,12 +1,18 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { CalendarDays, Tag } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
 import { formatRinggit } from '@/lib/payments/pricingUtils';
-import type { FamilyFeeItem, FeeSelectionState, MonthOption } from './types';
+import type { FamilyFeeItem, FeeSelectionState, MonthOption, OutstandingTarget } from './types';
 
 interface FamilyFeeSelectorProps {
   items: FamilyFeeItem[];
   selections: Record<string, FeeSelectionState>;
   monthOptions: MonthOption[];
   onSelectionChange: (assignmentId: string, selection: FeeSelectionState) => void;
+  focusChildId?: string | null;
+  outstandingSelection?: OutstandingTarget | null;
+  outstandingSelectionActive?: boolean;
+  registerChildRef?: (childId: string, node: HTMLDivElement | null) => void;
 }
 
 const LABELS: Record<string, string> = {
@@ -16,11 +22,26 @@ const LABELS: Record<string, string> = {
   ad_hoc: 'Program khas'
 };
 
+function formatMonthLabel(monthKey: string) {
+  const [yearStr, monthStr] = monthKey.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return monthKey;
+  const date = new Date(year, month - 1, 1);
+  return Number.isNaN(date.getTime())
+    ? monthKey
+    : date.toLocaleDateString('ms-MY', { month: 'short', year: 'numeric' });
+}
+
 export function FamilyFeeSelector({
   items,
   selections,
   monthOptions,
-  onSelectionChange
+  onSelectionChange,
+  focusChildId,
+  outstandingSelection,
+  outstandingSelectionActive,
+  registerChildRef
 }: FamilyFeeSelectorProps) {
   const grouped = items.reduce<Record<string, { childName: string; fees: FamilyFeeItem[] }>>(
     (acc, fee) => {
@@ -35,6 +56,12 @@ export function FamilyFeeSelector({
   const families = useMemo(() => Object.entries(grouped), [grouped]);
   const [openChild, setOpenChild] = useState<string | null>(families[0]?.[0] ?? null);
 
+  useEffect(() => {
+    if (focusChildId) {
+      setOpenChild(focusChildId);
+    }
+  }, [focusChildId]);
+
   const handleToggle = (assignmentId: string, partial: Partial<FeeSelectionState>) => {
     const current = selections[assignmentId] ?? { include: false, months: [], quantity: 1 };
     onSelectionChange(assignmentId, { ...current, ...partial });
@@ -42,7 +69,7 @@ export function FamilyFeeSelector({
 
   return (
     <div className="space-y-4">
-      {families.map(([childId, group], index) => {
+      {families.map(([childId, group]) => {
         const selectedFees = group.fees.filter(fee => selections[fee.assignmentId]?.include);
         const summaryAmount = selectedFees.reduce((sum, fee) => {
           const selection = selections[fee.assignmentId];
@@ -53,43 +80,57 @@ export function FamilyFeeSelector({
               : selection.quantity || 1;
           return sum + fee.amountCents * multiplier;
         }, 0);
-        const isOpen = openChild ? openChild === childId : index === 0;
+        const isOpen = openChild === childId;
+        const isOutstandingChild =
+          outstandingSelectionActive && outstandingSelection?.childId === childId;
 
         return (
           <div
             key={childId}
-            className="rounded-3xl border border-white/25 bg-white/80 shadow-xl backdrop-blur transition hover:border-primary/40"
+            ref={node => registerChildRef?.(childId, node)}
+            className={`space-y-3 rounded-2xl border p-4 shadow-sm transition hover:shadow-md lg:p-5 ${
+              isOutstandingChild
+                ? 'border-indigo-300 bg-indigo-50/50 shadow-md'
+                : 'border-slate-100 bg-white'
+            }`}
           >
             <button
               type="button"
-              className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left"
+              className="flex w-full items-center justify-between gap-3 text-left"
               onClick={() => setOpenChild(prev => (prev === childId ? null : childId))}
             >
-              <div>
-                <p className="text-lg font-semibold text-slate-900">{group.childName}</p>
-                <p className="text-sm text-slate-500">
+              <div className="space-y-1">
+                {isOutstandingChild && outstandingSelection?.monthKey && (
+                  <span className="inline-flex items-center rounded-full bg-indigo-100 px-2.5 py-1 text-[11px] font-medium text-indigo-700">
+                    Tunggakan dipilih: {formatMonthLabel(outstandingSelection.monthKey)}
+                  </span>
+                )}
+                <p className="text-sm font-semibold text-slate-900">{group.childName}</p>
+                <p className="text-xs text-slate-500">
                   {selectedFees.length > 0
                     ? `${selectedFees.length} yuran dipilih · ${formatRinggit(summaryAmount)}`
                     : `${group.fees.length} yuran tersedia`}
                 </p>
               </div>
-              <div className="flex items-center gap-2 text-sm text-slate-500">
-                <span className="rounded-full bg-gradient-to-r from-primary/10 to-secondary/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
+              <div className="flex items-center gap-3">
+                <span className="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-indigo-700">
                   {group.fees.length} yuran
                 </span>
-                <svg
-                  className={`h-5 w-5 transition-transform ${isOpen ? 'rotate-180 text-slate-900' : 'text-slate-400'}`}
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                  viewBox="0 0 24 24"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
-                </svg>
+                <span className="flex h-7 w-7 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100">
+                  <svg
+                    className={`h-4 w-4 transition-transform ${isOpen ? 'rotate-180 text-slate-900' : 'text-slate-400'}`}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+                  </svg>
+                </span>
               </div>
             </button>
             <div className={`overflow-hidden transition-all ${isOpen ? 'max-h-[1200px]' : 'max-h-0'}`}>
-              <div className="border-t border-white/20 px-5 py-4 space-y-4">
+              <div className="divide-y divide-slate-200">
                 {group.fees.map(fee => {
                   const selection =
                     selections[fee.assignmentId] ?? ({ include: false, months: [], quantity: 1 } as FeeSelectionState);
@@ -97,37 +138,49 @@ export function FamilyFeeSelector({
                   const months = selection.months;
                   const quantity = selection.quantity || 1;
                   const hint = LABELS[fee.billingCycle] ?? 'Yuran';
+                  const Icon = isMonthly ? CalendarDays : Tag;
 
                   return (
                     <Fragment key={fee.assignmentId}>
-                      <div className="rounded-2xl border border-white/25 bg-white/80 px-4 py-3 shadow-lg backdrop-blur">
-                        <div className="flex flex-wrap items-center gap-4">
+                      <div className="flex flex-col gap-3 px-1 py-3 lg:px-0">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-50 text-slate-500">
+                            <Icon className="h-4 w-4" />
+                          </div>
                           <div className="min-w-0 flex-1">
-                            <p className="text-base font-semibold text-slate-900">{fee.feeName}</p>
-                            <p className="text-sm text-slate-600">{fee.description || hint}</p>
+                            <p className="text-sm font-medium text-slate-900">{fee.feeName}</p>
+                            <p className="text-xs text-slate-500">{fee.description || hint}</p>
                           </div>
                           <div className="text-right">
-                            <p className="text-xs uppercase tracking-wide text-primary/60">{hint}</p>
-                            <p className="text-lg font-semibold text-slate-900">{formatRinggit(fee.amountCents)}</p>
+                            <span className="inline-flex items-center rounded-full bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
+                              {hint}
+                            </span>
+                            <p className="mt-1 text-sm font-semibold text-slate-900">{formatRinggit(fee.amountCents)}</p>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => handleToggle(fee.assignmentId, { include: !selection.include })}
-                            className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-xs text-slate-500">
+                            {isMonthly ? 'Pilih bulan terlibat' : 'Tetapkan kuantiti jika perlu'}
+                          </p>
+                          <Button
+                            variant={selection.include ? 'default' : 'outline'}
+                            size="sm"
+                            className={
                               selection.include
-                                ? 'bg-gradient-to-r from-primary to-secondary text-white shadow-md'
-                                : 'border border-white/40 bg-white/70 text-slate-600 hover:border-primary/30'
-                            }`}
+                                ? 'rounded-full bg-indigo-600 text-white hover:bg-indigo-700'
+                                : 'rounded-full border-slate-200 text-xs text-slate-700 hover:bg-slate-50'
+                            }
+                            onClick={() => handleToggle(fee.assignmentId, { include: !selection.include })}
                           >
                             {selection.include ? 'Dipilih' : 'Tambah'}
-                          </button>
+                          </Button>
                         </div>
 
                         {selection.include && (
-                          <div className="mt-4 space-y-3">
+                          <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3">
                             {isMonthly ? (
-                              <div>
-                                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-primary/70">
+                              <div className="space-y-2">
+                                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
                                   Bulan terlibat
                                 </p>
                                 <div className="flex flex-wrap gap-2">
@@ -143,10 +196,14 @@ export function FamilyFeeSelector({
                                             : [...months, option.key];
                                           handleToggle(fee.assignmentId, { months: next });
                                         }}
-                                        className={`rounded-full px-3 py-1 text-sm font-medium transition ${
+                                        className={`rounded-full px-3 py-1 text-xs font-medium transition ${
                                           active
-                                            ? 'bg-gradient-to-r from-primary to-secondary text-white shadow-md'
-                                            : 'border border-white/30 bg-white/60 text-slate-600 hover:border-primary/30 hover:text-slate-900'
+                                            ? 'bg-indigo-600 text-white shadow-sm'
+                                            : 'border border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-slate-900'
+                                        } ${
+                                          isOutstandingChild && outstandingSelection?.monthKey === option.key
+                                            ? 'ring-2 ring-indigo-200'
+                                            : ''
                                         }`}
                                       >
                                         {option.label}
@@ -157,11 +214,13 @@ export function FamilyFeeSelector({
                               </div>
                             ) : (
                               <div className="flex flex-col gap-2 text-sm text-slate-600">
-                                <span className="text-xs font-semibold uppercase tracking-wide text-primary/70">Kuantiti</span>
-                                <div className="inline-flex items-center rounded-full border border-white/30 bg-white/70 text-base">
+                                <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                                  Kuantiti
+                                </span>
+                                <div className="inline-flex items-center rounded-full border border-slate-200 bg-white">
                                   <button
                                     type="button"
-                                    className="px-3 py-1 text-slate-600 hover:text-primary"
+                                    className="px-3 py-1 text-slate-600 hover:text-indigo-700"
                                     onClick={() =>
                                       handleToggle(fee.assignmentId, {
                                         quantity: Math.max(1, quantity - 1)
@@ -173,7 +232,7 @@ export function FamilyFeeSelector({
                                   <span className="px-4 font-semibold text-slate-900">{quantity}</span>
                                   <button
                                     type="button"
-                                    className="px-3 py-1 text-slate-600 hover:text-primary"
+                                    className="px-3 py-1 text-slate-600 hover:text-indigo-700"
                                     onClick={() =>
                                       handleToggle(fee.assignmentId, {
                                         quantity: quantity + 1

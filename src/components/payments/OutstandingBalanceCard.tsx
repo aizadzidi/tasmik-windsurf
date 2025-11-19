@@ -9,29 +9,17 @@ interface OutstandingBalanceCardProps {
   earliestDueMonth: string | null;
   childSummaries: OutstandingChildSummary[];
   isLoading?: boolean;
-  onPayNow?: () => void;
+  onSettleOutstanding?: () => void;
   onViewHistory?: () => void;
+  primaryDisabled?: boolean;
 }
 
-const STATUS_STYLES: Record<
-  OutstandingChildSummary['status'],
-  { label: string; badge: string; accent: string }
-> = {
-  past_due: {
-    label: 'Tertunggak',
-    badge: 'bg-rose-100/80 text-rose-900',
-    accent: 'border-rose-100/70 bg-rose-50/70'
-  },
-  due_now: {
-    label: 'Bulan ini',
-    badge: 'bg-amber-100/80 text-amber-900',
-    accent: 'border-amber-100/70 bg-amber-50/70'
-  },
-  upcoming: {
-    label: 'Akan datang',
-    badge: 'bg-emerald-100/80 text-emerald-900',
-    accent: 'border-emerald-100/70 bg-emerald-50/70'
-  }
+const BADGE_BASE = 'inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium';
+
+const STATUS_STYLES: Record<OutstandingChildSummary['status'], { label: string; badge: string }> = {
+  past_due: { label: 'Tertunggak', badge: `${BADGE_BASE} bg-rose-50 text-rose-700` },
+  due_now: { label: 'Bulan ini', badge: `${BADGE_BASE} bg-amber-50 text-amber-700` },
+  upcoming: { label: 'Akan datang', badge: `${BADGE_BASE} bg-indigo-50 text-indigo-700` }
 };
 
 function formatDueMonth(monthKey: string | null) {
@@ -50,12 +38,12 @@ export function OutstandingBalanceCard({
   earliestDueMonth,
   childSummaries,
   isLoading = false,
-  onPayNow,
-  onViewHistory
+  onSettleOutstanding,
+  onViewHistory,
+  primaryDisabled = false
 }: OutstandingBalanceCardProps) {
   const normalizedTotal = Math.abs(totalCents);
   const hasBalance = normalizedTotal > 0;
-  const isOutstanding = normalizedTotal > 0;
   const visibleChildren = childSummaries.slice(0, 3);
   const remainingChildren = childSummaries.length - visibleChildren.length;
   const dueMonthLabel = formatDueMonth(earliestDueMonth);
@@ -67,50 +55,30 @@ export function OutstandingBalanceCard({
   };
 
   return (
-    <Card
-      className={cn(
-        'rounded-3xl border shadow-xl backdrop-blur',
-        isOutstanding ? 'border-rose-200/70 bg-rose-50/80' : 'border-emerald-200/60 bg-emerald-50/70'
-      )}
-    >
-      <CardContent className="space-y-6 p-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-primary/70">Baki tertunggak</p>
-            <div className="flex flex-wrap items-baseline gap-3">
-              <span
-                className={cn(
-                  'text-3xl font-semibold',
-                  isOutstanding ? 'text-rose-700' : 'text-emerald-700'
-                )}
-              >
-                {formatRinggit(normalizedTotal)}
+    <Card className="rounded-2xl border border-rose-100 bg-rose-50/70 shadow-sm">
+      <CardContent className="space-y-4 p-5 lg:p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-600">Baki tertunggak</p>
+            <p className="text-2xl font-semibold text-rose-700 lg:text-3xl">{formatRinggit(normalizedTotal)}</p>
+            {hasBalance && dueMonthLabel && (
+              <span className="mt-1 inline-flex items-center rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-medium text-rose-700">
+                Tamat tempoh {dueMonthLabel}
               </span>
-              {dueMonthLabel && isOutstanding && (
-                <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-rose-800 shadow-sm">
-                  Tamat tempoh {dueMonthLabel}
-                </span>
-              )}
-            </div>
-            <p className="text-sm text-slate-600">
-              {isOutstanding
-                ? 'Yuran tertunggak masih ada. Selesaikan bayaran untuk mengelak gangguan pembelajaran anak.'
-                : hasBalance
-                  ? 'Anda mempunyai baki kredit. Baki ini akan ditolak daripada caj seterusnya.'
-                  : 'Hebat! Semua yuran anak anda telah dikemas kini.'}
-            </p>
+            )}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
             <Button
-              className="rounded-2xl px-5 text-sm font-semibold shadow-lg"
-              onClick={onPayNow}
-              disabled={!onPayNow}
+              className="h-9 rounded-full bg-slate-900 px-4 py-2 text-xs font-medium text-white hover:bg-slate-950 sm:text-sm"
+              onClick={onSettleOutstanding}
+              disabled={!onSettleOutstanding || primaryDisabled}
             >
-              Bayar sekarang
+              Selesaikan tunggakan ini
             </Button>
             <Button
               variant="outline"
-              className="rounded-2xl border-white/60 bg-white/40 text-sm font-semibold text-slate-700"
+              size="sm"
+              className="rounded-full border-slate-300 text-xs font-medium text-slate-800 sm:text-sm"
               onClick={onViewHistory}
             >
               Lihat rekod
@@ -118,65 +86,51 @@ export function OutstandingBalanceCard({
           </div>
         </div>
 
+        <p className="text-xs text-rose-700 leading-relaxed sm:text-[13px]">
+          Lengkapkan bayaran untuk mengemas kini rekod yuran dan elakkan tunggakan berpanjangan.
+        </p>
+
         {isLoading ? (
-          <div className="animate-pulse space-y-3 rounded-2xl border border-white/50 bg-white/40 p-4">
-            <div className="h-4 rounded-full bg-slate-200/70" />
-            <div className="h-4 rounded-full bg-slate-200/70" />
-            <div className="h-4 rounded-full bg-slate-200/70" />
+          <div className="animate-pulse space-y-3 rounded-xl border border-rose-100/70 bg-white/70 p-4">
+            <div className="h-4 rounded-full bg-rose-100" />
+            <div className="h-4 rounded-full bg-rose-100" />
+            <div className="h-4 rounded-full bg-rose-100" />
           </div>
-        ) : isOutstanding ? (
+        ) : (
           <>
             {childSummaries.length > 0 ? (
-              <div className="space-y-3">
+              <div className="divide-y divide-rose-100 rounded-xl border border-rose-100 bg-white/70">
                 {visibleChildren.map(child => {
                   const style = STATUS_STYLES[child.status];
                   return (
-                    <div
-                      key={child.childId}
-                      className={cn(
-                        'flex flex-col gap-2 rounded-2xl border bg-white/70 p-4 shadow-sm'
-                      )}
-                    >
-                      <p className="text-sm font-semibold text-slate-900">{child.childName}</p>
-                      <p className="text-xs text-slate-600">{renderItemLabel(child.months)}</p>
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-lg font-semibold text-slate-900">{formatRinggit(child.amountCents)}</p>
-                        <span className={cn('rounded-full px-3 py-1 text-xs font-semibold', style.badge)}>
-                          {style.label}
-                        </span>
+                    <div key={child.childId} className="flex items-center justify-between gap-4 px-4 py-3">
+                      <div className="space-y-1.5">
+                        <p className="text-sm font-medium text-slate-900">{child.childName}</p>
+                        <p className="text-xs text-slate-500">{renderItemLabel(child.months)}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-semibold text-slate-900">{formatRinggit(child.amountCents)}</p>
+                        <span className={style.badge}>{style.label}</span>
                       </div>
                     </div>
                   );
                 })}
+                {remainingChildren > 0 && (
+                  <div className="px-4 py-3 text-xs text-slate-600">
+                    +{remainingChildren} anak lagi mempunyai yuran tertunggak. Lihat rekod penuh untuk maklumat lanjut.
+                  </div>
+                )}
+              </div>
+            ) : hasBalance ? (
+              <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                Tiada yuran tertunggak. Baki kredit anda akan digunakan untuk bil akan datang.
               </div>
             ) : (
-              <div className="rounded-2xl border border-rose-100 bg-white/70 px-4 py-3 text-sm text-rose-700">
-                Caj tertunggak telah dikonfigurasi oleh pentadbir
-                {dueMonthLabel ? ` (bermula ${dueMonthLabel})` : ''}. Sila rujuk butiran bil atau tekan “Bayar
-                sekarang” untuk melihat jumlah yang perlu dilangsaikan.
+              <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                Tiada yuran tertunggak buat masa ini. Teruskan memantau notifikasi untuk sebarang caj baharu.
               </div>
             )}
           </>
-        ) : hasBalance ? (
-          <div className="rounded-2xl border border-emerald-200 bg-white/70 px-4 py-3 text-sm text-emerald-700">
-            Tiada yuran tertunggak buat masa ini. Baki kredit anda akan digunakan untuk bil akan datang.
-          </div>
-        ) : (
-          <div className="rounded-2xl border border-emerald-200 bg-white/70 px-4 py-3 text-sm text-emerald-700">
-            Tiada yuran tertunggak buat masa ini. Teruskan memantau notifikasi untuk sebarang caj baharu.
-          </div>
-        )}
-
-        {remainingChildren > 0 && isOutstanding && (
-          <p className="text-xs text-slate-600">
-            +{remainingChildren} anak lagi mempunyai yuran tertunggak. Pergi ke Rekod Bayaran untuk senarai penuh.
-          </p>
-        )}
-
-        {isOutstanding && (
-          <p className="text-xs text-slate-500">
-            Jika bayaran telah dibuat di luar sistem, hubungi pentadbir supaya bulan berkenaan ditanda sebagai selesai.
-          </p>
         )}
       </CardContent>
     </Card>

@@ -19,12 +19,14 @@ import type {
   FamilyFeeItem,
   FeeSelectionState,
   MonthOption,
-  OutstandingChildSummary
+  OutstandingChildSummary,
+  OutstandingTarget
 } from "@/components/payments/types";
 import { MERCHANT_FEE_CENTS, buildPaymentPreview } from "@/lib/payments/pricingUtils";
 import type { PaymentCartItem } from "@/types/payments";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { Card, CardContent } from "@/components/ui/Card";
 
 interface RawAssignment extends ChildFeeAssignment {
   fee?: FeeCatalogItem;
@@ -68,6 +70,41 @@ function parseMonthKey(monthKey?: string | null) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+function formatMonthLabel(monthKey: string | null) {
+  if (!monthKey) return null;
+  const [yearStr, monthStr] = monthKey.split("-");
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return monthKey;
+  const date = new Date(year, month - 1, 1);
+  return Number.isNaN(date.getTime())
+    ? monthKey
+    : date.toLocaleDateString("ms-MY", { month: "short", year: "numeric" });
+}
+
+function getEarliestOutstandingTarget(
+  ledger: ParentOutstandingBreakdown | null,
+  childLookup: Record<string, string>
+): OutstandingTarget | null {
+  if (!ledger || !Array.isArray(ledger.childBreakdown)) return null;
+  let target: OutstandingTarget | null = null;
+
+  ledger.childBreakdown.forEach(child => {
+    (child.dueMonths ?? []).forEach(monthKey => {
+      if (!target || monthKey < target.monthKey) {
+        const childId = child.childId ?? "manual-adjustment";
+        target = {
+          childId,
+          childName: child.childName ?? childLookup[childId] ?? "Anak",
+          monthKey
+        };
+      }
+    });
+  });
+
+  return target;
+}
+
 function getCustomAmountForParent(
   fee: FeeCatalogItem | undefined,
   parentUserId?: string | null
@@ -101,6 +138,10 @@ export default function ParentPaymentsPage() {
   const paymentSectionRef = useRef<HTMLDivElement | null>(null);
   const [outstandingLedger, setOutstandingLedger] = useState<ParentOutstandingBreakdown | null>(null);
   const [outstandingLedgerLoading, setOutstandingLedgerLoading] = useState(false);
+  const [outstandingSelection, setOutstandingSelection] = useState<OutstandingTarget | null>(null);
+  const outstandingSelectionActive = !!outstandingSelection;
+  const childCardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const summaryRef = useRef<HTMLDivElement | null>(null);
   const tabs = [
     { id: "payment", label: "Payments", description: "Select fees and review the bill summary." },
     { id: "history", label: "Payment History", description: "Track past transactions and statuses." }
@@ -112,6 +153,25 @@ export default function ParentPaymentsPage() {
   const monthFallback = useMemo(
     () => (monthOptions[0]?.key ? [monthOptions[0].key] : []),
     [monthOptions]
+  );
+
+  const registerChildRef = useCallback((childId: string, node: HTMLDivElement | null) => {
+    childCardRefs.current[childId] = node;
+  }, []);
+
+  const scrollToOutstandingSection = useCallback(
+    (childId: string) => {
+      requestAnimationFrame(() => {
+        const targetEl = childCardRefs.current[childId];
+        if (targetEl) {
+          targetEl.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        setTimeout(() => {
+          summaryRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }, 250);
+      });
+    },
+    []
   );
 
   const applyCustomAmounts = useCallback(
@@ -293,6 +353,12 @@ export default function ParentPaymentsPage() {
   }, [parentId, loadData]);
 
   useEffect(() => {
+    if (!outstandingLedger || (outstandingLedger.totalOutstandingCents ?? 0) <= 0) {
+      setOutstandingSelection(null);
+    }
+  }, [outstandingLedger]);
+
+  useEffect(() => {
     if (!assignments.length) return;
     setSelections(prev => {
       const next: Record<string, FeeSelectionState> = { ...prev };
@@ -374,6 +440,11 @@ export default function ParentPaymentsPage() {
     };
   }, [outstandingLedger]);
 
+  const earliestOutstandingTarget = useMemo(
+    () => getEarliestOutstandingTarget(outstandingLedger, childLookup),
+    [childLookup, outstandingLedger]
+  );
+
   const familyFeeItems: FamilyFeeItem[] = useMemo(
     () =>
       assignments.map(assignment => {
@@ -391,6 +462,17 @@ export default function ParentPaymentsPage() {
         isOptional: assignment.fee?.is_optional ?? true
       }}),
     [assignments, childLookup]
+  );
+
+  const assignmentLookup = useMemo(
+    () =>
+      Object.fromEntries(
+        assignments.map(assignment => [
+          assignment.assignmentKey ?? assignment.id ?? `${assignment.child_id}_${assignment.fee_id}`,
+          assignment
+        ])
+      ),
+    [assignments]
   );
 
   const cartItems: PaymentCartItem[] = useMemo(() => {
@@ -423,6 +505,42 @@ export default function ParentPaymentsPage() {
     });
   }, [familyFeeItems, selections, monthFallback]);
 
+  const applyOutstandingSelection = useCallback(
+    (target: OutstandingTarget) => {
+      setSelections(prev => {
+        const next: Record<string, FeeSelectionState> = { ...prev };
+
+        familyFeeItems.forEach(item => {
+          const current = next[item.assignmentId] ?? { include: false, months: [], quantity: 1 };
+
+          if (item.childId !== target.childId) {
+            next[item.assignmentId] = { ...current, include: false };
+            return;
+          }
+
+          if (item.billingCycle === "monthly") {
+            const assignment = assignmentLookup[item.assignmentId];
+            const isApplicable =
+              !assignment?.effective_months?.length || assignment.effective_months.includes(target.monthKey);
+
+            if (!isApplicable) {
+              next[item.assignmentId] = { ...current, include: false };
+              return;
+            }
+
+            next[item.assignmentId] = { include: true, months: [target.monthKey], quantity: 1 };
+            return;
+          }
+
+          next[item.assignmentId] = { ...current, include: false, quantity: 1 };
+        });
+
+        return next;
+      });
+    },
+    [assignmentLookup, familyFeeItems]
+  );
+
   const preview = useMemo(() => buildPaymentPreview(cartItems, MERCHANT_FEE_CENTS), [cartItems]);
 
   const pendingPayment = useMemo(
@@ -431,6 +549,7 @@ export default function ParentPaymentsPage() {
   );
 
   const handleSelectionChange = useCallback((assignmentId: string, selection: FeeSelectionState) => {
+    setOutstandingSelection(null);
     setSelections(prev => ({ ...prev, [assignmentId]: selection }));
   }, []);
 
@@ -473,7 +592,7 @@ export default function ParentPaymentsPage() {
 
       if (!response.ok) {
         const payload = await response.json();
-        throw new Error(payload.error || "Unable to generate a Billplz bill.");
+        throw new Error(payload.error || "Unable to generate the online bill.");
       }
 
       const payload = await response.json();
@@ -496,48 +615,54 @@ export default function ParentPaymentsPage() {
     }
   }, [pendingPayment, loadData]);
 
+  const handleSettleOutstanding = useCallback(() => {
+    if (!earliestOutstandingTarget) return;
+    setActiveTab("payment");
+    applyOutstandingSelection(earliestOutstandingTarget);
+    setOutstandingSelection(earliestOutstandingTarget);
+    setTimeout(() => {
+      scrollToOutstandingSection(earliestOutstandingTarget.childId);
+    }, 200);
+  }, [applyOutstandingSelection, earliestOutstandingTarget, scrollToOutstandingSection]);
+
   return (
     <>
       <Navbar />
-      <main className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
-        <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
-          <div className="flex flex-col gap-4 py-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div>
-                <p className="text-sm uppercase tracking-wide text-primary/70">Payments</p>
-                <h1 className="text-3xl font-semibold text-slate-900">Student billing & Billplz</h1>
-                <p className="text-sm text-slate-600">
-                  Choose fees, review the total, and head to Billplz in just a few clicks.
-                </p>
-              </div>
-            </div>
+      <main className="min-h-screen bg-[#f7f8fc]">
+        <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+          <div className="space-y-6 lg:space-y-8">
+            <header className="space-y-2">
+              <h1 className="text-[26px] font-semibold text-slate-900 lg:text-[28px]">
+                Yuran pelajar & bayaran
+              </h1>
+              <p className="text-[15px] leading-relaxed text-slate-700">
+                Bayar yuran anak anda dengan pantas, pantau baki tertunggak, dan buat bayaran secara dalam talian.
+              </p>
+            </header>
 
-            <div className="sticky top-14 z-30 rounded-2xl border border-white/60 bg-white/80 p-2 shadow-sm backdrop-blur">
-              <div className="grid grid-cols-2 gap-2">
-            {tabs.map(tab => {
-              const isActive = activeTab === tab.id;
-              return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      aria-pressed={isActive}
-                      onClick={() => setActiveTab(tab.id)}
-                      className={`rounded-xl border px-4 py-3 text-left transition ${
-                        isActive
-                          ? "border-primary/40 bg-gradient-to-r from-primary/10 to-secondary/10 text-primary shadow-md"
-                          : "border-transparent bg-transparent text-slate-600 hover:border-white/40 hover:bg-white/50 hover:text-slate-900"
-                      }`}
-                    >
-                      <p className="text-sm font-semibold text-slate-900">{tab.label}</p>
-                      <p className="text-xs text-slate-500">{tab.description}</p>
-                    </button>
-                  );
-                })}
-              </div>
+            <div className="flex items-center gap-6 border-b border-slate-200">
+              {tabs.map(tab => {
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id)}
+                    className="relative pb-3 text-sm font-medium"
+                  >
+                    <span className={isActive ? "text-slate-900" : "text-slate-500 transition hover:text-slate-700"}>
+                      {tab.label}
+                    </span>
+                    {isActive && (
+                      <span className="absolute inset-x-0 -bottom-[1px] h-0.5 rounded-full bg-indigo-500" />
+                    )}
+                  </button>
+                );
+              })}
             </div>
 
             {error && (
-              <div className="rounded-xl border-l-4 border-rose-400 bg-rose-50/80 px-4 py-3 text-sm text-rose-800">
+              <div className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-800">
                 {error}
               </div>
             )}
@@ -547,12 +672,8 @@ export default function ParentPaymentsPage() {
               earliestDueMonth={outstandingSummary.earliestDueMonth}
               childSummaries={outstandingSummary.childSummaries}
               isLoading={(loading && assignments.length === 0) || outstandingLedgerLoading}
-              onPayNow={() => {
-                setActiveTab("payment");
-                requestAnimationFrame(() => {
-                  paymentSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-                });
-              }}
+              onSettleOutstanding={handleSettleOutstanding}
+              primaryDisabled={!earliestOutstandingTarget || outstandingSummary.totalCents <= 0}
               onViewHistory={() => {
                 setActiveTab("history");
                 requestAnimationFrame(() => {
@@ -562,113 +683,128 @@ export default function ParentPaymentsPage() {
             />
 
             {activeTab === "payment" ? (
-              <>
-                <section className="rounded-3xl border border-white/30 bg-white/80 p-6 shadow-xl backdrop-blur">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-primary/70">Contact information</p>
-                      <h2 className="text-xl font-semibold text-slate-900">
-                        You are paying as {contactInputs.name || "-"}
-                      </h2>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      onClick={loadData}
-                      className="text-primary hover:text-secondary"
-                      disabled={loading}
-                    >
-                      Refresh profile
-                    </Button>
+              <div className="mt-6 space-y-5 lg:space-y-6" ref={paymentSectionRef}>
+                {pendingPayment && (
+                  <PaymentStatusBanner payment={pendingPayment} onRefresh={refreshPendingStatus} />
+                )}
+
+                {outstandingSelectionActive && outstandingSelection && (
+                  <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-xs text-indigo-800">
+                    Tunggakan {formatMonthLabel(outstandingSelection.monthKey)} untuk {outstandingSelection.childName} telah dipilih. Semak butiran di bawah dan tekan "Teruskan ke bayaran".
                   </div>
-                  <div className="mt-4 grid gap-4 md:grid-cols-3">
-                    <label className="flex flex-col gap-1 text-sm font-medium text-slate-800 md:col-span-3">
-                      Full name
-                      <Input
-                        value={contactInputs.name}
-                        onChange={event => handleContactChange("name", event.target.value)}
-                        placeholder="Parent name"
-                      />
-                    </label>
-                    <label className="flex flex-col gap-1 text-sm font-medium text-slate-800">
-                      Email address
-                      <Input
-                        type="email"
-                        value={contactInputs.email}
-                        onChange={event => handleContactChange("email", event.target.value)}
-                        placeholder="name@example.com"
-                      />
-                    </label>
-                    <label className="flex flex-col gap-1 text-sm font-medium text-slate-800 md:col-span-2">
-                      Mobile number
-                      <Input
-                        value={contactInputs.phone}
-                        onChange={event => handleContactChange("phone", event.target.value)}
-                        placeholder="+60123456789"
-                      />
-                    </label>
-                  </div>
-                  <div className="mt-4 rounded-2xl border border-dashed border-primary/30 bg-gradient-to-r from-primary/5 to-secondary/5 px-4 py-3 text-sm text-primary/80">
-                    {(!parentProfile.email || !parentProfile.phone) ? (
-                      <span className="font-medium text-secondary">
-                        Please provide both an email and phone number before continuing with payment.
-                      </span>
+                )}
+
+                <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2.2fr)_minmax(260px,1fr)] lg:gap-8">
+                  <div className="space-y-6">
+                    <Card className="rounded-2xl border border-slate-100 bg-white shadow-sm">
+                      <CardContent className="space-y-5 p-5 lg:p-6">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="space-y-1.5">
+                            <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                              Contact information
+                            </p>
+                            <h2 className="text-sm font-semibold text-slate-900">
+                              You are paying as {contactInputs.name || "-"}
+                            </h2>
+                            <p className="text-xs text-slate-500 sm:text-[13px]">
+                              Pastikan maklumat di bawah tepat sebelum meneruskan bayaran dalam talian.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={loadData}
+                            className="text-xs font-medium text-indigo-600 underline-offset-4 hover:text-indigo-700"
+                            disabled={loading}
+                          >
+                            Segarkan profil
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                          <label className="flex flex-col">
+                            <span className="mb-1 text-xs font-medium text-slate-600">Full name</span>
+                            <Input
+                              value={contactInputs.name}
+                              onChange={event => handleContactChange("name", event.target.value)}
+                              placeholder="Parent name"
+                              className="h-11 text-sm"
+                            />
+                          </label>
+                          <label className="flex flex-col">
+                            <span className="mb-1 text-xs font-medium text-slate-600">Email address</span>
+                            <Input
+                              type="email"
+                              value={contactInputs.email}
+                              onChange={event => handleContactChange("email", event.target.value)}
+                              placeholder="name@example.com"
+                              className="h-11 text-sm"
+                            />
+                          </label>
+                          <label className="flex flex-col sm:col-span-2 lg:col-span-1">
+                            <span className="mb-1 text-xs font-medium text-slate-600">Mobile number</span>
+                            <Input
+                              value={contactInputs.phone}
+                              onChange={event => handleContactChange("phone", event.target.value)}
+                              placeholder="+60123456789"
+                              className="h-11 text-sm"
+                            />
+                          </label>
+                        </div>
+                        <div className="rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                          {!parentProfile.email || !parentProfile.phone
+                            ? 'Sila isi emel dan nombor telefon sebelum meneruskan pembayaran.'
+                            : 'Maklumat ini digunakan untuk bil ini sahaja. Simpan kemas kini kekal di halaman profil anda.'}
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    {loading ? (
+                      <div className="rounded-2xl border border-slate-100 bg-white p-6 text-center text-slate-600 shadow-sm">
+                        Loading payment data...
+                      </div>
                     ) : (
-                      "This information is only used for this bill. Save permanent updates on your profile page."
+                      <FamilyFeeSelector
+                        items={familyFeeItems}
+                        selections={selections}
+                        monthOptions={monthOptions}
+                        onSelectionChange={handleSelectionChange}
+                        focusChildId={outstandingSelection?.childId ?? null}
+                        outstandingSelection={outstandingSelection}
+                        outstandingSelectionActive={outstandingSelectionActive}
+                        registerChildRef={registerChildRef}
+                      />
                     )}
                   </div>
-                </section>
 
-                <div ref={paymentSectionRef}>
-                  {pendingPayment && (
-                    <PaymentStatusBanner payment={pendingPayment} onRefresh={refreshPendingStatus} />
-                  )}
-
-                  {loading ? (
-                    <div className="rounded-xl border border-white/30 bg-white/70 p-6 text-center text-slate-600 shadow-xl backdrop-blur">
-                      Loading payment data...
-                    </div>
-                  ) : (
-                    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-                      <div className="space-y-6">
-                        <div className="scroll-mt-32">
-                          <FamilyFeeSelector
-                            items={familyFeeItems}
-                            selections={selections}
-                            monthOptions={monthOptions}
-                            onSelectionChange={handleSelectionChange}
-                          />
-                        </div>
-                      </div>
-                      <div className="scroll-mt-32">
-                        <PaymentBreakdown
-                          cartItems={cartItems}
-                          totalCents={preview.totalCents}
-                          merchantFeeCents={preview.merchantFeeCents}
-                          isSubmitting={submitting}
-                          onCheckout={handleCheckout}
-                        />
-                      </div>
-                    </div>
-                  )}
+                  <div ref={summaryRef}>
+                    <PaymentBreakdown
+                      cartItems={cartItems}
+                      totalCents={preview.totalCents}
+                      merchantFeeCents={preview.merchantFeeCents}
+                      isSubmitting={submitting}
+                      onCheckout={handleCheckout}
+                      outstandingSelection={outstandingSelection}
+                      outstandingSelectionActive={outstandingSelectionActive}
+                    />
+                  </div>
                 </div>
-              </>
+              </div>
             ) : (
-              <section className="rounded-3xl border border-white/30 bg-white/80 p-6 shadow-xl backdrop-blur">
-                <div className="flex flex-col gap-1">
-                  <p className="text-sm font-semibold text-primary/70">Payment records</p>
-                  <h2 className="text-2xl font-semibold text-slate-900">Transaction history</h2>
-                  <p className="text-sm text-slate-600">Review the status and reference for each Billplz bill.</p>
-                </div>
-                <div className="mt-6">
+              <Card className="rounded-2xl border border-slate-100 bg-white shadow-sm">
+                <CardContent className="space-y-4 p-5 lg:p-6">
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Payment records</p>
+                    <h2 className="text-xl font-semibold text-slate-900">Transaction history</h2>
+                    <p className="text-sm text-slate-500">Review status dan rujukan untuk setiap bil anda.</p>
+                  </div>
                   {loading ? (
-                    <div className="rounded-xl border border-white/30 bg-white/70 p-6 text-center text-slate-600 shadow-xl backdrop-blur">
+                    <div className="rounded-xl border border-slate-100 bg-slate-50 p-6 text-center text-slate-600">
                       Loading payment records...
                     </div>
                   ) : (
                     <PaymentHistory payments={payments} />
                   )}
-                </div>
-              </section>
+                </CardContent>
+              </Card>
             )}
           </div>
         </div>
