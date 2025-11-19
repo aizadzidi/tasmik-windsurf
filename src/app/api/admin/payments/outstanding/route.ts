@@ -43,7 +43,7 @@ export async function GET(request: Request) {
         );
       }
 
-      let earliestByParent: Record<string, string | null> = {};
+      const earliestByParent: Record<string, string | null> = {};
       const monthsByParent: Record<string, string[]> = {};
       if (parentIds.length) {
         const [{ data: childRows, error: childError }, { data: adjustmentMonths, error: adjustmentError }] =

@@ -14,6 +14,10 @@ export default function Navbar() {
   const isTeacher = pathname.startsWith('/teacher');
   const isAdmin = pathname.startsWith('/admin');
 
+  const navClasses = isParent
+    ? "relative z-50 bg-gradient-to-br from-[#f8fafc]/92 via-white/92 to-[#f8fafc]/92 backdrop-blur-xl border-b border-slate-200/50 shadow-md"
+    : "relative z-50 bg-white/20 backdrop-blur-xl border-b border-white/30 shadow-lg";
+
   const getDashboardInfo = () => {
     if (isParent) {
       return {
@@ -35,6 +39,16 @@ export default function Navbar() {
             icon: (
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            )
+          },
+          {
+            href: "/parent/payments",
+            label: "Payments",
+            icon: (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16a1 1 0 011 1v8a1 1 0 01-1 1H4a1 1 0 01-1-1V8a1 1 0 011-1z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 10h16M9 15h3.5" />
               </svg>
             )
           },
@@ -109,8 +123,12 @@ export default function Navbar() {
     return pathname.startsWith(href);
   };
 
+  const mobileMenuClasses = isParent
+    ? "md:hidden border-t border-slate-200/50 bg-gradient-to-br from-[#f8fafc]/90 via-white/90 to-[#f8fafc]/90 backdrop-blur-xl"
+    : "md:hidden border-t border-white/30 bg-white/10 backdrop-blur-xl";
+
   return (
-    <nav className="relative z-50 bg-white/20 backdrop-blur-xl border-b border-white/30 shadow-lg">
+    <nav className={navClasses}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           {/* Logo and Brand */}
@@ -177,7 +195,7 @@ export default function Navbar() {
 
         {/* Mobile Navigation Menu */}
         {isMobileMenuOpen && (
-          <div className="md:hidden border-t border-white/30 bg-white/10 backdrop-blur-xl">
+          <div className={mobileMenuClasses}>
             <div className="px-2 pt-2 pb-3 space-y-1">
               {navItems.map((item) => (
                 <Link

@@ -1,6 +1,5 @@
 import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { cn } from '@/lib/utils';
 import { formatRinggit, humanizeMonths } from '@/lib/payments/pricingUtils';
 import type { OutstandingChildSummary } from './types';
 

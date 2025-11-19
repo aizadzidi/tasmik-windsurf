@@ -24,7 +24,6 @@ import type {
 } from "@/components/payments/types";
 import { MERCHANT_FEE_CENTS, buildPaymentPreview } from "@/lib/payments/pricingUtils";
 import type { PaymentCartItem } from "@/types/payments";
-import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Card, CardContent } from "@/components/ui/Card";
 
@@ -628,7 +627,7 @@ export default function ParentPaymentsPage() {
   return (
     <>
       <Navbar />
-      <main className="min-h-screen bg-[#f7f8fc]">
+      <main className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
         <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
           <div className="space-y-6 lg:space-y-8">
             <header className="space-y-2">
@@ -690,7 +689,7 @@ export default function ParentPaymentsPage() {
 
                 {outstandingSelectionActive && outstandingSelection && (
                   <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-xs text-indigo-800">
-                    Tunggakan {formatMonthLabel(outstandingSelection.monthKey)} untuk {outstandingSelection.childName} telah dipilih. Semak butiran di bawah dan tekan "Teruskan ke bayaran".
+                    Tunggakan {formatMonthLabel(outstandingSelection.monthKey)} untuk {outstandingSelection.childName} telah dipilih. Semak butiran di bawah dan tekan &quot;Teruskan ke bayaran&quot;.
                   </div>
                 )}
 
