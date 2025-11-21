@@ -77,6 +77,7 @@ export default function TeacherExamDashboard() {
   const [classes, setClasses] = React.useState<ClassItem[]>([]);
   const [subjects, setSubjects] = React.useState<SubjectItem[]>([]);
   const [exams, setExams] = React.useState<ExamItem[]>([]);
+  const [classRosterMap, setClassRosterMap] = React.useState<Map<string, Array<{ id: string; name: string }>>>(new Map());
   const [conductCriterias, setConductCriterias] = React.useState<ConductCriteria[]>([]);
   const [gradingScale, setGradingScale] = React.useState<GradingScale | null>(null);
 
@@ -112,6 +113,28 @@ export default function TeacherExamDashboard() {
     setToast({ message, type });
     setTimeout(() => setToast(null), 2200);
   };
+
+  const fetchFullStudentRoster = React.useCallback(async () => {
+    const pageSize = 1000;
+    let from = 0;
+    const allStudents: Array<{ id: string; name: string; class_id: string | null }> = [];
+    while (true) {
+      const { data, error } = await supabase
+        .from('students')
+        .select('id, name, class_id')
+        .order('name', { ascending: true })
+        .range(from, from + pageSize - 1);
+      if (error) {
+        throw error;
+      }
+      if (data && data.length > 0) {
+        allStudents.push(...data);
+      }
+      if (!data || data.length < pageSize) break;
+      from += pageSize;
+    }
+    return allStudents;
+  }, [fetchFullStudentRoster]);
   
   // Cache for unsaved data when switching subjects
   const [unsavedDataCache, setUnsavedDataCache] = React.useState<Map<string, StudentRow[]>>(new Map());
@@ -134,6 +157,27 @@ export default function TeacherExamDashboard() {
       setSubjects(subjectsData || []);
       const allExams = examsResp?.exams || [];
       setExams(allExams);
+      try {
+        const studentsData = await fetchFullStudentRoster();
+        if (studentsData) {
+          const rosterMap = new Map<string, Array<{ id: string; name: string }>>();
+          studentsData.forEach((student) => {
+            if (!student?.class_id) return;
+            const classId = String(student.class_id);
+            if (!rosterMap.has(classId)) rosterMap.set(classId, []);
+            rosterMap.get(classId)!.push({
+              id: String(student.id),
+              name: student.name || "Unnamed student",
+            });
+          });
+          setClassRosterMap(rosterMap);
+        } else {
+          setClassRosterMap(new Map());
+        }
+      } catch (err) {
+        console.error('Failed to load class rosters', err);
+        setClassRosterMap(new Map());
+      }
 
       // Fetch conduct criteria
       try {
@@ -219,6 +263,24 @@ export default function TeacherExamDashboard() {
       .map(c => ({ id: String(c.id), name: c.name }));
     return arr.length ? arr : classes;
   }, [selectedExamId, exams, classes]);
+
+  const totalRosterCount = React.useMemo(() => {
+    let count = 0;
+    classRosterMap.forEach((students) => {
+      count += students.length;
+    });
+    return count;
+  }, [classRosterMap]);
+
+  const selectedClassRoster = React.useMemo(() => {
+    if (!selectedClassId || selectedClassId === 'all') return [];
+    return classRosterMap.get(selectedClassId) ?? [];
+  }, [classRosterMap, selectedClassId]);
+
+  const selectedClassName = React.useMemo(() => {
+    if (!selectedClassId || selectedClassId === 'all') return null;
+    return classes.find((cls) => cls.id === selectedClassId)?.name ?? null;
+  }, [classes, selectedClassId]);
 
   // Subject validity for current exam/class options
   const subjectIsInUI = React.useMemo(() => {
@@ -1205,27 +1267,25 @@ export default function TeacherExamDashboard() {
   });
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
+    <div className="min-h-screen bg-slate-50">
       <Navbar />
-      <div className="relative p-4 sm:p-6">
-        <div className="max-w-7xl mx-auto">
-          {/* Header */}
-          <header className="mb-6">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-800">Exam Dashboard</h1>
-              <p className="text-gray-600">Manage student exam results and conduct assessments</p>
-            </div>
+      <main className="px-4 py-8 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-6xl">
+          <header className="mb-8">
+            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">Exams</p>
+            <h1 className="mt-2 text-[22px] font-semibold tracking-tight text-slate-900">Teacher exam dashboard</h1>
+            <p className="mt-1 text-sm text-slate-500">Manage student exam results and conduct assessments.</p>
           </header>
-          
+
           <div className="flex flex-col gap-6">
         {/* Section 1: Pickers */}
-        <Card>
-          <CardContent className="py-6 flex flex-col gap-4">
+        <Card className="rounded-3xl border border-slate-200 bg-white shadow-[0_18px_40px_rgba(15,23,42,0.04)]">
+          <CardContent className="flex flex-col gap-4 px-6 py-6">
             {/* Step Progress Indicator */}
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               <div className="flex items-center gap-2">
-                <Info className="w-4 h-4 text-blue-500 flex-shrink-0" />
-                <span className="text-sm text-blue-700">
+                <Info className="h-4 w-4 flex-shrink-0 text-slate-400" />
+                <span>
                   Step {!selectedExamId ? '1' : (!selectedClassId || selectedClassId === '') ? '2' : !selectedSubjectId ? '3' : '4'} of 4: 
                   {!selectedExamId && ` Select an ${assessmentType.toLowerCase()}`}
                   {selectedExamId && (!selectedClassId || selectedClassId === '') && ' Choose a class'}
@@ -1240,14 +1300,14 @@ export default function TeacherExamDashboard() {
             {/* Deprecated: Invalid combination banner removed by request */}
 
             {/* Redesigned Picker Section */}
-            <div className="bg-white rounded-lg shadow-sm px-6 py-4 flex flex-col md:flex-row md:items-end gap-4 md:gap-6 md:flex-wrap border mb-4">
+            <div className="mb-4 flex flex-col gap-4 rounded-3xl border border-slate-200 bg-slate-50/60 px-6 py-5 md:flex-row md:flex-wrap md:items-end md:gap-6">
               {/* Assessment Type Toggle */}
-              <div className="flex flex-col min-w-[120px]">
-                <label className="text-xs font-medium mb-1">Assessment Type</label>
-                <div className="flex items-center bg-gray-100 rounded-full p-1 w-fit">
+              <div className="flex min-w-[120px] flex-col">
+                <label className="mb-1 text-xs font-medium text-slate-500">Assessment Type</label>
+                <div className="inline-flex items-center rounded-full bg-slate-100 p-1">
                   <button
                     type="button"
-                    className={`px-4 py-1 rounded-full text-xs font-semibold transition-colors duration-150 ${assessmentType === 'Quiz' ? 'bg-primary text-white' : 'text-gray-600'}`}
+                    className={`rounded-full px-4 py-1 text-xs font-medium transition-all duration-150 ${assessmentType === 'Quiz' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
                     onClick={() => setAssessmentType('Quiz')}
                     aria-pressed={assessmentType === 'Quiz'}
                   >
@@ -1255,7 +1315,7 @@ export default function TeacherExamDashboard() {
                   </button>
                   <button
                     type="button"
-                    className={`px-4 py-1 rounded-full text-xs font-semibold transition-colors duration-150 ${assessmentType === 'Exam' ? 'bg-primary text-white' : 'text-gray-600'}`}
+                    className={`rounded-full px-4 py-1 text-xs font-medium transition-all duration-150 ${assessmentType === 'Exam' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
                     onClick={() => setAssessmentType('Exam')}
                     aria-pressed={assessmentType === 'Exam'}
                   >
@@ -1264,14 +1324,14 @@ export default function TeacherExamDashboard() {
                 </div>
               </div>
               {/* Assessment Dropdown - FIRST */}
-              <div className="flex flex-col min-w-[180px]">
-                <label className="text-xs font-medium mb-1" htmlFor="assessment-picker">{assessmentType}</label>
-                <div className="flex gap-2 items-center">
+              <div className="flex min-w-[180px] flex-col">
+                <label className="mb-1 text-xs font-medium text-slate-500" htmlFor="assessment-picker">{assessmentType}</label>
+                <div className="flex items-center gap-2">
                   <select
                     id="assessment-picker"
                     value={selectedExamId}
                     onChange={e => handleExamChange(e.target.value)}
-                    className="border rounded px-3 py-2 text-sm focus:outline-primary"
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
                   >
                   <option value="">Select {assessmentType}</option>
                     {exams.filter(exam => {
@@ -1284,7 +1344,7 @@ export default function TeacherExamDashboard() {
                   {assessmentType === 'Quiz' && (
                     <button
                       type="button"
-                      className="ml-1 px-2 py-1 border rounded text-xs text-primary border-primary hover:bg-primary/10 transition"
+                      className="ml-1 rounded-full border border-slate-900/20 px-3 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100"
                       onClick={() => alert('Create Quiz - not implemented')}
                     >
                       + Create Quiz
@@ -1294,29 +1354,34 @@ export default function TeacherExamDashboard() {
               </div>
               {/* Class Picker - SECOND */}
               <div className="flex flex-col min-w-[120px]">
-                <label className="text-xs font-medium mb-1" htmlFor="class-picker">Class</label>
+                <label className="mb-1 text-xs font-medium text-slate-500" htmlFor="class-picker">Class</label>
                 <select
                   id="class-picker"
                   value={selectedClassId}
                   onChange={e => handleClassChange(e.target.value)}
-                  className="border rounded px-3 py-2 text-sm focus:outline-primary"
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
                   disabled={!selectedExamId}
                 >
                   <option value="">Select Class</option>
-                  <option value="all">All Classes</option>
+                  <option value="all">{totalRosterCount ? `All Classes (${totalRosterCount})` : 'All Classes'}</option>
                   {classesForUI.map(cls => (
-                    <option key={cls.id} value={cls.id}>{cls.name}</option>
+                    <option key={cls.id} value={cls.id}>
+                      {(() => {
+                        const count = classRosterMap.get(cls.id)?.length;
+                        return count ? `${cls.name} (${count})` : cls.name;
+                      })()}
+                    </option>
                   ))}
                 </select>
               </div>
               {/* Subject Picker - THIRD */}
               <div className="flex flex-col min-w-[140px]">
-                <label className="text-xs font-medium mb-1" htmlFor="subject-picker">Subject</label>
+                <label className="mb-1 text-xs font-medium text-slate-500" htmlFor="subject-picker">Subject</label>
                 <select
                   id="subject-picker"
                   value={selectedSubjectId}
                   onChange={e => handleSubjectChange(e.target.value)}
-                  className="border rounded px-3 py-2 text-sm focus:outline-primary"
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
                   disabled={!selectedClassId}
                 >
                   <option value="">Select Subject</option>
@@ -1352,6 +1417,37 @@ export default function TeacherExamDashboard() {
                     </button>
                   );
                 })}
+              </div>
+            )}
+
+            {selectedClassId && selectedClassId !== 'all' && (
+              <div className="mb-4 rounded-2xl border border-slate-100 bg-white/80 px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">Class roster</p>
+                  {selectedClassRoster.length > 0 && (
+                    <span className="text-[11px] font-medium text-slate-500">
+                      {selectedClassRoster.length} {selectedClassRoster.length === 1 ? 'student' : 'students'}
+                    </span>
+                  )}
+                </div>
+                {selectedClassRoster.length > 0 ? (
+                  <div className="mt-3 max-h-56 overflow-y-auto">
+                    <div className="flex flex-wrap gap-2">
+                      {selectedClassRoster.map((student) => (
+                        <span
+                          key={student.id}
+                          className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600"
+                        >
+                          {student.name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-slate-500">
+                    No roster data available for {selectedClassName || 'this class'}.
+                  </p>
+                )}
               </div>
             )}
 
@@ -1676,16 +1772,16 @@ export default function TeacherExamDashboard() {
               </table>
             </div>
             {/* Section 3: Graphs */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-              <Card>
-                <CardContent className="p-4">
-                  <h4 className="font-semibold mb-2">Marks Overview</h4>
+            <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2">
+              <Card className="rounded-3xl border border-slate-200 bg-white shadow-[0_18px_40px_rgba(15,23,42,0.04)]">
+                <CardContent className="p-6">
+                  <h4 className="mb-2 text-base font-semibold text-slate-900">Marks Overview</h4>
                   <LineChart students={marksData} />
                 </CardContent>
               </Card>
-              <Card>
-                <CardContent className="p-4">
-                  <h4 className="font-semibold mb-2">Class Conduct Radar</h4>
+              <Card className="rounded-3xl border border-slate-200 bg-white shadow-[0_18px_40px_rgba(15,23,42,0.04)]">
+                <CardContent className="p-6">
+                  <h4 className="mb-2 text-base font-semibold text-slate-900">Class Conduct Radar</h4>
                   <RadarChart data={avgConduct} />
                 </CardContent>
               </Card>
@@ -1694,7 +1790,7 @@ export default function TeacherExamDashboard() {
         </Card>
           </div>
         </div>
-      </div>
+      </main>
       {/* Drawer */}
       <StudentDetailsPanelTeacher
         student={panelStudent}
