@@ -90,6 +90,17 @@ export default function Navbar() {
               </svg>
             )
           },
+          {
+            href: "/teacher/lesson",
+            label: "Lessons",
+            icon: (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5h11a2 2 0 012 2v12H7a2 2 0 01-2-2V5z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 3h9a2 2 0 012 2v14" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9h6M9 13h4" />
+              </svg>
+            )
+          },
           { 
             href: "/teacher/exam", 
             label: "Exams", 
