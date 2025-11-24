@@ -123,3 +123,21 @@
     background-attachment: fixed;
   }
 }
+
+/* Admin sidebar padding */
+body.admin-with-sidebar {
+  padding-left: 0;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%);
+}
+
+@media (min-width: 768px) {
+  body.admin-with-sidebar {
+    padding-left: 19rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  body.admin-with-sidebar {
+    padding-left: 20rem;
+  }
+}

@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
@@ -80,6 +80,11 @@ const AdminNavbar = () => {
   };
 
   useEffect(() => {
+    document.body.classList.add("admin-with-sidebar");
+    return () => document.body.classList.remove("admin-with-sidebar");
+  }, []);
+
+  useEffect(() => {
     const fetchUnreadCount = async () => {
       const result = await notificationService.getUnreadCount();
       if (!result.error) {
@@ -101,142 +106,212 @@ const AdminNavbar = () => {
   };
 
   return (
-    <nav className="relative z-50 bg-white/20 backdrop-blur-xl border-b border-white/30 shadow-lg">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-16">
-          {/* Logo and Brand */}
-          <Link href="/admin" className="flex items-center space-x-3 hover:opacity-80 transition-opacity">
-            <div className="relative">
-              <Image 
-                src="/logo-akademi.png" 
-                alt="AlKhayr Class Logo" 
+    <>
+      {/* Mobile top bar */}
+      <div className="md:hidden sticky top-0 z-40 bg-white/90 border-b border-slate-200/70 backdrop-blur-xl shadow-sm">
+        <div className="flex items-center justify-between px-4 py-3">
+          <Link href="/admin" className="flex items-center space-x-3">
+            <div className="relative flex items-center justify-center rounded-2xl bg-slate-100 p-2 shadow-sm ring-1 ring-slate-200">
+              <Image
+                src="/logo-akademi.png"
+                alt="AlKhayr Class Logo"
+                width={32}
+                height={32}
+                className="object-contain"
+              />
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-slate-500">Admin</p>
+              <p className="text-sm font-bold text-slate-900">AlKhayr Class</p>
+            </div>
+          </Link>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleNotificationClick}
+              className="relative rounded-full bg-white px-3 py-2 shadow-sm ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:shadow"
+            >
+              <span className="text-lg">🔔</span>
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-br from-rose-500 to-orange-500 text-[11px] font-bold text-white shadow-md">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              className="rounded-2xl bg-slate-900 px-3 py-2 text-white shadow transition hover:scale-105"
+            >
+              <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                {isMobileMenuOpen ? (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                ) : (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                )}
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Desktop Sidebar */}
+      <aside className="fixed inset-y-3 left-3 z-40 hidden w-72 overflow-hidden rounded-3xl bg-white/95 border border-slate-200 shadow-xl backdrop-blur-xl md:flex">
+        <div className="flex h-full w-full flex-col px-5 py-6">
+          <div className="flex items-center space-x-3 pb-6 border-b border-slate-200/70">
+            <div className="relative flex items-center justify-center rounded-2xl bg-slate-100 p-2 shadow-sm ring-1 ring-slate-200">
+              <Image
+                src="/logo-akademi.png"
+                alt="AlKhayr Class Logo"
                 width={40}
                 height={40}
                 className="object-contain"
               />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-gray-800 tracking-tight">AlKhayr Class</h1>
-              <p className="text-xs text-gray-600 font-medium">Admin Dashboard</p>
-            </div>
-          </Link>
-
-          {/* Desktop Navigation */}
-          <div className="hidden md:flex items-center space-x-1">
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`relative px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300 flex items-center space-x-2 group ${
-                  isActive(item.href)
-                    ? "bg-gradient-to-r from-blue-500/20 to-purple-500/20 text-blue-700 shadow-lg backdrop-blur-sm border border-blue-200/50"
-                    : "text-gray-700 hover:bg-white/30 hover:text-gray-900 hover:shadow-md hover:backdrop-blur-sm"
-                }`}
-              >
-                <span className={`transition-transform group-hover:scale-110 ${isActive(item.href) ? 'text-blue-600' : 'text-gray-600'}`}>
-                  {item.icon}
-                </span>
-                <span className="font-semibold">{item.label}</span>
-                {isActive(item.href) && (
-                  <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 w-2 h-2 bg-blue-500 rounded-full"></div>
-                )}
-              </Link>
-            ))}
-          </div>
-
-          {/* Desktop Notifications & Sign Out */}
-          <div className="hidden md:flex items-center space-x-3">
-            {/* Notification Bell */}
-            <button
-              onClick={handleNotificationClick}
-              className="relative p-3 rounded-xl bg-white/20 backdrop-blur-sm border border-white/30 text-gray-700 hover:bg-white/40 hover:border-white/50 transition-all duration-200 hover:shadow-lg hover:scale-105 group"
-            >
-              <div className="w-6 h-6 flex items-center justify-center text-lg transition-transform group-hover:scale-110">
-                🔔
-              </div>
-              {unreadCount > 0 && (
-                <span className="absolute -top-2 -right-2 bg-gradient-to-br from-red-500 to-pink-600 text-white text-xs rounded-full h-6 w-6 flex items-center justify-center font-bold shadow-lg animate-pulse border-2 border-white">
-                  {unreadCount > 9 ? '9+' : unreadCount}
-                </span>
-              )}
-            </button>
-            
-            <div className="bg-white/20 backdrop-blur-sm rounded-lg p-1 border border-white/30">
-              <SignOutButton />
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Admin Suite</p>
+              <p className="text-lg font-bold text-slate-900">AlKhayr Class</p>
             </div>
           </div>
 
-          {/* Mobile Menu Button */}
-          <button
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="md:hidden p-2 rounded-lg bg-white/20 backdrop-blur-sm border border-white/30 text-gray-700 hover:bg-white/30 transition-all duration-200"
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              {isMobileMenuOpen ? (
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              ) : (
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-              )}
-            </svg>
-          </button>
-        </div>
-
-        {/* Mobile Navigation Menu */}
-        {isMobileMenuOpen && (
-          <div className="md:hidden border-t border-white/30 bg-white/10 backdrop-blur-xl">
-            <div className="px-2 pt-2 pb-3 space-y-1">
-              {navItems.map((item) => (
+          <div className="mt-6 space-y-2">
+            {navItems.map((item) => {
+              const active = isActive(item.href);
+              return (
                 <Link
                   key={item.href}
                   href={item.href}
-                  onClick={() => setIsMobileMenuOpen(false)}
-                  className={`block px-3 py-3 rounded-lg text-base font-medium transition-all duration-200 flex items-center space-x-3 ${
-                    isActive(item.href)
-                      ? "bg-gradient-to-r from-blue-500/20 to-purple-500/20 text-blue-700 shadow-lg backdrop-blur-sm border border-blue-200/50"
-                      : "text-gray-700 hover:bg-white/30 hover:text-gray-900"
+                  className={`group relative flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition-all duration-200 border border-transparent transform-gpu ${
+                    active
+                      ? "bg-blue-50 text-blue-700 shadow-md border-blue-100"
+                      : "text-slate-700 hover:bg-white hover:shadow-lg hover:border-slate-200/90 hover:scale-[1.02]"
                   }`}
                 >
-                  <span className={`${isActive(item.href) ? 'text-blue-600' : 'text-gray-600'}`}>
+                  <span
+                    className={`flex h-9 w-9 items-center justify-center rounded-xl border text-[15px] ${
+                      active
+                        ? "border-blue-100 bg-white text-blue-700"
+                        : "border-slate-200 bg-white text-slate-600 group-hover:border-blue-100 group-hover:text-blue-700 group-hover:shadow-sm"
+                    }`}
+                  >
                     {item.icon}
                   </span>
-                  <span>{item.label}</span>
+                  <span className="flex-1">{item.label}</span>
                 </Link>
-              ))}
-              <div className="mt-3 pt-3 border-t border-white/30 space-y-3">
-                {/* Mobile Notification Button */}
-                <button
-                  onClick={() => {
-                    handleNotificationClick();
-                    setIsMobileMenuOpen(false);
-                  }}
-                  className="w-full flex items-center justify-between px-3 py-3 rounded-lg text-base font-medium transition-all duration-200 bg-white/20 backdrop-blur-sm border border-white/30 text-gray-700 hover:bg-white/30"
-                >
-                  <div className="flex items-center space-x-3">
-                    <span className="text-lg">🔔</span>
-                    <span>Notifications</span>
-                  </div>
-                  {unreadCount > 0 && (
-                    <span className="bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold">
-                      {unreadCount > 9 ? '9+' : unreadCount}
-                    </span>
-                  )}
-                </button>
-                
-                <div className="bg-white/20 backdrop-blur-sm rounded-lg p-3 border border-white/30">
-                  <SignOutButton />
+              );
+            })}
+          </div>
+
+          <div className="mt-auto space-y-4 pt-4">
+            <button
+              onClick={handleNotificationClick}
+              className="group relative flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-sm transition-all duration-200 transform-gpu hover:scale-[1.02] hover:shadow-lg hover:border-slate-200/90 hover:bg-white"
+            >
+              <div className="flex items-center gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-lg text-white shadow-sm">
+                  🔔
+                </span>
+                <div className="text-left">
+                  <p className="text-xs text-slate-500">Notifications</p>
+                  <p className="text-sm font-bold text-slate-900">Inbox</p>
                 </div>
+              </div>
+              {unreadCount > 0 && (
+                <span className="flex h-7 min-w-7 items-center justify-center rounded-full bg-gradient-to-br from-rose-500 to-orange-500 px-2 text-xs font-bold text-white shadow-sm">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </button>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm ring-1 ring-slate-200/70 transition-all duration-200 transform-gpu hover:scale-[1.02] hover:shadow-lg hover:border-slate-200/90">
+              <SignOutButton />
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {/* Mobile Drawer */}
+      {isMobileMenuOpen && (
+        <div className="fixed inset-0 z-50 flex md:hidden">
+          <div
+            className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm"
+            onClick={() => setIsMobileMenuOpen(false)}
+          />
+          <div className="relative ml-auto flex h-full w-80 flex-col gap-2 rounded-l-3xl bg-white/95 px-4 py-6 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="rounded-2xl bg-slate-100 p-2 shadow-sm ring-1 ring-slate-200">
+                  <Image src="/logo-akademi.png" alt="AlKhayr Class Logo" width={36} height={36} className="object-contain" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-500">Admin</p>
+                  <p className="text-sm font-bold text-slate-900">AlKhayr Class</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsMobileMenuOpen(false)}
+                className="rounded-2xl bg-slate-100 p-2 text-slate-600 shadow-sm"
+              >
+                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-2">
+              {navItems.map((item) => {
+                const active = isActive(item.href);
+                return (
+                <Link
+                  key={item.href}
+                    href={item.href}
+                    onClick={() => setIsMobileMenuOpen(false)}
+                    className={`flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition border border-transparent transform-gpu ${
+                      active
+                        ? "bg-blue-50 text-blue-700 shadow-sm border-blue-100"
+                        : "bg-slate-50 text-slate-800 hover:bg-white hover:shadow-sm hover:border-slate-200/90 hover:scale-[1.02]"
+                    }`}
+                  >
+                    <span
+                      className={`flex h-9 w-9 items-center justify-center rounded-xl ${
+                        active ? "bg-white text-blue-700 border border-blue-100" : "bg-white text-slate-600 border border-slate-200"
+                      }`}
+                    >
+                      {item.icon}
+                    </span>
+                    <span>{item.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+
+            <div className="mt-auto space-y-3">
+              <button
+                onClick={() => {
+                  handleNotificationClick();
+                  setIsMobileMenuOpen(false);
+                }}
+                className="flex w-full items-center justify-between rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-all duration-200 transform-gpu hover:scale-[1.02] hover:shadow-md"
+              >
+                <span className="flex items-center gap-3">
+                  <span className="text-lg">🔔</span>
+                  <span>Notifications</span>
+                </span>
+                {unreadCount > 0 && (
+                  <span className="rounded-full bg-white/20 px-3 py-1 text-xs font-bold">
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm transition-all duration-200 transform-gpu hover:scale-[1.02] hover:shadow-md hover:border-slate-200/90">
+                <SignOutButton />
               </div>
             </div>
           </div>
-        )}
-      </div>
-      
-      {/* Notification Panel */}
-      <NotificationPanel 
-        isVisible={showNotifications} 
-        onClose={() => setShowNotifications(false)} 
-      />
-    </nav>
+        </div>
+      )}
+
+      <NotificationPanel isVisible={showNotifications} onClose={() => setShowNotifications(false)} />
+    </>
   );
 };
 

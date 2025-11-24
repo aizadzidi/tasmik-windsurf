@@ -446,7 +446,7 @@ export default function AdminExamPage() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
         <AdminNavbar />
-        <div className="p-6">
+        <div className="max-w-7xl p-6 mx-auto">
           <div className="animate-pulse space-y-6">
             <div className="h-16 bg-white/50 rounded-2xl"></div>
             <div className="h-32 bg-white/50 rounded-2xl"></div>
@@ -461,7 +461,7 @@ export default function AdminExamPage() {
     <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
       <AdminNavbar />
       
-      <div className="relative p-4 sm:p-6 transition-opacity duration-300">
+      <div className="relative p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto transition-opacity duration-300">
         {/* Page Header */}
         <div className="flex justify-between items-center mb-6">
           <div>
