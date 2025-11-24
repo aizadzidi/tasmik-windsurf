@@ -7,10 +7,14 @@ export interface StudentProfile {
   classId: string;
 }
 
-export interface AttendanceDay {
-  date: string; // ISO format (yyyy-mm-dd)
+export interface AttendanceEntry {
   statuses: Record<string, AttendanceStatus>;
   note?: string;
+  submitted: boolean;
+}
+
+export interface AttendanceDay extends AttendanceEntry {
+  date: string; // ISO format (yyyy-mm-dd)
 }
 
 export interface ClassAttendance {
@@ -20,7 +24,7 @@ export interface ClassAttendance {
   records: AttendanceDay[];
 }
 
-export type AttendanceRecord = Record<string, Record<string, Record<string, AttendanceStatus>>>;
+export type AttendanceRecord = Record<string, Record<string, AttendanceEntry>>;
 
 export interface StudentAttendanceSummary {
   id: string;

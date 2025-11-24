@@ -2,6 +2,7 @@
 
 import React from "react";
 import Navbar from "@/components/Navbar";
+import ClassAttendanceBarChart from "@/components/teacher/ClassAttendanceBarChart";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -13,7 +14,7 @@ import {
   calculateClassDailyStats,
   calculateOverallDailyStats,
   calculateStudentSummaries,
-  getClassAnalyticsForDate,
+  getClassAnalyticsForRange,
 } from "@/data/attendance";
 import type { AttendanceRecord, AttendanceStatus, ClassAttendance } from "@/types/attendance";
 import { Calendar, CheckCircle2, GraduationCap } from "lucide-react";
@@ -24,6 +25,24 @@ const tabs = [
   { id: "analytics", label: "Class Analytics" },
   { id: "student-summary", label: "Student Summary" },
 ];
+
+const ANALYTICS_RANGE_OPTIONS = [
+  { id: "today", label: "Today", days: 1 },
+  { id: "week", label: "Week", days: 7 },
+  { id: "month", label: "Month", days: 30 },
+  { id: "year", label: "Year", days: 365 },
+] as const;
+
+type AnalyticsRange = (typeof ANALYTICS_RANGE_OPTIONS)[number]["id"];
+
+const SUMMARY_RANGE_OPTIONS = [
+  { id: "week", label: "Week", days: 7 },
+  { id: "month", label: "Month", days: 30 },
+  { id: "year", label: "Year", days: 365 },
+  { id: "lifetime", label: "Lifetime", days: null },
+] as const;
+
+type SummaryRange = (typeof SUMMARY_RANGE_OPTIONS)[number]["id"];
 
 const formatDisplayDate = (date: string) => {
   try {
@@ -37,7 +56,14 @@ const formatDisplayDate = (date: string) => {
   }
 };
 
-const todayIso = () => new Date().toISOString().split("T")[0];
+const toLocalDateKey = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const todayIso = () => toLocalDateKey(new Date());
 
 const getRateColor = (percent: number) => {
   if (percent >= 90) return "bg-emerald-50 text-emerald-700";
@@ -92,16 +118,50 @@ export default function TeacherAttendancePage() {
   const [selectedDate, setSelectedDate] = React.useState(() => todayIso());
   const [saving, setSaving] = React.useState(false);
   const [isDirty, setIsDirty] = React.useState(false);
-  const [statusMessage, setStatusMessage] = React.useState("Saved just now");
+  const [statusMessage, setStatusMessage] = React.useState("");
   const [searchTerm, setSearchTerm] = React.useState("");
-  const [sortBy, setSortBy] = React.useState<"name" | "absent" | "rate">("name");
-  const [analyticsRange, setAnalyticsRange] = React.useState<"7" | "30">("7");
+  const [summaryClassFilter, setSummaryClassFilter] = React.useState<string>("all");
+  const [analyticsRange, setAnalyticsRange] = React.useState<AnalyticsRange>("week");
+  const [summaryRange, setSummaryRange] = React.useState<SummaryRange>("month");
   const [attendanceState, setAttendanceState] = React.useState<AttendanceRecord>({});
   const [loadingClasses, setLoadingClasses] = React.useState(true);
   const [fetchError, setFetchError] = React.useState<string | null>(null);
 
   const selectedClass = classes.find((item) => item.id === selectedClassId);
   const formattedSelectedDate = formatDisplayDate(selectedDate);
+  const currentRangeMeta = React.useMemo(
+    () => ANALYTICS_RANGE_OPTIONS.find((option) => option.id === analyticsRange) ?? ANALYTICS_RANGE_OPTIONS[0],
+    [analyticsRange],
+  );
+  const analyticsDateRange = React.useMemo(() => {
+    const end = new Date(`${selectedDate}T00:00:00`);
+    if (Number.isNaN(end.getTime())) {
+      return { start: selectedDate, end: selectedDate };
+    }
+    const start = new Date(end);
+    start.setDate(start.getDate() - (currentRangeMeta.days - 1));
+    return {
+      start: toLocalDateKey(start),
+      end: toLocalDateKey(end),
+    };
+  }, [selectedDate, currentRangeMeta]);
+
+  const analyticsRangeDescription =
+    analyticsRange === "today"
+      ? `Snapshot for ${formatDisplayDate(analyticsDateRange.end)}`
+      : `${formatDisplayDate(analyticsDateRange.start)} – ${formatDisplayDate(analyticsDateRange.end)}`;
+
+  const summaryRangeMeta = React.useMemo(
+    () => SUMMARY_RANGE_OPTIONS.find((option) => option.id === summaryRange) ?? SUMMARY_RANGE_OPTIONS[0],
+    [summaryRange],
+  );
+  const summaryStartDate = React.useMemo(() => {
+    if (!summaryRangeMeta?.days) return null;
+    const end = new Date();
+    const start = new Date(end);
+    start.setDate(start.getDate() - (summaryRangeMeta.days - 1));
+    return toLocalDateKey(start);
+  }, [summaryRangeMeta]);
 
   const fetchStudentRoster = React.useCallback(async () => {
     const pageSize = 1000;
@@ -177,7 +237,7 @@ export default function TeacherAttendancePage() {
       setAttendanceState(buildInitialAttendanceState(roster));
       setSelectedClassId((current) => (current || roster[0]?.id) ?? "");
       setIsDirty(false);
-      setStatusMessage("Saved just now");
+      setStatusMessage("");
     } catch (error) {
       console.error("Failed to load class roster", error);
       setClasses([]);
@@ -217,24 +277,29 @@ export default function TeacherAttendancePage() {
       };
     });
     setIsDirty(false);
-    setStatusMessage("Saved just now");
+    setStatusMessage("");
   }, [selectedDate, selectedClass]);
 
   const updateStudentStatus = (studentId: string, status: AttendanceStatus) => {
     if (!selectedClass) return;
     setAttendanceState((prev) => {
       const classState = prev[selectedClass.id] ?? {};
-      const record = classState[selectedDate] ?? createDefaultDailyRecord(selectedClass.students);
-      if (record[studentId] === status) return prev;
+      const entry = classState[selectedDate] ?? createDefaultDailyRecord(selectedClass.students);
+      const currentStatus = entry.statuses?.[studentId] ?? "present";
+      if (currentStatus === status) return prev;
       setIsDirty(true);
-      setStatusMessage("Unsaved changes");
+      setStatusMessage("");
       return {
         ...prev,
         [selectedClass.id]: {
           ...classState,
           [selectedDate]: {
-            ...record,
-            [studentId]: status,
+            ...entry,
+            submitted: false,
+            statuses: {
+              ...entry.statuses,
+              [studentId]: status,
+            },
           },
         },
       };
@@ -245,8 +310,8 @@ export default function TeacherAttendancePage() {
     if (!selectedClass) return;
     setAttendanceState((prev) => {
       const classState = prev[selectedClass.id] ?? {};
-      const record = classState[selectedDate] ?? createDefaultDailyRecord(selectedClass.students);
-      const updated = { ...record };
+      const entry = classState[selectedDate] ?? createDefaultDailyRecord(selectedClass.students);
+      const updated = { ...entry.statuses };
       selectedClass.students.forEach((student) => {
         updated[student.id] = "present";
       });
@@ -254,30 +319,70 @@ export default function TeacherAttendancePage() {
         ...prev,
         [selectedClass.id]: {
           ...classState,
-          [selectedDate]: updated,
+          [selectedDate]: {
+            ...entry,
+            submitted: false,
+            statuses: updated,
+          },
         },
       };
     });
     setIsDirty(true);
-    setStatusMessage("Unsaved changes");
+    setStatusMessage("");
+  };
+
+  const handleResetSubmission = () => {
+    if (!selectedClass) return;
+    setAttendanceState((prev) => {
+      const classState = prev[selectedClass.id] ?? {};
+      const entry = classState[selectedDate] ?? createDefaultDailyRecord(selectedClass.students);
+      const resetEntry = createDefaultDailyRecord(selectedClass.students);
+      return {
+        ...prev,
+        [selectedClass.id]: {
+          ...classState,
+          [selectedDate]: {
+            ...resetEntry,
+            note: entry.note,
+          },
+        },
+      };
+    });
+    setIsDirty(false);
+    setStatusMessage("Submission reset");
   };
 
   const handleSave = () => {
+    if (!selectedClass) return;
     setSaving(true);
     setTimeout(() => {
+      setAttendanceState((prev) => {
+        const classState = prev[selectedClass.id] ?? {};
+        const entry = classState[selectedDate] ?? createDefaultDailyRecord(selectedClass.students);
+        return {
+          ...prev,
+          [selectedClass.id]: {
+            ...classState,
+            [selectedDate]: {
+              ...entry,
+              submitted: true,
+            },
+          },
+        };
+      });
       setSaving(false);
       setIsDirty(false);
-      setStatusMessage("Saved just now");
+      setStatusMessage("Submitted just now");
     }, 1000);
   };
 
   const classStats = selectedClass
     ? calculateClassDailyStats(attendanceState, selectedClass.id, selectedClass.students, selectedDate)
-    : { present: 0, absent: 0, percent: 0, total: 0, record: {} };
+    : { present: 0, absent: 0, percent: 0, total: 0, record: {}, submitted: false };
 
   const perClassAnalytics = React.useMemo(
-    () => getClassAnalyticsForDate(attendanceState, classes, selectedDate),
-    [attendanceState, classes, selectedDate],
+    () => getClassAnalyticsForRange(attendanceState, classes, analyticsDateRange.start, analyticsDateRange.end),
+    [attendanceState, classes, analyticsDateRange.start, analyticsDateRange.end],
   );
 
   const overallStats = React.useMemo(
@@ -286,8 +391,8 @@ export default function TeacherAttendancePage() {
   );
 
   const studentSummaries = React.useMemo(
-    () => calculateStudentSummaries(attendanceState, classes),
-    [attendanceState, classes],
+    () => calculateStudentSummaries(attendanceState, classes, { startDate: summaryStartDate }),
+    [attendanceState, classes, summaryStartDate],
   );
 
   const filteredSummaries = React.useMemo(() => {
@@ -299,22 +404,31 @@ export default function TeacherAttendancePage() {
           summary.name.toLowerCase().includes(query) || summary.className.toLowerCase().includes(query),
       );
     }
-    const sorted = [...filtered];
-    switch (sortBy) {
-      case "absent":
-        sorted.sort((a, b) => b.absentDays - a.absentDays);
-        break;
-      case "rate":
-        sorted.sort((a, b) => b.attendancePercent - a.attendancePercent);
-        break;
-      default:
-        sorted.sort((a, b) => a.name.localeCompare(b.name));
+    if (summaryClassFilter !== "all") {
+      filtered = filtered.filter(
+        (summary) => summary.classId === summaryClassFilter || summary.className === summaryClassFilter,
+      );
     }
-    return sorted;
-  }, [studentSummaries, searchTerm, sortBy]);
+    return filtered.sort((a, b) => a.name.localeCompare(b.name));
+  }, [studentSummaries, searchTerm, summaryClassFilter]);
 
-  const statusTone = saving ? "text-slate-500" : isDirty ? "text-amber-500" : "text-emerald-500";
-  const statusLabel = saving ? "Saving..." : statusMessage;
+  const submissionState = Boolean(classStats.submitted);
+  let statusTone = "text-slate-500";
+  let statusLabel = statusMessage || "Not submitted";
+  if (saving) {
+    statusLabel = "Saving...";
+    statusTone = "text-slate-500";
+  } else if (isDirty) {
+    statusLabel = "Unsaved changes";
+    statusTone = "text-amber-500";
+  } else if (submissionState) {
+    statusLabel = statusMessage || "Submitted";
+    statusTone = "text-emerald-500";
+  }
+  const submissionBadgeClass = submissionState ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700";
+  const submissionBadgeLabel = submissionState ? "Submitted" : "Pending submission";
+  const canSubmit = !submissionState || isDirty;
+  const canReset = submissionState || isDirty;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -399,6 +513,14 @@ export default function TeacherAttendancePage() {
                       <p className="text-[13px] text-slate-500 leading-relaxed">
                         All students are marked present by default. Change to Absent where needed.
                       </p>
+                      <span
+                        className={cn(
+                          "inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold",
+                          submissionBadgeClass,
+                        )}
+                      >
+                        {submissionBadgeLabel}
+                      </span>
                     </div>
                     <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                       <div className="flex flex-wrap items-center gap-2.5">
@@ -441,7 +563,7 @@ export default function TeacherAttendancePage() {
                     <div className="-mx-2 space-y-2">
                       {selectedClass.students.map((student) => {
                         const studentStatus =
-                          attendanceState[selectedClass.id]?.[selectedDate]?.[student.id] ?? "present";
+                          attendanceState[selectedClass.id]?.[selectedDate]?.statuses?.[student.id] ?? "present";
                         return (
                           <div
                             key={student.id}
@@ -467,12 +589,24 @@ export default function TeacherAttendancePage() {
                         </div>
                         <div className="flex items-center gap-3">
                           <Button
+                            variant="ghost"
+                            className="rounded-full text-[13px] font-medium text-slate-600 hover:bg-slate-100"
+                            onClick={handleResetSubmission}
+                            disabled={saving || !canReset}
+                          >
+                            Reset
+                          </Button>
+                          <Button
                             variant="outline"
                             className="rounded-full border border-slate-200 text-[13px] font-medium text-slate-600 hover:bg-slate-100"
                             onClick={handleSave}
-                            disabled={saving || !isDirty}
+                            disabled={saving || !canSubmit}
                           >
-                            {saving ? "Saving..." : "Save changes"}
+                            {saving
+                              ? "Saving..."
+                              : submissionState
+                                ? "Update attendance"
+                                : "Submit attendance"}
                           </Button>
                         </div>
                       </div>
@@ -537,54 +671,58 @@ export default function TeacherAttendancePage() {
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Class analytics</p>
                   <CardTitle className="text-2xl text-slate-900">Class attendance trends</CardTitle>
-                  <p className="text-sm text-slate-500">Snapshot for {formattedSelectedDate}</p>
+                  <p className="text-sm text-slate-500">{analyticsRangeDescription}</p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
+                <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
                   <span>Range</span>
-                  <select
-                    value={analyticsRange}
-                    onChange={(event) => setAnalyticsRange(event.target.value as "7" | "30")}
-                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm font-medium text-slate-700 shadow-inner focus:outline-none"
-                  >
-                    <option value="7">Last 7 days</option>
-                    <option value="30">Last 30 days</option>
-                  </select>
+                  <div className="inline-flex items-center gap-1 rounded-full bg-slate-100 p-1">
+                    {ANALYTICS_RANGE_OPTIONS.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => setAnalyticsRange(option.id)}
+                        className={cn(
+                          "rounded-full px-3 py-1.5 text-sm font-medium text-slate-500 transition-all duration-150 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900/10",
+                          analyticsRange === option.id ? "bg-white text-slate-900 shadow-sm" : "",
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {perClassAnalytics.map((classItem) => (
-                    <div key={classItem.classId} className="rounded-2xl border border-slate-100 p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-xs uppercase tracking-[0.3em] text-slate-500">{classItem.className}</p>
-                          <p className="text-3xl font-semibold text-slate-900">{classItem.percent}%</p>
-                        </div>
-                        <span className="text-sm text-slate-500">
-                          {classItem.present}/{classItem.total} present
-                        </span>
-                      </div>
-                      <div className="mt-3 h-2 rounded-full bg-slate-100">
-                        <div
-                          className="h-full rounded-full bg-slate-900"
-                          style={{ width: `${classItem.percent}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
+              <CardContent className="space-y-6">
+                <ClassAttendanceBarChart data={perClassAnalytics} />
               </CardContent>
             </Card>
           </TabsContent>
 
           <TabsContent value="student-summary">
             <Card className="rounded-3xl border border-slate-200 bg-white shadow-none">
-              <CardHeader className="gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Student summary</p>
-                  <CardTitle className="text-2xl text-slate-900">30-day attendance overview</CardTitle>
+              <CardHeader className="space-y-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Student summary</p>
+                    <CardTitle className="text-2xl text-slate-900">Attendance overview</CardTitle>
+                  </div>
+                  <div className="inline-flex flex-wrap items-center gap-1 rounded-full bg-slate-100 p-1">
+                    {SUMMARY_RANGE_OPTIONS.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => setSummaryRange(option.id)}
+                        className={cn(
+                          "rounded-full px-3 py-1.5 text-sm font-medium text-slate-500 transition-all duration-150 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900/10",
+                          summaryRange === option.id ? "bg-white text-slate-900 shadow-sm" : "",
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
+                <div className="flex w-full flex-col gap-3 sm:flex-row">
                   <Input
                     placeholder="Search by name or class"
                     value={searchTerm}
@@ -592,13 +730,16 @@ export default function TeacherAttendancePage() {
                     className="w-full sm:w-64"
                   />
                   <select
-                    value={sortBy}
-                    onChange={(event) => setSortBy(event.target.value as "name" | "absent" | "rate")}
+                    value={summaryClassFilter}
+                    onChange={(event) => setSummaryClassFilter(event.target.value)}
                     className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-inner focus:outline-none"
                   >
-                    <option value="name">Sort: Name</option>
-                    <option value="absent">Sort: Highest absence</option>
-                    <option value="rate">Sort: Attendance rate</option>
+                    <option value="all">All classes</option>
+                    {classes.map((classItem) => (
+                      <option key={classItem.id} value={classItem.id}>
+                        {classItem.name}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </CardHeader>

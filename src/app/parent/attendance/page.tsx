@@ -16,6 +16,13 @@ import type { StudentAttendanceSummary } from "@/types/attendance";
 
 const familyId = "fam-yusof";
 
+const toLocalDateKey = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
 const formatDate = (date: string) => {
   try {
     const d = new Date(date);
@@ -63,10 +70,12 @@ export default function ParentAttendancePage() {
 
   const todayRecord = React.useMemo(() => {
     if (!selectedSummary) return null;
-    const todayIso = new Date().toISOString().split("T")[0];
+    const todayIso = toLocalDateKey(new Date());
     const classItem = classes.find((item) => item.id === selectedSummary.classId);
     if (!classItem) return null;
-    return calculateClassDailyStats(attendanceState, classItem.id, classItem.students, todayIso);
+    const stats = calculateClassDailyStats(attendanceState, classItem.id, classItem.students, todayIso);
+    if (!stats.submitted) return null;
+    return stats;
   }, [attendanceState, classes, selectedSummary]);
 
   return (
