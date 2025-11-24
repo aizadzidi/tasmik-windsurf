@@ -16,8 +16,8 @@ import {
   calculateStudentSummaries,
   getClassAnalyticsForRange,
 } from "@/data/attendance";
-import type { AttendanceRecord, AttendanceStatus, ClassAttendance } from "@/types/attendance";
-import { Calendar, CheckCircle2, GraduationCap } from "lucide-react";
+import type { AttendanceRecord, AttendanceStatus, ClassAttendance, SchoolHoliday } from "@/types/attendance";
+import { Calendar, CalendarX, CheckCircle2, GraduationCap } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 
 const tabs = [
@@ -73,7 +73,15 @@ const getRateColor = (percent: number) => {
 
 type StatusValue = "present" | "absent";
 
-function StatusToggle({ value, onChange }: { value: StatusValue; onChange: (val: StatusValue) => void }) {
+function StatusToggle({
+  value,
+  onChange,
+  disabled = false,
+}: {
+  value: StatusValue;
+  onChange: (val: StatusValue) => void;
+  disabled?: boolean;
+}) {
   const options: { id: StatusValue; label: string }[] = [
     { id: "present", label: "Present" },
     { id: "absent", label: "Absent" },
@@ -81,7 +89,11 @@ function StatusToggle({ value, onChange }: { value: StatusValue; onChange: (val:
   return (
     <div
       role="radiogroup"
-      className="inline-flex items-center rounded-full bg-slate-100 p-0.5 text-[12px] font-medium transition-all duration-150"
+      aria-disabled={disabled}
+      className={cn(
+        "inline-flex items-center rounded-full bg-slate-100 p-0.5 text-[12px] font-medium transition-all duration-150",
+        disabled ? "opacity-60" : "",
+      )}
     >
       {options.map((option) => {
         const isActive = option.id === value;
@@ -91,6 +103,7 @@ function StatusToggle({ value, onChange }: { value: StatusValue; onChange: (val:
             type="button"
             role="radio"
             aria-checked={isActive}
+            disabled={disabled}
             className={cn(
               "rounded-full px-3 py-1.5 text-[12px] font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-slate-500",
               isActive ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700",
@@ -126,6 +139,9 @@ export default function TeacherAttendancePage() {
   const [attendanceState, setAttendanceState] = React.useState<AttendanceRecord>({});
   const [loadingClasses, setLoadingClasses] = React.useState(true);
   const [fetchError, setFetchError] = React.useState<string | null>(null);
+  const [holidays, setHolidays] = React.useState<SchoolHoliday[]>([]);
+  const [holidaysError, setHolidaysError] = React.useState<string | null>(null);
+  const [loadingHolidays, setLoadingHolidays] = React.useState(true);
 
   const selectedClass = classes.find((item) => item.id === selectedClassId);
   const formattedSelectedDate = formatDisplayDate(selectedDate);
@@ -249,9 +265,29 @@ export default function TeacherAttendancePage() {
     }
   }, [fetchStudentRoster]);
 
+  const fetchHolidays = React.useCallback(async () => {
+    setLoadingHolidays(true);
+    setHolidaysError(null);
+    try {
+      const { data, error } = await supabase
+        .from("school_holidays")
+        .select("*")
+        .order("start_date", { ascending: true });
+      if (error) throw error;
+      setHolidays((data ?? []).map((item) => ({ ...item, category: item.category ?? "holiday" })));
+    } catch (error) {
+      console.error("Failed to load holidays", error);
+      setHolidaysError("Unable to load holiday calendar. Attendance will remain enabled.");
+      setHolidays([]);
+    } finally {
+      setLoadingHolidays(false);
+    }
+  }, []);
+
   React.useEffect(() => {
     fetchClassRosters();
-  }, [fetchClassRosters]);
+    fetchHolidays();
+  }, [fetchClassRosters, fetchHolidays]);
 
   React.useEffect(() => {
     if (classes.length === 0) return;
@@ -307,7 +343,7 @@ export default function TeacherAttendancePage() {
   };
 
   const handleMarkAllPresent = () => {
-    if (!selectedClass) return;
+    if (!selectedClass || isHoliday) return;
     setAttendanceState((prev) => {
       const classState = prev[selectedClass.id] ?? {};
       const entry = classState[selectedDate] ?? createDefaultDailyRecord(selectedClass.students);
@@ -353,7 +389,7 @@ export default function TeacherAttendancePage() {
   };
 
   const handleSave = () => {
-    if (!selectedClass) return;
+    if (!selectedClass || isHoliday) return;
     setSaving(true);
     setTimeout(() => {
       setAttendanceState((prev) => {
@@ -413,9 +449,23 @@ export default function TeacherAttendancePage() {
   }, [studentSummaries, searchTerm, summaryClassFilter]);
 
   const submissionState = Boolean(classStats.submitted);
+  const activeHoliday = React.useMemo(
+    () =>
+      holidays.find(
+        (holiday) => holiday.start_date <= selectedDate && selectedDate <= holiday.end_date,
+      ),
+    [holidays, selectedDate],
+  );
+  const isHoliday = Boolean(activeHoliday);
+  const holidayLabel = activeHoliday
+    ? `${activeHoliday.title} (${formatDisplayDate(activeHoliday.start_date)} – ${formatDisplayDate(activeHoliday.end_date)})`
+    : "";
   let statusTone = "text-slate-500";
   let statusLabel = statusMessage || "Not submitted";
-  if (saving) {
+  if (isHoliday && activeHoliday) {
+    statusLabel = `Attendance not required · ${activeHoliday.title}`;
+    statusTone = "text-blue-500";
+  } else if (saving) {
     statusLabel = "Saving...";
     statusTone = "text-slate-500";
   } else if (isDirty) {
@@ -425,10 +475,14 @@ export default function TeacherAttendancePage() {
     statusLabel = statusMessage || "Submitted";
     statusTone = "text-emerald-500";
   }
-  const submissionBadgeClass = submissionState ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700";
-  const submissionBadgeLabel = submissionState ? "Submitted" : "Pending submission";
-  const canSubmit = !submissionState || isDirty;
-  const canReset = submissionState || isDirty;
+  const submissionBadgeClass = isHoliday
+    ? "bg-blue-50 text-blue-700"
+    : submissionState
+      ? "bg-emerald-50 text-emerald-700"
+      : "bg-amber-50 text-amber-700";
+  const submissionBadgeLabel = isHoliday ? "Holiday" : submissionState ? "Submitted" : "Pending submission";
+  const canSubmit = !isHoliday && (!submissionState || isDirty);
+  const canReset = !isHoliday && (submissionState || isDirty);
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -443,6 +497,11 @@ export default function TeacherAttendancePage() {
             <p className="mt-2 max-w-xl text-sm text-slate-500 leading-relaxed">
               Mark daily presence, track class health, and review student trends.
             </p>
+            {holidaysError && (
+              <div className="mt-3 rounded-2xl border border-amber-100 bg-amber-50 px-3 py-2 text-[13px] text-amber-800">
+                {holidaysError}
+              </div>
+            )}
             <div className="mt-2">
               <TabsList className="inline-flex items-center gap-1 rounded-full bg-slate-100 p-1">
                 {tabs.map((tab) => (
@@ -522,6 +581,17 @@ export default function TeacherAttendancePage() {
                         {submissionBadgeLabel}
                       </span>
                     </div>
+                    {isHoliday && activeHoliday && (
+                      <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-[13px] text-blue-800">
+                        <div className="flex items-center gap-2">
+                          <CalendarX className="h-4 w-4" />
+                          <span className="font-semibold">No attendance required</span>
+                        </div>
+                        <p className="mt-1 text-blue-700">
+                          {holidayLabel}. Submission and edits are disabled for this date.
+                        </p>
+                      </div>
+                    )}
                     <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                       <div className="flex flex-wrap items-center gap-2.5">
                         <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/80 px-3.5 py-1.5 text-[13px] text-slate-600 transition-all duration-150 focus-within:ring-2 focus-within:ring-slate-900/10">
@@ -551,7 +621,13 @@ export default function TeacherAttendancePage() {
                       <button
                         type="button"
                         onClick={handleMarkAllPresent}
-                        className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-[13px] font-semibold text-white transition-colors duration-150 hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+                        disabled={isHoliday}
+                        className={cn(
+                          "inline-flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-semibold text-white transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500",
+                          isHoliday
+                            ? "cursor-not-allowed bg-slate-300 text-slate-600"
+                            : "bg-slate-900 hover:bg-slate-800",
+                        )}
                       >
                         <CheckCircle2 className="h-4 w-4" />
                         Mark all present
@@ -562,11 +638,11 @@ export default function TeacherAttendancePage() {
                   <CardContent className="flex-1 space-y-6 p-6">
                     <div className="-mx-2 space-y-2">
                       {selectedClass.students.map((student) => {
-                        const studentStatus =
-                          attendanceState[selectedClass.id]?.[selectedDate]?.statuses?.[student.id] ?? "present";
-                        return (
-                          <div
-                            key={student.id}
+                            const studentStatus =
+                              attendanceState[selectedClass.id]?.[selectedDate]?.statuses?.[student.id] ?? "present";
+                            return (
+                              <div
+                                key={student.id}
                             className={cn(
                               "flex items-center justify-between rounded-2xl px-3 py-3 transition-colors duration-150",
                               studentStatus === "absent" ? "bg-rose-50/80" : "bg-slate-50",
@@ -576,7 +652,11 @@ export default function TeacherAttendancePage() {
                               <p className="text-[14px] font-medium text-slate-900 leading-tight">{student.name}</p>
                               <p className="mt-0.5 text-[12px] text-slate-500">{selectedClass.name}</p>
                             </div>
-                            <StatusToggle value={studentStatus} onChange={(value) => updateStudentStatus(student.id, value)} />
+                            <StatusToggle
+                              value={studentStatus}
+                              disabled={isHoliday}
+                              onChange={(value) => updateStudentStatus(student.id, value)}
+                            />
                           </div>
                         );
                       })}

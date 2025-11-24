@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Navbar from "@/components/Navbar";
+import AdminNavbar from "@/components/admin/AdminNavbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -591,7 +591,7 @@ export default function AdminPaymentsPage() {
 
   return (
     <>
-      <Navbar />
+      <AdminNavbar />
       <main className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
         <div className="mx-auto max-w-6xl px-4 py-8">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

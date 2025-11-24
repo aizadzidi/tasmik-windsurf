@@ -40,3 +40,14 @@ export interface StudentAttendanceSummary {
   bestPresentStreak: number;
   lastAbsentDate?: string;
 }
+
+export interface SchoolHoliday {
+  id: string;
+  title: string;
+  description?: string | null;
+  start_date: string; // YYYY-MM-DD
+  end_date: string; // YYYY-MM-DD
+  category: string;
+  created_at?: string;
+  updated_at?: string;
+}
