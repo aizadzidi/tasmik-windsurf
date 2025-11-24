@@ -134,7 +134,7 @@ export default function TeacherExamDashboard() {
       from += pageSize;
     }
     return allStudents;
-  }, [fetchFullStudentRoster]);
+  }, []);
   
   // Cache for unsaved data when switching subjects
   const [unsavedDataCache, setUnsavedDataCache] = React.useState<Map<string, StudentRow[]>>(new Map());

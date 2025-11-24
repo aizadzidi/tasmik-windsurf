@@ -26,7 +26,9 @@ type Props = {
   data: ClassAnalyticsDatum[];
 };
 
-const CustomTooltip = ({ active, payload }: TooltipProps<number, string>) => {
+type CustomTooltipProps = { active?: boolean; payload?: Array<{ payload: ClassAnalyticsDatum }> };
+
+const CustomTooltip = ({ active, payload }: CustomTooltipProps) => {
   if (!active || !payload?.length) return null;
   const datum = payload[0].payload as ClassAnalyticsDatum;
   return (
