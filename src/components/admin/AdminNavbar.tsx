@@ -6,12 +6,14 @@ import { usePathname } from "next/navigation";
 import SignOutButton from "@/components/SignOutButton";
 import NotificationPanel from "./NotificationPanel";
 import { notificationService } from "@/lib/notificationService";
+import { AnimatePresence, motion } from "framer-motion";
 
 const AdminNavbar = () => {
   const pathname = usePathname();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [isCollapsed, setIsCollapsed] = useState(false);
 
   const navItems = [
     { 
@@ -81,8 +83,19 @@ const AdminNavbar = () => {
 
   useEffect(() => {
     document.body.classList.add("admin-with-sidebar");
-    return () => document.body.classList.remove("admin-with-sidebar");
+    return () => {
+      document.body.classList.remove("admin-with-sidebar");
+      document.body.classList.remove("admin-sidebar-collapsed");
+    };
   }, []);
+
+  useEffect(() => {
+    if (isCollapsed) {
+      document.body.classList.add("admin-sidebar-collapsed");
+    } else {
+      document.body.classList.remove("admin-sidebar-collapsed");
+    }
+  }, [isCollapsed]);
 
   useEffect(() => {
     const fetchUnreadCount = async () => {
@@ -104,6 +117,13 @@ const AdminNavbar = () => {
     setShowNotifications(true);
     setUnreadCount(0); // Optimistically reset count when opening panel
   };
+
+  const toggleCollapse = () => setIsCollapsed((prev) => !prev);
+
+  const sidebarWidth = isCollapsed ? 80 : 288; // px widths for Framer Motion
+  const navPadding = isCollapsed ? "px-3 py-3" : "px-4 py-3";
+  const iconOnly = isCollapsed;
+  const linkAlign = iconOnly ? "justify-center" : "";
 
   return (
     <>
@@ -154,7 +174,12 @@ const AdminNavbar = () => {
       </div>
 
       {/* Desktop Sidebar */}
-      <aside className="fixed inset-y-3 left-3 z-40 hidden w-72 overflow-hidden rounded-3xl bg-white/95 border border-slate-200 shadow-xl backdrop-blur-xl md:flex">
+      <motion.aside
+        initial={false}
+        animate={{ width: sidebarWidth }}
+        transition={{ type: "spring", stiffness: 320, damping: 32 }}
+        className="fixed inset-y-3 left-3 z-40 hidden overflow-hidden rounded-3xl bg-white/95 border border-slate-200 shadow-xl backdrop-blur-xl md:flex"
+      >
         <div className="flex h-full w-full flex-col px-5 py-6">
           <div className="flex items-center space-x-3 pb-6 border-b border-slate-200/70">
             <div className="relative flex items-center justify-center rounded-2xl bg-slate-100 p-2 shadow-sm ring-1 ring-slate-200">
@@ -166,10 +191,36 @@ const AdminNavbar = () => {
                 className="object-contain"
               />
             </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Admin Suite</p>
-              <p className="text-lg font-bold text-slate-900">AlKhayr Class</p>
-            </div>
+            <AnimatePresence initial={false}>
+              {!iconOnly && (
+                <motion.div
+                  key="brand-text"
+                  initial={{ opacity: 0, x: -6 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -6 }}
+                  transition={{ duration: 0.18, ease: "easeOut" }}
+                >
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Admin Suite</p>
+                  <p className="text-lg font-bold text-slate-900">AlKhayr Class</p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+            <button
+              onClick={toggleCollapse}
+              className="ml-auto hidden h-9 w-9 items-center justify-center rounded-2xl border border-slate-200/80 bg-white text-slate-600 shadow-sm transition-all duration-300 ease-out hover:shadow-md hover:border-slate-300 hover:scale-[1.02] md:inline-flex"
+              aria-label="Toggle sidebar"
+            >
+              <motion.svg
+                animate={{ rotate: isCollapsed ? 180 : 0 }}
+                transition={{ type: "spring", stiffness: 300, damping: 22 }}
+                className="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </motion.svg>
+            </button>
           </div>
 
           <div className="mt-6 space-y-2">
@@ -179,10 +230,10 @@ const AdminNavbar = () => {
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`group relative flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition-all duration-200 border border-transparent transform-gpu ${
+                  className={`group relative flex items-center gap-3 rounded-2xl ${navPadding} ${linkAlign} text-sm font-semibold transition-all duration-200 border border-transparent transform-gpu ${
                     active
                       ? "bg-blue-50 text-blue-700 shadow-md border-blue-100"
-                      : "text-slate-700 hover:bg-white hover:shadow-lg hover:border-slate-200/90 hover:scale-[1.02]"
+                    : "text-slate-700 hover:bg-white hover:shadow-lg hover:border-slate-200/90 hover:scale-[1.02]"
                   }`}
                 >
                   <span
@@ -194,7 +245,20 @@ const AdminNavbar = () => {
                   >
                     {item.icon}
                   </span>
-                  <span className="flex-1">{item.label}</span>
+                  <AnimatePresence initial={false}>
+                    {!iconOnly && (
+                      <motion.span
+                        key={`${item.href}-label`}
+                        className="flex-1"
+                        initial={{ opacity: 0, x: -6 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -6 }}
+                        transition={{ duration: 0.18, ease: "easeOut" }}
+                      >
+                        {item.label}
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
                 </Link>
               );
             })}
@@ -203,16 +267,18 @@ const AdminNavbar = () => {
           <div className="mt-auto space-y-4 pt-4">
             <button
               onClick={handleNotificationClick}
-              className="group relative flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 shadow-sm transition-all duration-200 transform-gpu hover:scale-[1.02] hover:shadow-lg hover:border-slate-200/90 hover:bg-white"
+              className={`group relative flex w-full items-center ${iconOnly ? "justify-center px-3 py-3" : "justify-between px-4 py-3"} rounded-2xl border border-slate-200 bg-white text-sm font-semibold text-slate-800 shadow-sm transition-all duration-200 transform-gpu hover:scale-[1.02] hover:shadow-lg hover:border-slate-200/90 hover:bg-white`}
             >
               <div className="flex items-center gap-3">
                 <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-lg text-white shadow-sm">
                   🔔
                 </span>
-                <div className="text-left">
-                  <p className="text-xs text-slate-500">Notifications</p>
-                  <p className="text-sm font-bold text-slate-900">Inbox</p>
-                </div>
+                {!iconOnly && (
+                  <div className="text-left">
+                    <p className="text-xs text-slate-500">Notifications</p>
+                    <p className="text-sm font-bold text-slate-900">Inbox</p>
+                  </div>
+                )}
               </div>
               {unreadCount > 0 && (
                 <span className="flex h-7 min-w-7 items-center justify-center rounded-full bg-gradient-to-br from-rose-500 to-orange-500 px-2 text-xs font-bold text-white shadow-sm">
@@ -222,11 +288,11 @@ const AdminNavbar = () => {
             </button>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm ring-1 ring-slate-200/70 transition-all duration-200 transform-gpu hover:scale-[1.02] hover:shadow-lg hover:border-slate-200/90">
-              <SignOutButton />
+              <SignOutButton hideLabel={iconOnly} className={iconOnly ? "px-2 py-2" : undefined} />
             </div>
           </div>
         </div>
-      </aside>
+      </motion.aside>
 
       {/* Mobile Drawer */}
       {isMobileMenuOpen && (

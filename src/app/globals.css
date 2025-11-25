@@ -128,16 +128,25 @@
 body.admin-with-sidebar {
   padding-left: 0;
   background: linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%);
+  transition: padding-left 0.42s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @media (min-width: 768px) {
   body.admin-with-sidebar {
     padding-left: 19rem;
   }
+
+  body.admin-sidebar-collapsed {
+    padding-left: 6rem;
+  }
 }
 
 @media (min-width: 1024px) {
   body.admin-with-sidebar {
     padding-left: 20rem;
+  }
+
+  body.admin-sidebar-collapsed {
+    padding-left: 6.5rem;
   }
 }

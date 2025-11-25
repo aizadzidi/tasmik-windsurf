@@ -5,8 +5,21 @@ import Navbar from "@/components/Navbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { supabase } from "@/lib/supabaseClient";
-import { Check, Edit2, List, Loader2, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import {
+  Calendar,
+  Check,
+  ChevronDown,
+  Edit2,
+  GripVertical,
+  List,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Trash2,
+  X,
+} from "lucide-react";
 
 type ClassItem = { id: string; name: string | null };
 type SubjectItem = { id: string; name: string | null };
@@ -16,10 +29,12 @@ type TopicWithProgress = {
   subject_id: string;
   title: string;
   description: string | null;
+  subTopics: string[];
   objectives: string | null;
   order_index: number;
   progressId: string | null;
   taughtOn: string | null;
+  subTopicProgress: { id: string | null; subtopic_index: number; taught_on: string | null }[];
 };
 
 type EditorState = {
@@ -28,6 +43,7 @@ type EditorState = {
   subjectId: string;
   title: string;
   description: string;
+  subTopics: string[];
   objectives: string;
   orderIndex: number;
 };
@@ -49,11 +65,43 @@ const todayLocal = () => {
   return `${year}-${month}-${day}`;
 };
 
-const baseCardClass = "rounded-3xl bg-white shadow-[0_1px_3px_rgba(0,0,0,0.08)]";
+const baseCardClass = "rounded-2xl border border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-900";
+const summaryCardClass = `${baseCardClass} shadow-[0_18px_45px_rgba(15,23,42,0.06)] transition-shadow duration-150 hover:shadow-[0_20px_60px_rgba(15,23,42,0.09)]`;
+const trackingCardClass = `${baseCardClass} shadow-[0_14px_35px_rgba(15,23,42,0.05)] transition-shadow duration-150`;
 const selectorClass =
-  "w-full rounded-2xl border border-transparent bg-white px-3 py-2 text-sm font-medium text-[#000000] shadow-[inset_0_1px_0_rgba(0,0,0,0.05)] focus:border-slate-300 focus:outline-none";
+  "w-full h-10 rounded-xl border border-gray-200 bg-gray-50 px-3 text-sm font-medium text-gray-900 transition duration-150 hover:bg-gray-100 focus:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-200 disabled:opacity-60";
 
-export default function TeacherLessonPage() {
+type ProgressRingProps = {
+  progress: number;
+  neutral?: boolean;
+};
+
+const ProgressRing: React.FC<ProgressRingProps> = ({ progress, neutral = false }) => {
+  const safe = Math.max(0, Math.min(progress, 100));
+  const deg = (safe / 100) * 360;
+  const track = "#d1d5db";
+  const fill = "#3b82f6";
+  const neutralBg = "conic-gradient(#e5e7eb 360deg, #e5e7eb 0deg)";
+  const showFill = !neutral && safe > 0;
+
+  return (
+    <div
+      className="relative h-5 w-5 rounded-full"
+      style={{
+        background: showFill ? `conic-gradient(${fill} ${deg}deg, ${track} 0deg)` : neutralBg,
+      }}
+    >
+      <div className="absolute inset-[3px] rounded-full bg-white dark:bg-slate-900" />
+      {showFill ? (
+        <div className="absolute left-1/2 top-[1px] h-[3px] w-[3px] -translate-x-1/2 rounded-full bg-blue-500" />
+      ) : null}
+    </div>
+  );
+};
+
+type TopicTrackingDensity = "default" | "compact";
+
+export default function TeacherLessonPage({ density = "default" }: { density?: TopicTrackingDensity } = {}) {
   const [userId, setUserId] = React.useState<string | null>(null);
   const [classes, setClasses] = React.useState<ClassItem[]>([]);
   const [subjects, setSubjects] = React.useState<SubjectItem[]>([]);
@@ -63,11 +111,13 @@ export default function TeacherLessonPage() {
   const [trackerClassId, setTrackerClassId] = React.useState("");
   const [trackerSubjectId, setTrackerSubjectId] = React.useState("");
   const [trackerTopics, setTrackerTopics] = React.useState<TopicWithProgress[]>([]);
+  const [openTopicIds, setOpenTopicIds] = React.useState<Set<string>>(new Set());
 
   // Management selections
   const [manageClassId, setManageClassId] = React.useState("");
   const [manageSubjectId, setManageSubjectId] = React.useState("");
   const [manageTopics, setManageTopics] = React.useState<TopicWithProgress[]>([]);
+  const [draggingSubtopicIndex, setDraggingSubtopicIndex] = React.useState<number | null>(null);
 
   const [loadingMeta, setLoadingMeta] = React.useState(true);
   const [loadingTopics, setLoadingTopics] = React.useState(false);
@@ -83,6 +133,7 @@ export default function TeacherLessonPage() {
     subjectId: "",
     title: "",
     description: "",
+    subTopics: [],
     objectives: "",
     orderIndex: 0,
   });
@@ -92,6 +143,29 @@ export default function TeacherLessonPage() {
     () => trackerTopics.filter((topic) => Boolean(topic.taughtOn)).length,
     [trackerTopics]
   );
+
+  const headerPadding = density === "compact" ? "px-3 py-2.5" : "px-4 py-3";
+  const leafPadding = density === "compact" ? "px-3.5 py-2" : "px-4 py-[9px]";
+  const pillPadding = density === "compact" ? "px-3 py-2" : "px-3.5 py-2.5";
+
+  const progressPercent = React.useMemo(
+    () => (trackerTopics.length ? Math.round((trackerTaughtCount / trackerTopics.length) * 100) : 0),
+    [trackerTaughtCount, trackerTopics.length]
+  );
+
+  const latestTaughtLabel = React.useMemo(() => {
+    const taughtTopics = trackerTopics.filter((topic) => topic.taughtOn);
+    if (!taughtTopics.length) return "Latest: No topics marked yet.";
+
+    const latest = taughtTopics.reduce((prev, current) => {
+      if (!prev) return current;
+      const prevDate = new Date(prev.taughtOn ?? "");
+      const currentDate = new Date(current.taughtOn ?? "");
+      return currentDate > prevDate ? current : prev;
+    });
+
+    return `Latest: ${latest.title}`;
+  }, [trackerTopics]);
 
   React.useEffect(() => {
     (async () => {
@@ -142,23 +216,40 @@ export default function TeacherLessonPage() {
     }
   }, []);
 
-  const mapTopicsWithProgress = (topicRows: any[], progressRows: any[]) => {
+  const mapTopicsWithProgress = (topicRows: any[], progressRows: any[], subtopicProgressRows: any[]) => {
     const progressMap = new Map<string, { id: string; taught_on: string | null }>(
       (progressRows ?? []).map((row: any) => [String(row.topic_id), { id: String(row.id), taught_on: row.taught_on }])
     );
+    const subtopicProgressMap = new Map<
+      string,
+      { id: string | null; subtopic_index: number; taught_on: string | null }[]
+    >();
+    (subtopicProgressRows ?? []).forEach((row: any) => {
+      const key = String(row.topic_id);
+      const list = subtopicProgressMap.get(key) ?? [];
+      list.push({
+        id: row.id ? String(row.id) : null,
+        subtopic_index: row.subtopic_index,
+        taught_on: row.taught_on ?? null,
+      });
+      subtopicProgressMap.set(key, list);
+    });
 
     return (topicRows ?? []).map((topic: any) => {
       const progressRow = progressMap.get(String(topic.id));
+      const subtopicProgress = subtopicProgressMap.get(String(topic.id)) ?? [];
       return {
         id: String(topic.id),
         class_id: String(topic.class_id),
         subject_id: String(topic.subject_id),
         title: topic.title,
         description: topic.description ?? null,
+        subTopics: Array.isArray(topic.sub_topics) ? topic.sub_topics.filter(Boolean).map(String) : [],
         objectives: topic.objectives ?? null,
         order_index: topic.order_index ?? 0,
         progressId: progressRow?.id ?? null,
         taughtOn: progressRow?.taught_on ?? null,
+        subTopicProgress: subtopicProgress,
       } as TopicWithProgress;
     });
   };
@@ -171,12 +262,16 @@ export default function TeacherLessonPage() {
         else setManageTopics([]);
         return;
       }
-      target === "tracker" ? setLoadingTopics(true) : setLoadingManageTopics(true);
+      if (target === "tracker") {
+        setLoadingTopics(true);
+      } else {
+        setLoadingManageTopics(true);
+      }
       setInlineError(null);
       try {
         const { data: topicRows, error: topicError } = await supabase
           .from("lesson_topics")
-          .select("id, class_id, subject_id, title, description, objectives, order_index")
+          .select("id, class_id, subject_id, title, description, sub_topics, objectives, order_index")
           .eq("class_id", classId)
           .eq("subject_id", subjectId)
           .order("order_index", { ascending: true })
@@ -185,6 +280,7 @@ export default function TeacherLessonPage() {
 
         const topicIds = (topicRows ?? []).map((t: any) => t.id);
         let progressRows: any[] = [];
+        let subtopicProgressRows: any[] = [];
         if (topicIds.length > 0) {
           const { data: fetchedProgress, error: progressError } = await supabase
             .from("lesson_progress")
@@ -195,9 +291,19 @@ export default function TeacherLessonPage() {
           } else {
             progressRows = fetchedProgress ?? [];
           }
+
+          const { data: fetchedSubtopicProgress, error: subtopicProgressError } = await supabase
+            .from("lesson_subtopic_progress")
+            .select("id, topic_id, subtopic_index, taught_on")
+            .in("topic_id", topicIds);
+          if (subtopicProgressError) {
+            console.warn("Failed to fetch subtopic progress", subtopicProgressError);
+          } else {
+            subtopicProgressRows = fetchedSubtopicProgress ?? [];
+          }
         }
 
-        const mapped = mapTopicsWithProgress(topicRows ?? [], progressRows);
+        const mapped = mapTopicsWithProgress(topicRows ?? [], progressRows, subtopicProgressRows);
         if (target === "tracker") setTrackerTopics(mapped);
         else setManageTopics(mapped);
       } catch (error: any) {
@@ -206,7 +312,11 @@ export default function TeacherLessonPage() {
         if (target === "tracker") setTrackerTopics([]);
         else setManageTopics([]);
       } finally {
-        target === "tracker" ? setLoadingTopics(false) : setLoadingManageTopics(false);
+        if (target === "tracker") {
+          setLoadingTopics(false);
+        } else {
+          setLoadingManageTopics(false);
+        }
       }
     },
     []
@@ -221,71 +331,105 @@ export default function TeacherLessonPage() {
   }, [fetchTopics, trackerClassId, trackerSubjectId]);
 
   React.useEffect(() => {
+    setOpenTopicIds(new Set(trackerTopics.map((topic) => topic.id)));
+  }, [trackerTopics]);
+
+  React.useEffect(() => {
     fetchTopics({ classId: manageClassId, subjectId: manageSubjectId, target: "manage" });
   }, [fetchTopics, manageClassId, manageSubjectId]);
 
-  const handleToggleTaught = async (topic: TopicWithProgress, checked: boolean) => {
+  const reorderSubtopics = React.useCallback((from: number, to: number) => {
+    setEditorState((prev) => {
+      const list = [...(prev.subTopics.length ? prev.subTopics : [""])];
+      if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return prev;
+      const [item] = list.splice(from, 1);
+      list.splice(to, 0, item);
+      return { ...prev, subTopics: list };
+    });
+  }, []);
+
+  const handleSubtopicToggle = async (topic: TopicWithProgress, subtopicIndex: number, checked: boolean) => {
     if (!userId) return;
     setSavingTopicId(topic.id);
     setActionMessage(null);
     try {
       if (checked) {
-        const taughtOn = topic.taughtOn ? toDateInput(topic.taughtOn) : todayLocal();
+        const taughtOn = todayLocal();
         const { data, error } = await supabase
-          .from("lesson_progress")
+          .from("lesson_subtopic_progress")
           .upsert(
-            { topic_id: topic.id, taught_on: taughtOn, teacher_id: userId },
-            { onConflict: "topic_id" }
+            { topic_id: topic.id, subtopic_index: subtopicIndex, taught_on: taughtOn, teacher_id: userId },
+            { onConflict: "topic_id,subtopic_index" }
           )
-          .select("id, taught_on")
+          .select("id, taught_on, subtopic_index")
           .single();
         if (error) throw error;
         setTrackerTopics((prev) =>
           prev.map((row) =>
             row.id === topic.id
-              ? { ...row, progressId: data?.id ?? row.progressId, taughtOn: data?.taught_on ?? taughtOn }
+              ? {
+                  ...row,
+                  subTopicProgress: [
+                    ...row.subTopicProgress.filter((s) => s.subtopic_index !== subtopicIndex),
+                    { id: data?.id ?? null, subtopic_index: subtopicIndex, taught_on: data?.taught_on ?? taughtOn },
+                  ],
+                }
               : row
           )
         );
       } else {
-        const { error } = await supabase.from("lesson_progress").delete().eq("topic_id", topic.id);
+        const { error } = await supabase
+          .from("lesson_subtopic_progress")
+          .delete()
+          .eq("topic_id", topic.id)
+          .eq("subtopic_index", subtopicIndex);
         if (error) throw error;
         setTrackerTopics((prev) =>
-          prev.map((row) => (row.id === topic.id ? { ...row, progressId: null, taughtOn: null } : row))
+          prev.map((row) =>
+            row.id === topic.id
+              ? { ...row, subTopicProgress: row.subTopicProgress.filter((s) => s.subtopic_index !== subtopicIndex) }
+              : row
+          )
         );
       }
     } catch (error) {
-      console.error("Failed to update progress", error);
-      setInlineError("Unable to update taught status right now.");
+      console.error("Failed to update subtopic progress", error);
+      setInlineError("Unable to update subtopic status right now.");
     } finally {
       setSavingTopicId(null);
     }
   };
 
-  const handleDateChange = async (topicId: string, value: string) => {
+  const handleSubtopicDateChange = async (topicId: string, subtopicIndex: number, value: string) => {
     if (!value || !userId) return;
     setSavingTopicId(topicId);
     setActionMessage(null);
     try {
       const { data, error } = await supabase
-        .from("lesson_progress")
+        .from("lesson_subtopic_progress")
         .upsert(
-          { topic_id: topicId, taught_on: value, teacher_id: userId },
-          { onConflict: "topic_id" }
+          { topic_id: topicId, subtopic_index: subtopicIndex, taught_on: value, teacher_id: userId },
+          { onConflict: "topic_id,subtopic_index" }
         )
-        .select("id, taught_on")
+        .select("id, taught_on, subtopic_index")
         .single();
       if (error) throw error;
       setTrackerTopics((prev) =>
         prev.map((row) =>
           row.id === topicId
-            ? { ...row, progressId: data?.id ?? row.progressId, taughtOn: data?.taught_on ?? value }
+            ? {
+                ...row,
+                subTopicProgress: [
+                  ...row.subTopicProgress.filter((s) => s.subtopic_index !== subtopicIndex),
+                  { id: data?.id ?? null, subtopic_index: subtopicIndex, taught_on: data?.taught_on ?? value },
+                ],
+              }
             : row
         )
       );
     } catch (error) {
-      console.error("Failed to save date", error);
-      setInlineError("Could not save the taught date. Try again.");
+      console.error("Failed to save subtopic date", error);
+      setInlineError("Could not save the subtopic taught date. Try again.");
     } finally {
       setSavingTopicId(null);
     }
@@ -300,6 +444,7 @@ export default function TeacherLessonPage() {
         subjectId: topic.subject_id,
         title: topic.title,
         description: topic.description ?? "",
+        subTopics: topic.subTopics ?? [],
         objectives: topic.objectives ?? "",
         orderIndex: topic.order_index ?? 0,
       });
@@ -309,6 +454,7 @@ export default function TeacherLessonPage() {
         subjectId: manageSubjectId || trackerSubjectId,
         title: "",
         description: "",
+        subTopics: [],
         objectives: "",
         orderIndex: 0,
       });
@@ -325,11 +471,13 @@ export default function TeacherLessonPage() {
     setSavingEditor(true);
     setInlineError(null);
     try {
+      const subTopics = editorState.subTopics.map((item) => item.trim()).filter(Boolean);
       const payload = {
         class_id: editorState.classId,
         subject_id: editorState.subjectId,
         title: editorState.title.trim(),
         description: editorState.description.trim() || null,
+        sub_topics: subTopics.length ? subTopics : null,
         objectives: editorState.objectives.trim() || null,
         order_index: Number(editorState.orderIndex) || 0,
         created_by: userId,
@@ -383,189 +531,359 @@ export default function TeacherLessonPage() {
   const manageClassName = classes.find((cls) => cls.id === manageClassId)?.name || "Class";
   const manageSubjectName = subjects.find((subject) => subject.id === manageSubjectId)?.name || "Subject";
 
+  const toggleTopicOpen = (topicId: string) => {
+    setOpenTopicIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(topicId)) {
+        next.delete(topicId);
+      } else {
+        next.add(topicId);
+      }
+      return next;
+    });
+  };
+
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-gray-50">
       <Navbar />
-      <main className="mx-auto max-w-6xl px-6 pt-10 pb-16">
-        <header className="mb-6">
-          <p className="text-xs font-semibold tracking-[0.2em] text-[#4A4A4A]">Lessons</p>
-          <h1 className="mt-2 text-[28px] font-semibold leading-tight tracking-tight text-[#000000]">
-            Track and curate topics with precision
+      <main className="mx-auto max-w-4xl px-4 pb-16 pt-16 md:px-0 md:pt-20">
+        <header>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Lessons</p>
+          <h1 className="mt-2 text-4xl font-semibold leading-[1.05] tracking-tight text-gray-900 md:text-[40px]">
+            Track and curate topics with precision.
           </h1>
-          <p className="mt-2 max-w-2xl text-sm text-[#4A4A4A]">
+          <p className="mt-2 max-w-xl text-sm text-gray-500 md:text-base">
             Minimal, focused controls to log coverage and manage topic lists. Dates auto-fill to today and remain editable.
           </p>
         </header>
 
-        <div className="mb-7 flex gap-4 border-b border-slate-200 pb-2">
-          {[
-            { id: "tracker", label: "Topic Tracker" },
-            { id: "manage", label: "Topic Management" },
-          ].map((tab) => {
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as "tracker" | "manage")}
-                className={`relative pb-2 text-sm font-semibold transition-colors ${
-                  isActive ? "text-[#007AFF]" : "text-[#4A4A4A] hover:text-[#000000]"
-                }`}
-              >
-                {tab.label}
-                {isActive && (
-                  <span className="absolute inset-x-0 -bottom-[2px] h-0.5 rounded-full bg-[#007AFF]" />
-                )}
-              </button>
-            );
-          })}
-        </div>
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => setActiveTab(value as "tracker" | "manage")}
+          className="mt-8"
+        >
+          <TabsList className="flex h-12 w-full items-end gap-8 border-b border-gray-200 bg-transparent px-0">
+            <TabsTrigger
+              value="tracker"
+              className="relative rounded-none border-b-2 border-transparent px-0 pb-3 text-sm font-medium text-gray-500 transition-colors data-[state=active]:border-gray-900 data-[state=active]:bg-transparent data-[state=active]:font-semibold data-[state=active]:shadow-none data-[state=active]:text-gray-900"
+            >
+              Topic Tracker
+            </TabsTrigger>
+            <TabsTrigger
+              value="manage"
+              className="relative rounded-none border-b-2 border-transparent px-0 pb-3 text-sm font-medium text-gray-500 transition-colors data-[state=active]:border-gray-900 data-[state=active]:bg-transparent data-[state=active]:font-semibold data-[state=active]:shadow-none data-[state=active]:text-gray-900"
+            >
+              Topic Management
+            </TabsTrigger>
+          </TabsList>
 
-        {inlineError && (
-          <div className="mb-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
-            {inlineError}
-          </div>
-        )}
-        {actionMessage && (
-          <div className="mb-4 rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
-            {actionMessage}
-          </div>
-        )}
+          {inlineError && (
+            <div className="mt-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {inlineError}
+            </div>
+          )}
+          {actionMessage && (
+            <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+              {actionMessage}
+            </div>
+          )}
 
-        {activeTab === "tracker" && (
-          <section className="space-y-6">
-            <div className={`${baseCardClass} p-5`}>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-medium text-[#4A4A4A]">Class</label>
-                  <select
-                    value={trackerClassId}
-                    onChange={(e) => setTrackerClassId(e.target.value)}
-                    className={selectorClass}
-                    disabled={loadingMeta}
-                  >
-                    {classes.map((cls) => (
-                      <option key={cls.id} value={cls.id}>
-                        {cls.name ?? "Unnamed class"}
-                      </option>
-                    ))}
-                  </select>
+          <TabsContent value="tracker" className="mt-6 space-y-5">
+            <Card className={`${summaryCardClass} mt-1.5 space-y-6 p-8`}>
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Class</span>
+                    <div className="mt-1">
+                      <select
+                        value={trackerClassId}
+                        onChange={(e) => setTrackerClassId(e.target.value)}
+                        className={selectorClass}
+                        disabled={loadingMeta}
+                      >
+                        {classes.map((cls) => (
+                          <option key={cls.id} value={cls.id}>
+                            {cls.name ?? "Unnamed class"}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Subject</span>
+                    <div className="mt-1">
+                      <select
+                        value={trackerSubjectId}
+                        onChange={(e) => setTrackerSubjectId(e.target.value)}
+                        className={selectorClass}
+                        disabled={loadingMeta}
+                      >
+                        {subjects.map((subject) => (
+                          <option key={subject.id} value={subject.id}>
+                            {subject.name ?? "Unnamed subject"}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-medium text-[#4A4A4A]">Subject</label>
-                  <select
-                    value={trackerSubjectId}
-                    onChange={(e) => setTrackerSubjectId(e.target.value)}
-                    className={selectorClass}
-                    disabled={loadingMeta}
-                  >
-                    {subjects.map((subject) => (
-                      <option key={subject.id} value={subject.id}>
-                        {subject.name ?? "Unnamed subject"}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-medium text-gray-500 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 disabled:opacity-60"
+                  onClick={() => fetchTopics({ classId: trackerClassId, subjectId: trackerSubjectId, target: "tracker" })}
+                  disabled={loadingTopics}
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${loadingTopics ? "animate-spin" : ""}`} />
+                  Refresh
+                </button>
               </div>
 
-              <div className="mt-8 rounded-3xl bg-white px-5 py-4 shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
-                <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="border-t border-gray-100 pt-6">
+                <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between md:gap-8">
                   <div>
-                    <p className="text-xs font-medium text-[#4A4A4A]">Progress</p>
-                    <p className="text-[24px] font-bold text-[#000000]">
-                      {trackerTaughtCount} / {trackerTopics.length}
-                    </p>
-                    <p className="text-sm font-medium text-[#4A4A4A]">Topics Taught</p>
-                    <p className="text-xs text-[#4A4A4A]">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Progress</div>
+                    <div className="mt-2 flex items-baseline gap-2">
+                      <span className="text-3xl font-semibold text-gray-900">
+                        {trackerTaughtCount} / {trackerTopics.length || 0}
+                      </span>
+                      <span className="text-xs text-gray-500">Topics taught</span>
+                    </div>
+                    <p className="mt-1 text-xs text-gray-500">
                       {trackerClassName} · {trackerSubjectName}
                     </p>
                   </div>
-                  <button
-                    className="inline-flex items-center gap-2 text-sm font-semibold text-[#007AFF] hover:text-[#005fcc]"
-                    onClick={() => fetchTopics({ classId: trackerClassId, subjectId: trackerSubjectId, target: "tracker" })}
-                    disabled={loadingTopics}
-                  >
-                    <RefreshCw className={`h-4 w-4 ${loadingTopics ? "animate-spin" : ""}`} />
-                    Refresh
-                  </button>
-                </div>
-                <div className="mt-3 relative h-1.5 w-full rounded-full bg-slate-200">
-                  <div
-                    className="absolute left-0 top-0 h-full rounded-full bg-[#007AFF] transition-all"
-                    style={{
-                      width: trackerTopics.length
-                        ? `${Math.min(100, Math.round((trackerTaughtCount / trackerTopics.length) * 100))}%`
-                        : "0%",
-                    }}
-                  />
+                  <div className="flex w-full min-w-0 flex-col gap-1 md:flex-1 md:items-end">
+                    <div className="h-2.5 w-full min-w-[180px] overflow-hidden rounded-full bg-gray-100">
+                      <div
+                        className="h-full w-full rounded-full bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 transition-[width] duration-200 ease-out"
+                        style={{ width: `${Math.max(0, Math.min(100, progressPercent))}%` }}
+                      />
+                    </div>
+                    <p className="text-right text-xs text-gray-500">{latestTaughtLabel}</p>
+                  </div>
                 </div>
               </div>
-            </div>
+            </Card>
 
-            <Card className={`${baseCardClass} p-5`}>
-              <CardHeader className="px-0 pb-3">
-                <CardTitle className="text-[18px] font-semibold text-[#000000]">Topic Tracking</CardTitle>
-                <p className="text-sm text-[#4A4A4A]">Tap the checkbox to mark taught; date fills automatically.</p>
+            <Card className={`${trackingCardClass} p-8`}>
+              <CardHeader className="mb-2 px-0">
+                <div className="flex flex-col gap-1">
+                  <CardTitle className="text-sm font-semibold text-gray-900 leading-tight dark:text-slate-50">
+                    Topic Tracking
+                  </CardTitle>
+                  <p className="text-xs text-gray-500 dark:text-slate-400">
+                    Tap the checkbox to mark taught; date fills automatically.
+                  </p>
+                </div>
               </CardHeader>
               <CardContent className="px-0">
                 {loadingTopics ? (
-                  <div className="flex items-center justify-center gap-3 rounded-2xl bg-[#F7F7F7] px-4 py-8 text-sm text-[#4A4A4A]">
+                  <div className="flex items-center justify-center gap-3 rounded-xl bg-gray-50 px-4 py-8 text-sm text-gray-500 dark:bg-slate-800">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Loading topics…
                   </div>
                 ) : trackerTopics.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
-                    <div className="rounded-full bg-slate-100 p-3 text-slate-400">
+                  <div className="flex flex-col items-center justify-center gap-3 rounded-xl bg-gray-50 px-4 py-10 text-center dark:bg-slate-800">
+                    <div className="rounded-full bg-gray-100 p-3 text-gray-400 dark:bg-slate-700 dark:text-slate-300">
                       <List className="h-6 w-6" />
                     </div>
-                    <div className="text-sm text-[#4A4A4A]">No topics yet for this class and subject.</div>
+                    <div className="text-sm text-gray-600 dark:text-slate-300">No topics yet for this class and subject.</div>
                     <button
-                      className="text-sm font-semibold text-[#007AFF] hover:text-[#005fcc]"
+                      className="text-sm font-semibold text-gray-900 underline-offset-4 hover:underline dark:text-slate-100"
                       onClick={() => setActiveTab("manage")}
                     >
-                      No topics found. Click here to add new topics.
+                      Add topics from the management tab.
                     </button>
                   </div>
                 ) : (
-                  <div className="divide-y divide-slate-100">
+                  <div className="mt-5 space-y-4">
                     {trackerTopics.map((topic) => {
                       const isSaving = savingTopicId === topic.id;
-                      const taughtDate = toDateInput(topic.taughtOn);
-                      const rowComplete = Boolean(topic.taughtOn);
-                      return (
-                        <div
-                          key={topic.id}
-                          className={`flex flex-col gap-2 px-2 py-3 sm:flex-row sm:items-center sm:justify-between ${
-                            rowComplete ? "bg-[#F8F8F8]" : "bg-white"
-                          }`}
-                        >
-                          <div className="flex flex-1 items-start gap-3">
-                            <input
-                              type="checkbox"
-                              className="mt-1 h-4 w-4 rounded border-slate-300 text-[#007AFF] focus:ring-[#007AFF]"
-                              checked={rowComplete}
-                              disabled={isSaving}
-                              onChange={(e) => handleToggleTaught(topic, e.target.checked)}
-                            />
-                            <div className="flex-1">
-                              <div className="text-[15px] font-semibold text-[#000000]">{topic.title}</div>
-                              <div className="text-sm text-[#4A4A4A]">{topic.description}</div>
+                      const isLeafTopic = topic.subTopics.length === 0;
+                      const totalCount = isLeafTopic ? 1 : topic.subTopics.length;
+                      const completedCount = topic.subTopicProgress.length;
+                      const progress = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
+                      const isOpen = !isLeafTopic && openTopicIds.has(topic.id);
+                      const hasSubtopics = topic.subTopics.length > 0;
+                      const bodyId = `topic-${topic.id}-body`;
+
+                      if (isLeafTopic) {
+                        const leafProgressEntry = topic.subTopicProgress.find((p) => p.subtopic_index === 0);
+                        const leafTaughtDate = toDateInput(leafProgressEntry?.taught_on ?? null);
+                        const leafComplete = Boolean(leafProgressEntry?.taught_on);
+
+                        return (
+                          <div key={topic.id} className="space-y-2">
+                            <div
+                              className={`flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50 ${leafPadding} ${
+                                isSaving ? "opacity-70" : ""
+                              } dark:border-slate-700/60 dark:bg-slate-800`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <input
+                                  type="checkbox"
+                                  className="h-4 w-4 rounded border-gray-300 text-blue-500 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:border-slate-600 dark:bg-slate-900"
+                                  checked={leafComplete}
+                                  disabled={isSaving}
+                                  onChange={(e) => handleSubtopicToggle(topic, 0, e.target.checked)}
+                                />
+                                <span className="text-sm font-medium text-gray-900 dark:text-slate-50">{topic.title}</span>
+                              </div>
+                              <div className="flex items-center">
+                                {leafComplete ? (
+                                  <div
+                                    className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors duration-150 ease-out focus-within:ring-2 focus-within:ring-blue-500 focus-within:ring-offset-1 ${
+                                      leafTaughtDate
+                                        ? "border-blue-100 bg-blue-50 text-blue-700 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-100"
+                                        : "border-gray-200 bg-white text-gray-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                                    }`}
+                                  >
+                                    <Calendar className="h-3.5 w-3.5 text-inherit" />
+                                    <input
+                                      type="date"
+                                      value={leafTaughtDate}
+                                      min="2020-01-01"
+                                      max="2100-12-31"
+                                      disabled={isSaving}
+                                      onChange={(e) => handleSubtopicDateChange(topic.id, 0, e.target.value)}
+                                      className="h-5 w-[118px] border-none bg-transparent p-0 text-[11px] text-current focus:outline-none focus:ring-0"
+                                    />
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center gap-1 rounded-full border border-dashed border-gray-300 bg-transparent px-3 py-1 text-xs text-gray-400 transition-colors duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:border-slate-700 dark:text-slate-500"
+                                    disabled
+                                  >
+                                    <Calendar className="h-3.5 w-3.5" />
+                                    Set date
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           </div>
-                          <div className="text-right text-xs text-[#4A4A4A]">
-                            {rowComplete ? (
-                              <Input
-                                type="date"
-                                value={taughtDate}
-                                min="2020-01-01"
-                                max="2100-12-31"
-                                disabled={isSaving}
-                                onChange={(e) => handleDateChange(topic.id, e.target.value)}
-                                className="w-[140px] rounded-2xl border border-transparent bg-[#F7F7F7] px-3 py-2 text-sm text-[#000000] focus:border-slate-300 focus:outline-none"
+                        );
+                      }
+
+                      return (
+                        <div key={topic.id} className="space-y-3">
+                          <button
+                            type="button"
+                            className={`flex w-full items-center justify-between rounded-2xl bg-gray-50 ${headerPadding} cursor-pointer transition-colors duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 hover:bg-gray-100 dark:bg-slate-800 dark:hover:bg-slate-700 ${
+                              isSaving ? "opacity-70" : ""
+                            }`}
+                            onClick={() => toggleTopicOpen(topic.id)}
+                            aria-expanded={isOpen}
+                            aria-controls={bodyId}
+                            data-open={isOpen ? "true" : "false"}
+                          >
+                            <div className="flex items-center gap-3 text-left">
+                              <ProgressRing progress={progress} neutral={totalCount === 0} />
+                              <div className="flex flex-col">
+                                <span className="text-sm font-medium text-gray-900 dark:text-slate-50">{topic.title}</span>
+                                {totalCount ? (
+                                  <span className="text-[11px] text-gray-500 dark:text-slate-400">
+                                    {totalCount} subtopic{totalCount > 1 ? "s" : ""}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </div>
+
+                            <div
+                              className="flex items-center gap-2 text-xs font-medium text-gray-500 dark:text-slate-400"
+                              data-open={isOpen ? "true" : "false"}
+                            >
+                              <span>
+                                {completedCount}/{totalCount || 0}
+                              </span>
+                              <ChevronDown
+                                className="h-4 w-4 text-gray-400 transition-transform duration-150 data-[open=true]:rotate-180 dark:text-slate-500"
+                                data-open={isOpen ? "true" : "false"}
                               />
-                            ) : (
-                              <span className="text-slate-400">Not taught</span>
-                            )}
-                          </div>
+                            </div>
+                          </button>
+
+                          {hasSubtopics ? (
+                            <>
+                              {isOpen ? <div className="mt-2 h-px bg-gray-100 dark:bg-slate-700/60" /> : null}
+                              <div
+                                id={bodyId}
+                                className={`overflow-hidden transition-[max-height,opacity] duration-200 ease-out ${
+                                  isOpen ? "max-h-[800px] opacity-100" : "max-h-0 opacity-0"
+                                }`}
+                                aria-hidden={!isOpen}
+                                data-open={isOpen ? "true" : "false"}
+                              >
+                                <div className="mt-2 pl-8">
+                                  <div className="space-y-2 border-l border-gray-100 pl-4 dark:border-slate-700/60">
+                                    {topic.subTopics.map((sub, index) => {
+                                      const progressEntry = topic.subTopicProgress.find((p) => p.subtopic_index === index);
+                                      const taughtDate = toDateInput(progressEntry?.taught_on ?? null);
+                                      const subComplete = Boolean(progressEntry?.taught_on);
+                                      return (
+                                        <div
+                                          key={`${topic.id}-sub-${index}`}
+                                          className={`flex items-center justify-between gap-3 rounded-xl border text-sm transition-colors duration-150 ease-out ${pillPadding} ${
+                                            subComplete
+                                              ? "border-blue-100 bg-blue-50/70 dark:border-blue-500/30 dark:bg-blue-500/10"
+                                              : "border-gray-100 bg-gray-50 hover:bg-gray-50/80 dark:border-slate-700/60 dark:bg-slate-800 dark:hover:bg-slate-700"
+                                          } ${isSaving ? "opacity-70" : ""}`}
+                                        >
+                                          <div className="flex items-center gap-3">
+                                            <input
+                                              type="checkbox"
+                                              className="h-4 w-4 rounded border-gray-300 text-blue-500 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:border-slate-600 dark:bg-slate-900"
+                                              checked={subComplete}
+                                              disabled={isSaving}
+                                              onChange={(e) => handleSubtopicToggle(topic, index, e.target.checked)}
+                                            />
+                                            <span
+                                              className={`font-medium ${
+                                                subComplete ? "text-gray-800 dark:text-slate-200" : "text-gray-900 dark:text-slate-50"
+                                              }`}
+                                            >
+                                              {sub}
+                                            </span>
+                                          </div>
+                                          <div className="flex items-center">
+                                            {subComplete ? (
+                                              <div
+                                                className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors duration-150 ease-out focus-within:ring-2 focus-within:ring-blue-500 focus-within:ring-offset-1 ${
+                                                  taughtDate
+                                                    ? "border-blue-100 bg-blue-50 text-blue-700 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-100"
+                                                    : "border-gray-200 bg-white text-gray-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+                                                }`}
+                                              >
+                                                <Calendar className="h-3.5 w-3.5 text-inherit" />
+                                                <input
+                                                  type="date"
+                                                  value={taughtDate}
+                                                  min="2020-01-01"
+                                                  max="2100-12-31"
+                                                  disabled={isSaving}
+                                                  onChange={(e) => handleSubtopicDateChange(topic.id, index, e.target.value)}
+                                                  className="h-5 w-[118px] border-none bg-transparent p-0 text-[11px] text-current focus:outline-none focus:ring-0"
+                                                />
+                                              </div>
+                                            ) : (
+                                              <button
+                                                type="button"
+                                                className="inline-flex items-center gap-1 rounded-full border border-dashed border-gray-300 bg-transparent px-3 py-1 text-xs text-gray-400 transition-colors duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:border-slate-700 dark:text-slate-500"
+                                                disabled
+                                              >
+                                                <Calendar className="h-3.5 w-3.5" />
+                                                Set date
+                                              </button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              </div>
+                            </>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -573,94 +891,101 @@ export default function TeacherLessonPage() {
                 )}
               </CardContent>
             </Card>
-          </section>
-        )}
+          </TabsContent>
 
-        {activeTab === "manage" && (
-          <section className="space-y-6">
-            <div className={`${baseCardClass} p-5`}>
+          <TabsContent value="manage" className="mt-6 space-y-6">
+            <Card className={`${summaryCardClass} p-8`}>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[#4A4A4A]">Target Class</label>
-                  <select
-                    value={manageClassId}
-                    onChange={(e) => setManageClassId(e.target.value)}
-                    className={selectorClass}
-                    disabled={loadingMeta}
-                  >
-                    {classes.map((cls) => (
-                      <option key={cls.id} value={cls.id}>
-                        {cls.name ?? "Unnamed class"}
-                      </option>
-                    ))}
-                  </select>
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Target Class</span>
+                  <div className="mt-1">
+                    <select
+                      value={manageClassId}
+                      onChange={(e) => setManageClassId(e.target.value)}
+                      className={selectorClass}
+                      disabled={loadingMeta}
+                    >
+                      {classes.map((cls) => (
+                        <option key={cls.id} value={cls.id}>
+                          {cls.name ?? "Unnamed class"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[#4A4A4A]">Target Subject</label>
-                  <select
-                    value={manageSubjectId}
-                    onChange={(e) => setManageSubjectId(e.target.value)}
-                    className={selectorClass}
-                    disabled={loadingMeta}
-                  >
-                    {subjects.map((subject) => (
-                      <option key={subject.id} value={subject.id}>
-                        {subject.name ?? "Unnamed subject"}
-                      </option>
-                    ))}
-                  </select>
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Target Subject</span>
+                  <div className="mt-1">
+                    <select
+                      value={manageSubjectId}
+                      onChange={(e) => setManageSubjectId(e.target.value)}
+                      className={selectorClass}
+                      disabled={loadingMeta}
+                    >
+                      {subjects.map((subject) => (
+                        <option key={subject.id} value={subject.id}>
+                          {subject.name ?? "Unnamed subject"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-[15px] font-semibold text-[#000000]">
+                  <p className="text-sm font-semibold text-gray-900">
                     {manageClassName} · {manageSubjectName}
                   </p>
-                  <p className="text-sm text-[#4A4A4A]">Configure topics for any class/subject.</p>
+                  <p className="text-xs text-gray-500">Configure topics for any class/subject.</p>
                 </div>
                 <Button
-                  className="inline-flex items-center gap-2 rounded-full bg-[#007AFF] text-sm font-semibold text-white shadow-[0_1px_3px_rgba(0,0,0,0.12)] hover:bg-[#0066d6]"
+                  className="inline-flex items-center gap-2 rounded-full bg-gray-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_1px_3px_rgba(15,23,42,0.2)] transition hover:bg-black"
                   onClick={() => openEditor("create")}
                 >
                   <Plus className="h-4 w-4" />
                   Add New Topic
                 </Button>
               </div>
-            </div>
+            </Card>
 
-            <Card className={`${baseCardClass} p-5`}>
-              <CardHeader className="px-0 pb-3">
-                <CardTitle className="text-[18px] font-semibold text-[#000000]">Topic List</CardTitle>
-                <p className="text-sm text-[#4A4A4A]">Edit titles or remove topics with subtle controls.</p>
+            <Card className={`${summaryCardClass} p-8`}>
+              <CardHeader className="mb-2 px-0">
+                <CardTitle className="text-sm font-semibold text-gray-900">Topic List</CardTitle>
+                <p className="mt-1 text-xs text-gray-500">Edit titles or remove topics with subtle controls.</p>
               </CardHeader>
               <CardContent className="px-0">
                 {loadingManageTopics ? (
-                  <div className="flex items-center justify-center gap-3 rounded-2xl bg-[#F7F7F7] px-4 py-8 text-sm text-[#4A4A4A]">
+                  <div className="flex items-center justify-center gap-3 rounded-xl bg-gray-50 px-4 py-8 text-sm text-gray-500">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Loading topics…
                   </div>
                 ) : manageTopics.length === 0 ? (
-                  <div className="rounded-2xl bg-[#F7F7F7] px-4 py-8 text-center text-sm text-[#4A4A4A]">
+                  <div className="rounded-xl bg-gray-50 px-4 py-8 text-center text-sm text-gray-600">
                     No topics for this class and subject yet.
                   </div>
                 ) : (
-                  <div className="divide-y divide-slate-100">
+                  <div className="divide-y divide-gray-100">
                     {manageTopics.map((topic) => (
                       <div key={topic.id} className="flex items-center justify-between gap-3 px-2 py-3">
                         <div>
-                          <div className="text-[15px] font-semibold text-[#000000]">{topic.title}</div>
-                          <div className="text-sm text-[#4A4A4A] line-clamp-2">{topic.description}</div>
+                          <div className="text-sm font-semibold text-gray-900">{topic.title}</div>
+                          <div className="text-xs text-gray-500 line-clamp-2">{topic.description}</div>
+                          {topic.subTopics?.length ? (
+                            <div className="text-[11px] text-gray-500 line-clamp-2">
+                              Subtopics: {topic.subTopics.join(", ")}
+                            </div>
+                          ) : null}
                         </div>
                         <div className="flex items-center gap-2">
                           <button
-                            className="rounded-full p-2 text-[#4A4A4A] transition hover:bg-slate-100"
+                            className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100"
                             onClick={() => openEditor("edit", topic)}
                             aria-label="Edit topic"
                           >
                             <Edit2 className="h-4 w-4" />
                           </button>
                           <button
-                            className="rounded-full p-2 text-[#c81e1e] transition hover:bg-red-50"
+                            className="rounded-full p-2 text-red-500 transition hover:bg-red-50"
                             onClick={() => handleDeleteTopic(topic.id)}
                             aria-label="Delete topic"
                             disabled={savingTopicId === topic.id}
@@ -676,18 +1001,18 @@ export default function TeacherLessonPage() {
             </Card>
 
             {editorOpen && (
-              <div className={`${baseCardClass} p-5`}>
-                <div className="mb-3 flex items-center justify-between">
+              <Card className={`${summaryCardClass} p-8`}>
+                <div className="mb-4 flex items-center justify-between">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#4A4A4A]">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
                       {editorMode === "edit" ? "Edit Topic" : "Add Topic"}
                     </p>
-                    <p className="text-[18px] font-semibold text-[#000000]">
+                    <p className="text-lg font-semibold text-gray-900">
                       {editorMode === "edit" ? "Update topic details" : "Create a new topic"}
                     </p>
                   </div>
                   <button
-                    className="rounded-full p-2 text-[#4A4A4A] transition hover:bg-slate-100"
+                    className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100"
                     onClick={() => setEditorOpen(false)}
                     aria-label="Close editor"
                   >
@@ -695,8 +1020,8 @@ export default function TeacherLessonPage() {
                   </button>
                 </div>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[#4A4A4A]">Class</label>
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Class</span>
                     <select
                       value={editorState.classId}
                       onChange={(e) => setEditorState((prev) => ({ ...prev, classId: e.target.value }))}
@@ -709,8 +1034,8 @@ export default function TeacherLessonPage() {
                       ))}
                     </select>
                   </div>
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[#4A4A4A]">Subject</label>
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Subject</span>
                     <select
                       value={editorState.subjectId}
                       onChange={(e) => setEditorState((prev) => ({ ...prev, subjectId: e.target.value }))}
@@ -725,46 +1050,129 @@ export default function TeacherLessonPage() {
                   </div>
                 </div>
                 <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[#4A4A4A]">Title</label>
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Title</span>
                     <Input
                       value={editorState.title}
                       onChange={(e) => setEditorState((prev) => ({ ...prev, title: e.target.value }))}
                       placeholder="e.g. Fractions introduction"
-                      className="rounded-2xl border border-transparent bg-[#F7F7F7] text-sm text-[#000000] focus:border-slate-300 focus:outline-none"
+                      className="rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-900 focus:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-200"
                     />
                   </div>
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[#4A4A4A]">Order</label>
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Order</span>
                     <Input
                       type="number"
                       value={editorState.orderIndex}
                       onChange={(e) =>
                         setEditorState((prev) => ({ ...prev, orderIndex: Number(e.target.value) }))
                       }
-                      className="rounded-2xl border border-transparent bg-[#F7F7F7] text-sm text-[#000000] focus:border-slate-300 focus:outline-none"
+                      className="rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-900 focus:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-200"
                       min={0}
                     />
                   </div>
                 </div>
                 <div className="mt-4 grid grid-cols-1 gap-4">
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[#4A4A4A]">Description</label>
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Description</span>
                     <textarea
                       value={editorState.description}
                       onChange={(e) => setEditorState((prev) => ({ ...prev, description: e.target.value }))}
                       rows={3}
-                      className="w-full resize-none rounded-2xl border border-transparent bg-[#F7F7F7] px-3 py-2 text-sm text-[#000000] focus:border-slate-300 focus:outline-none"
+                      className="w-full resize-none rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-200"
                       placeholder="Key context or notes."
                     />
                   </div>
                   <div className="flex flex-col gap-2">
-                    <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[#4A4A4A]">Objectives</label>
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                      Subtopics (optional)
+                    </span>
+                    <div className="space-y-2">
+                      {(editorState.subTopics.length ? editorState.subTopics : [""]).map((value, index, arr) => (
+                        <div
+                          key={`subtopic-${index}`}
+                          className="flex items-center gap-2"
+                          onDragOver={(e) => {
+                            if (draggingSubtopicIndex === null) return;
+                            e.preventDefault();
+                            if (draggingSubtopicIndex !== index) {
+                              reorderSubtopics(draggingSubtopicIndex, index);
+                              setDraggingSubtopicIndex(index);
+                            }
+                          }}
+                          onDrop={() => setDraggingSubtopicIndex(null)}
+                          onDragEnd={() => setDraggingSubtopicIndex(null)}
+                        >
+                          <button
+                            type="button"
+                            className="flex h-8 w-8 items-center justify-center text-gray-400 transition-transform duration-150 hover:text-gray-700 active:cursor-grabbing cursor-grab"
+                            draggable
+                            onDragStart={() => setDraggingSubtopicIndex(index)}
+                            aria-label="Reorder subtopic"
+                          >
+                            <GripVertical className="h-4 w-4" />
+                          </button>
+                          <div
+                            className={`flex flex-1 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 transition duration-150 ${
+                              draggingSubtopicIndex === index
+                                ? "scale-[1.01] border-gray-300 shadow-[0_10px_30px_rgba(15,23,42,0.08)]"
+                                : "hover:border-gray-300 hover:shadow-[0_4px_16px_rgba(15,23,42,0.06)]"
+                            }`}
+                          >
+                            <Input
+                              value={value}
+                              onChange={(e) =>
+                                setEditorState((prev) => {
+                                  const next = [...(prev.subTopics.length ? prev.subTopics : [""])];
+                                  next[index] = e.target.value;
+                                  return { ...prev, subTopics: next };
+                                })
+                              }
+                              placeholder="Subtopic"
+                              className="flex-1 border-none bg-transparent px-0 text-sm text-gray-900 shadow-none focus:border-0 focus:outline-none focus:ring-0"
+                            />
+                            <button
+                              type="button"
+                              className="text-xs text-gray-500 transition hover:text-red-500"
+                              onClick={() =>
+                                setEditorState((prev) => {
+                                  const next = [...(prev.subTopics.length ? prev.subTopics : [""])];
+                                  next.splice(index, 1);
+                                  return { ...prev, subTopics: next };
+                                })
+                              }
+                              aria-label="Remove subtopic"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-2">
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-2 rounded-full border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-700 transition hover:bg-gray-100"
+                        onClick={() =>
+                          setEditorState((prev) => ({
+                            ...prev,
+                            subTopics: [...(prev.subTopics.length ? prev.subTopics : [""]), ""],
+                          }))
+                        }
+                      >
+                        <span className="text-base leading-none">＋</span>
+                        Add Subtopic
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-500">Add as many subtopics as needed; leave empty if none.</p>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Objectives</span>
                     <textarea
                       value={editorState.objectives}
                       onChange={(e) => setEditorState((prev) => ({ ...prev, objectives: e.target.value }))}
                       rows={3}
-                      className="w-full resize-none rounded-2xl border border-transparent bg-[#F7F7F7] px-3 py-2 text-sm text-[#000000] focus:border-slate-300 focus:outline-none"
+                      className="w-full resize-none rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-200"
                       placeholder="Learning outcomes or milestones."
                     />
                   </div>
@@ -772,13 +1180,13 @@ export default function TeacherLessonPage() {
                 <div className="mt-5 flex items-center justify-end gap-3">
                   <Button
                     variant="ghost"
-                    className="rounded-full px-4 py-2 text-sm font-semibold text-[#4A4A4A] hover:bg-slate-100"
+                    className="rounded-full px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100"
                     onClick={() => setEditorOpen(false)}
                   >
                     Cancel
                   </Button>
                   <Button
-                    className="inline-flex items-center gap-2 rounded-full bg-[#007AFF] px-4 py-2 text-sm font-semibold text-white shadow-[0_1px_3px_rgba(0,0,0,0.12)] hover:bg-[#0066d6]"
+                    className="inline-flex items-center gap-2 rounded-full bg-gray-900 px-4 py-2 text-sm font-semibold text-white shadow-[0_1px_3px_rgba(15,23,42,0.2)] transition hover:bg-black"
                     onClick={handleEditorSubmit}
                     disabled={savingEditor}
                   >
@@ -786,10 +1194,10 @@ export default function TeacherLessonPage() {
                     Save
                   </Button>
                 </div>
-              </div>
+              </Card>
             )}
-          </section>
-        )}
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   );
