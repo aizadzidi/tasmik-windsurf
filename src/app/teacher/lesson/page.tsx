@@ -7,34 +7,27 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { supabase } from "@/lib/supabaseClient";
-import {
-  Calendar,
-  Check,
-  ChevronDown,
-  Edit2,
-  GripVertical,
-  List,
-  Loader2,
-  Plus,
-  RefreshCw,
-  Trash2,
-  X,
-} from "lucide-react";
+import { Calendar, Check, ChevronDown, Edit2, GripVertical, List, Loader2, Plus, RefreshCw, Trash2, X } from "lucide-react";
 
 type ClassItem = { id: string; name: string | null };
 type SubjectItem = { id: string; name: string | null };
+type SubtopicProgress = {
+  id: string | null;
+  subtopic_index: number;
+  taught_on: string | null;
+  remark: string | null;
+};
+
 type TopicWithProgress = {
   id: string;
   class_id: string;
   subject_id: string;
   title: string;
   description: string | null;
-  subTopics: string[];
+  subtopics: string[];
   objectives: string | null;
   order_index: number;
-  progressId: string | null;
-  taughtOn: string | null;
-  subTopicProgress: { id: string | null; subtopic_index: number; taught_on: string | null }[];
+  subTopicProgress: SubtopicProgress[];
 };
 
 type EditorState = {
@@ -43,7 +36,7 @@ type EditorState = {
   subjectId: string;
   title: string;
   description: string;
-  subTopics: string[];
+  subtopics: string[];
   objectives: string;
   orderIndex: number;
 };
@@ -133,39 +126,42 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
     subjectId: "",
     title: "",
     description: "",
-    subTopics: [],
+    subtopics: [],
     objectives: "",
     orderIndex: 0,
   });
   const [savingEditor, setSavingEditor] = React.useState(false);
 
-  const trackerTaughtCount = React.useMemo(
-    () => trackerTopics.filter((topic) => Boolean(topic.taughtOn)).length,
-    [trackerTopics]
-  );
-
   const headerPadding = density === "compact" ? "px-3 py-2.5" : "px-4 py-3";
   const leafPadding = density === "compact" ? "px-3.5 py-2" : "px-4 py-[9px]";
   const pillPadding = density === "compact" ? "px-3 py-2" : "px-3.5 py-2.5";
 
-  const progressPercent = React.useMemo(
-    () => (trackerTopics.length ? Math.round((trackerTaughtCount / trackerTopics.length) * 100) : 0),
-    [trackerTaughtCount, trackerTopics.length]
-  );
+  const { totalSubtopics, completedSubtopics } = React.useMemo(() => {
+    let total = 0;
+    let done = 0;
 
-  const latestTaughtLabel = React.useMemo(() => {
-    const taughtTopics = trackerTopics.filter((topic) => topic.taughtOn);
-    if (!taughtTopics.length) return "Latest: No topics marked yet.";
+    for (const topic of trackerTopics) {
+      const subs = topic.subtopics ?? [];
+      const expected = subs.length > 0 ? subs.length : 1;
+      total += expected;
 
-    const latest = taughtTopics.reduce((prev, current) => {
-      if (!prev) return current;
-      const prevDate = new Date(prev.taughtOn ?? "");
-      const currentDate = new Date(current.taughtOn ?? "");
-      return currentDate > prevDate ? current : prev;
-    });
+      const map = new Map(topic.subTopicProgress.map((p) => [p.subtopic_index, p]));
 
-    return `Latest: ${latest.title}`;
+      if (subs.length > 0) {
+        for (let i = 0; i < subs.length; i++) {
+          if (map.get(i)?.taught_on) done++;
+        }
+      } else {
+        if (map.get(0)?.taught_on) done++;
+      }
+    }
+
+    return { totalSubtopics: total, completedSubtopics: done };
   }, [trackerTopics]);
+
+  const progressPercent = totalSubtopics
+    ? Math.round((completedSubtopics / totalSubtopics) * 100)
+    : 0;
 
   React.useEffect(() => {
     (async () => {
@@ -216,43 +212,56 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
     }
   }, []);
 
-  const mapTopicsWithProgress = (topicRows: any[], progressRows: any[], subtopicProgressRows: any[]) => {
-    const progressMap = new Map<string, { id: string; taught_on: string | null }>(
-      (progressRows ?? []).map((row: any) => [String(row.topic_id), { id: String(row.id), taught_on: row.taught_on }])
-    );
-    const subtopicProgressMap = new Map<
-      string,
-      { id: string | null; subtopic_index: number; taught_on: string | null }[]
-    >();
-    (subtopicProgressRows ?? []).forEach((row: any) => {
-      const key = String(row.topic_id);
-      const list = subtopicProgressMap.get(key) ?? [];
-      list.push({
-        id: row.id ? String(row.id) : null,
-        subtopic_index: row.subtopic_index,
-        taught_on: row.taught_on ?? null,
-      });
-      subtopicProgressMap.set(key, list);
-    });
+  type LessonTopicRow = {
+    id: string;
+    class_id: string;
+    subject_id: string;
+    title: string;
+    description: string | null;
+    sub_topics: string[] | null;
+    objectives: string | null;
+    order_index: number | null;
+  };
 
-    return (topicRows ?? []).map((topic: any) => {
-      const progressRow = progressMap.get(String(topic.id));
-      const subtopicProgress = subtopicProgressMap.get(String(topic.id)) ?? [];
-      return {
+  type LessonSubtopicProgressRow = {
+    id: string;
+    topic_id: string;
+    subtopic_index: number;
+    taught_on: string | null;
+    remark: string | null;
+    teacher_id: string | null;
+  };
+
+  const mapTopicsWithProgress = React.useCallback(
+    (topicRows: LessonTopicRow[], subtopicProgressRows: LessonSubtopicProgressRow[]): TopicWithProgress[] => {
+      const subtopicProgressMap = new Map<string, SubtopicProgress[]>();
+
+      (subtopicProgressRows ?? []).forEach((row) => {
+        const key = String(row.topic_id);
+        const list = subtopicProgressMap.get(key) ?? [];
+        list.push({
+          id: row.id ? String(row.id) : null,
+          subtopic_index: row.subtopic_index,
+          taught_on: row.taught_on ?? null,
+          remark: row.remark ?? null,
+        });
+        subtopicProgressMap.set(key, list);
+      });
+
+      return (topicRows ?? []).map((topic) => ({
         id: String(topic.id),
         class_id: String(topic.class_id),
         subject_id: String(topic.subject_id),
         title: topic.title,
         description: topic.description ?? null,
-        subTopics: Array.isArray(topic.sub_topics) ? topic.sub_topics.filter(Boolean).map(String) : [],
+        subtopics: Array.isArray(topic.sub_topics) ? topic.sub_topics.filter(Boolean).map(String) : [],
         objectives: topic.objectives ?? null,
         order_index: topic.order_index ?? 0,
-        progressId: progressRow?.id ?? null,
-        taughtOn: progressRow?.taught_on ?? null,
-        subTopicProgress: subtopicProgress,
-      } as TopicWithProgress;
-    });
-  };
+        subTopicProgress: subtopicProgressMap.get(String(topic.id)) ?? [],
+      }));
+    },
+    []
+  );
 
   const fetchTopics = React.useCallback(
     async (params: { classId: string; subjectId: string; target: "tracker" | "manage" }) => {
@@ -278,23 +287,12 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
           .order("created_at", { ascending: true });
         if (topicError) throw topicError;
 
-        const topicIds = (topicRows ?? []).map((t: any) => t.id);
-        let progressRows: any[] = [];
-        let subtopicProgressRows: any[] = [];
+        const topicIds = (topicRows ?? []).map((t) => t.id as string);
+        let subtopicProgressRows: LessonSubtopicProgressRow[] = [];
         if (topicIds.length > 0) {
-          const { data: fetchedProgress, error: progressError } = await supabase
-            .from("lesson_progress")
-            .select("id, topic_id, taught_on")
-            .in("topic_id", topicIds);
-          if (progressError) {
-            console.warn("Failed to fetch lesson progress", progressError);
-          } else {
-            progressRows = fetchedProgress ?? [];
-          }
-
           const { data: fetchedSubtopicProgress, error: subtopicProgressError } = await supabase
             .from("lesson_subtopic_progress")
-            .select("id, topic_id, subtopic_index, taught_on")
+            .select("id, topic_id, subtopic_index, taught_on, remark, teacher_id")
             .in("topic_id", topicIds);
           if (subtopicProgressError) {
             console.warn("Failed to fetch subtopic progress", subtopicProgressError);
@@ -303,12 +301,13 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
           }
         }
 
-        const mapped = mapTopicsWithProgress(topicRows ?? [], progressRows, subtopicProgressRows);
+        const mapped = mapTopicsWithProgress((topicRows ?? []) as LessonTopicRow[], subtopicProgressRows);
         if (target === "tracker") setTrackerTopics(mapped);
         else setManageTopics(mapped);
-      } catch (error: any) {
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error("Failed to load lesson topics", error);
-        setInlineError(error?.message ? `Unable to load topics: ${error.message}` : "Unable to load topics.");
+        setInlineError(`Unable to load topics: ${message}`);
         if (target === "tracker") setTrackerTopics([]);
         else setManageTopics([]);
       } finally {
@@ -319,7 +318,7 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
         }
       }
     },
-    []
+    [mapTopicsWithProgress]
   );
 
   React.useEffect(() => {
@@ -340,11 +339,11 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
 
   const reorderSubtopics = React.useCallback((from: number, to: number) => {
     setEditorState((prev) => {
-      const list = [...(prev.subTopics.length ? prev.subTopics : [""])];
+      const list = [...(prev.subtopics.length ? prev.subtopics : [""])];
       if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return prev;
       const [item] = list.splice(from, 1);
       list.splice(to, 0, item);
-      return { ...prev, subTopics: list };
+      return { ...prev, subtopics: list };
     });
   }, []);
 
@@ -355,13 +354,21 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
     try {
       if (checked) {
         const taughtOn = todayLocal();
+        const existingRemark =
+          topic.subTopicProgress.find((entry) => entry.subtopic_index === subtopicIndex)?.remark ?? null;
         const { data, error } = await supabase
           .from("lesson_subtopic_progress")
           .upsert(
-            { topic_id: topic.id, subtopic_index: subtopicIndex, taught_on: taughtOn, teacher_id: userId },
-            { onConflict: "topic_id,subtopic_index" }
+            {
+              topic_id: topic.id,
+              subtopic_index: subtopicIndex,
+              teacher_id: userId,
+              taught_on: taughtOn,
+              remark: existingRemark,
+            },
+            { onConflict: "topic_id,subtopic_index,teacher_id" }
           )
-          .select("id, taught_on, subtopic_index")
+          .select("id, subtopic_index, taught_on, remark")
           .single();
         if (error) throw error;
         setTrackerTopics((prev) =>
@@ -371,7 +378,12 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
                   ...row,
                   subTopicProgress: [
                     ...row.subTopicProgress.filter((s) => s.subtopic_index !== subtopicIndex),
-                    { id: data?.id ?? null, subtopic_index: subtopicIndex, taught_on: data?.taught_on ?? taughtOn },
+                    {
+                      id: data?.id ?? null,
+                      subtopic_index: subtopicIndex,
+                      taught_on: data?.taught_on ?? taughtOn,
+                      remark: data?.remark ?? null,
+                    },
                   ],
                 }
               : row
@@ -405,13 +417,22 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
     setSavingTopicId(topicId);
     setActionMessage(null);
     try {
+      const existingTopic = trackerTopics.find((topic) => topic.id === topicId);
+      const existingRemark =
+        existingTopic?.subTopicProgress.find((entry) => entry.subtopic_index === subtopicIndex)?.remark ?? null;
       const { data, error } = await supabase
         .from("lesson_subtopic_progress")
         .upsert(
-          { topic_id: topicId, subtopic_index: subtopicIndex, taught_on: value, teacher_id: userId },
-          { onConflict: "topic_id,subtopic_index" }
+          {
+            topic_id: topicId,
+            subtopic_index: subtopicIndex,
+            teacher_id: userId,
+            taught_on: value,
+            remark: existingRemark,
+          },
+          { onConflict: "topic_id,subtopic_index,teacher_id" }
         )
-        .select("id, taught_on, subtopic_index")
+        .select("id, subtopic_index, taught_on, remark")
         .single();
       if (error) throw error;
       setTrackerTopics((prev) =>
@@ -421,7 +442,12 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
                 ...row,
                 subTopicProgress: [
                   ...row.subTopicProgress.filter((s) => s.subtopic_index !== subtopicIndex),
-                  { id: data?.id ?? null, subtopic_index: subtopicIndex, taught_on: data?.taught_on ?? value },
+                  {
+                    id: data?.id ?? null,
+                    subtopic_index: subtopicIndex,
+                    taught_on: data?.taught_on ?? value,
+                    remark: data?.remark ?? null,
+                  },
                 ],
               }
             : row
@@ -444,7 +470,7 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
         subjectId: topic.subject_id,
         title: topic.title,
         description: topic.description ?? "",
-        subTopics: topic.subTopics ?? [],
+        subtopics: topic.subtopics ?? [],
         objectives: topic.objectives ?? "",
         orderIndex: topic.order_index ?? 0,
       });
@@ -454,7 +480,7 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
         subjectId: manageSubjectId || trackerSubjectId,
         title: "",
         description: "",
-        subTopics: [],
+        subtopics: [],
         objectives: "",
         orderIndex: 0,
       });
@@ -471,13 +497,13 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
     setSavingEditor(true);
     setInlineError(null);
     try {
-      const subTopics = editorState.subTopics.map((item) => item.trim()).filter(Boolean);
+      const subtopics = editorState.subtopics.map((item) => item.trim()).filter(Boolean);
       const payload = {
         class_id: editorState.classId,
         subject_id: editorState.subjectId,
         title: editorState.title.trim(),
         description: editorState.description.trim() || null,
-        sub_topics: subTopics.length ? subTopics : null,
+        sub_topics: subtopics.length ? subtopics : null,
         objectives: editorState.objectives.trim() || null,
         order_index: Number(editorState.orderIndex) || 0,
         created_by: userId,
@@ -639,27 +665,22 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
               </div>
 
               <div className="border-t border-gray-100 pt-6">
-                <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between md:gap-8">
-                  <div>
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Progress</div>
-                    <div className="mt-2 flex items-baseline gap-2">
-                      <span className="text-3xl font-semibold text-gray-900">
-                        {trackerTaughtCount} / {trackerTopics.length || 0}
-                      </span>
-                      <span className="text-xs text-gray-500">Topics taught</span>
-                    </div>
-                    <p className="mt-1 text-xs text-gray-500">
-                      {trackerClassName} · {trackerSubjectName}
-                    </p>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">Teaching progress</p>
+                    <p className="text-xl font-semibold text-gray-900">{progressPercent}%</p>
                   </div>
-                  <div className="flex w-full min-w-0 flex-col gap-1 md:flex-1 md:items-end">
-                    <div className="h-2.5 w-full min-w-[180px] overflow-hidden rounded-full bg-gray-100">
-                      <div
-                        className="h-full w-full rounded-full bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 transition-[width] duration-200 ease-out"
-                        style={{ width: `${Math.max(0, Math.min(100, progressPercent))}%` }}
-                      />
-                    </div>
-                    <p className="text-right text-xs text-gray-500">{latestTaughtLabel}</p>
+                  <p className="text-sm text-gray-700">
+                    {completedSubtopics} / {totalSubtopics || 0} subtopics taught
+                  </p>
+                  <p className="text-sm text-gray-500">
+                    {trackerClassName} · {trackerSubjectName}
+                  </p>
+                  <div className="mt-3 h-2.5 w-full rounded-full bg-gray-200">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-300"
+                      style={{ width: `${progressPercent}%` }}
+                    />
                   </div>
                 </div>
               </div>
@@ -699,12 +720,13 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
                   <div className="mt-5 space-y-4">
                     {trackerTopics.map((topic) => {
                       const isSaving = savingTopicId === topic.id;
-                      const isLeafTopic = topic.subTopics.length === 0;
-                      const totalCount = isLeafTopic ? 1 : topic.subTopics.length;
-                      const completedCount = topic.subTopicProgress.length;
+                      const subtopics = topic.subtopics ?? [];
+                      const isLeafTopic = subtopics.length === 0;
+                      const totalCount = isLeafTopic ? 1 : subtopics.length;
+                      const completedCount = topic.subTopicProgress.filter((p) => Boolean(p.taught_on)).length;
                       const progress = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
                       const isOpen = !isLeafTopic && openTopicIds.has(topic.id);
-                      const hasSubtopics = topic.subTopics.length > 0;
+                      const hasSubtopics = subtopics.length > 0;
                       const bodyId = `topic-${topic.id}-body`;
 
                       if (isLeafTopic) {
@@ -816,7 +838,7 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
                               >
                                 <div className="mt-2 pl-8">
                                   <div className="space-y-2 border-l border-gray-100 pl-4 dark:border-slate-700/60">
-                                    {topic.subTopics.map((sub, index) => {
+                                    {subtopics.map((sub, index) => {
                                       const progressEntry = topic.subTopicProgress.find((p) => p.subtopic_index === index);
                                       const taughtDate = toDateInput(progressEntry?.taught_on ?? null);
                                       const subComplete = Boolean(progressEntry?.taught_on);
@@ -970,9 +992,9 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
                         <div>
                           <div className="text-sm font-semibold text-gray-900">{topic.title}</div>
                           <div className="text-xs text-gray-500 line-clamp-2">{topic.description}</div>
-                          {topic.subTopics?.length ? (
+                          {topic.subtopics?.length ? (
                             <div className="text-[11px] text-gray-500 line-clamp-2">
-                              Subtopics: {topic.subTopics.join(", ")}
+                              Subtopics: {topic.subtopics.join(", ")}
                             </div>
                           ) : null}
                         </div>
@@ -1088,7 +1110,7 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
                       Subtopics (optional)
                     </span>
                     <div className="space-y-2">
-                      {(editorState.subTopics.length ? editorState.subTopics : [""]).map((value, index, arr) => (
+                      {(editorState.subtopics.length ? editorState.subtopics : [""]).map((value, index) => (
                         <div
                           key={`subtopic-${index}`}
                           className="flex items-center gap-2"
@@ -1123,9 +1145,9 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
                               value={value}
                               onChange={(e) =>
                                 setEditorState((prev) => {
-                                  const next = [...(prev.subTopics.length ? prev.subTopics : [""])];
+                                  const next = [...(prev.subtopics.length ? prev.subtopics : [""])];
                                   next[index] = e.target.value;
-                                  return { ...prev, subTopics: next };
+                                  return { ...prev, subtopics: next };
                                 })
                               }
                               placeholder="Subtopic"
@@ -1136,9 +1158,9 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
                               className="text-xs text-gray-500 transition hover:text-red-500"
                               onClick={() =>
                                 setEditorState((prev) => {
-                                  const next = [...(prev.subTopics.length ? prev.subTopics : [""])];
+                                  const next = [...(prev.subtopics.length ? prev.subtopics : [""])];
                                   next.splice(index, 1);
-                                  return { ...prev, subTopics: next };
+                                  return { ...prev, subtopics: next };
                                 })
                               }
                               aria-label="Remove subtopic"
@@ -1156,7 +1178,7 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
                         onClick={() =>
                           setEditorState((prev) => ({
                             ...prev,
-                            subTopics: [...(prev.subTopics.length ? prev.subTopics : [""]), ""],
+                            subtopics: [...(prev.subtopics.length ? prev.subtopics : [""]), ""],
                           }))
                         }
                       >

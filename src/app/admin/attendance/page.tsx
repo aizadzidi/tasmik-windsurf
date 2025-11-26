@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Calendar, CalendarRange, LineChart, Plane, Sparkles, Trash2, X } from "lucide-react";
+import { Calendar, CalendarRange, LineChart, Plane, Trash2, X } from "lucide-react";
 import AdminNavbar from "@/components/admin/AdminNavbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
