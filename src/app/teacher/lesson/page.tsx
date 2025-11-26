@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { supabase } from "@/lib/supabaseClient";
+import { useSearchParams } from "next/navigation";
 import { Calendar, Check, ChevronDown, Edit2, GripVertical, List, Loader2, Plus, RefreshCw, Trash2, X } from "lucide-react";
 
 type ClassItem = { id: string; name: string | null };
@@ -94,7 +95,10 @@ const ProgressRing: React.FC<ProgressRingProps> = ({ progress, neutral = false }
 
 type TopicTrackingDensity = "default" | "compact";
 
-export default function TeacherLessonPage({ density = "default" }: { density?: TopicTrackingDensity } = {}) {
+function TeacherLessonPageContent() {
+  const searchParams = useSearchParams();
+  const densityParam = searchParams?.get("density");
+  const density: TopicTrackingDensity = densityParam === "compact" ? "compact" : "default";
   const [userId, setUserId] = React.useState<string | null>(null);
   const [classes, setClasses] = React.useState<ClassItem[]>([]);
   const [subjects, setSubjects] = React.useState<SubjectItem[]>([]);
@@ -1222,5 +1226,13 @@ export default function TeacherLessonPage({ density = "default" }: { density?: T
         </Tabs>
       </main>
     </div>
+  );
+}
+
+export default function TeacherLessonPage() {
+  return (
+    <React.Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading lesson page…</div>}>
+      <TeacherLessonPageContent />
+    </React.Suspense>
   );
 }
