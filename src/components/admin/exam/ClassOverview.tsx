@@ -42,17 +42,6 @@ export default function ClassOverview({
     }
   };
 
-  const getTrendColor = (trend: 'up' | 'down' | 'stable') => {
-    switch (trend) {
-      case 'up':
-        return 'text-green-600';
-      case 'down':
-        return 'text-red-600';
-      default:
-        return 'text-gray-600';
-    }
-  };
-
   return (
     <div className="bg-white backdrop-blur-sm border border-gray-100 rounded-3xl p-8 mb-8 shadow-sm transition-all duration-150 ease-out">
       <div className="flex items-center justify-between mb-8">

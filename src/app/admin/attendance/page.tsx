@@ -98,7 +98,7 @@ export default function AdminAttendancePage() {
   const [summaryRange, setSummaryRange] = React.useState<SummaryRange>("month");
   const [searchTerm, setSearchTerm] = React.useState("");
   const [summaryClassFilter, setSummaryClassFilter] = React.useState<string>("all");
-  const [loadingClasses, setLoadingClasses] = React.useState(true);
+  const [, setLoadingClasses] = React.useState(true);
   const [fetchError, setFetchError] = React.useState<string | null>(null);
 
   const [holidays, setHolidays] = React.useState<SchoolHoliday[]>([]);
@@ -316,7 +316,6 @@ export default function AdminAttendancePage() {
     setHolidayError(null);
   };
 
-  const activeCount = holidays.filter((h) => h.start_date <= selectedDate && selectedDate <= h.end_date).length;
   const configuredCount = holidays.length;
 
   const summaryAggregates = React.useMemo(() => {

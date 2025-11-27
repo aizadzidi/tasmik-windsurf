@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { X, TrendingUp, TrendingDown, Award, FileText, Loader2 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, BarChart, Bar } from 'recharts';
 import { ResponsiveRadar } from '@nivo/radar';
@@ -15,17 +15,12 @@ import { rpcGetConductSummary, type ConductSummary } from '@/data/conduct';
 import { supabase } from '@/lib/supabaseClient';
 import { useWeightedAverages } from '@/hooks/useWeightedAverages';
 
-// Null-safe number helper
-const nn = (n: number | null | undefined) => (n ?? 0);
-
 export type StudentPanelMode = 'admin' | 'teacher' | 'parent';
 
 interface StudentDetailsPanelProps {
   student: StudentData | null;
   onClose: () => void;
-  classAverages?: {
-    [subject: string]: number;
-  };
+  classAverages?: Record<string, number>;
   classOverallAvg?: number; // blended overall average for the class, preferred for Benchmarks
   isMobile?: boolean;
   selectedExamName?: string;
@@ -38,17 +33,16 @@ interface StudentDetailsPanelProps {
 export default function StudentDetailsPanelShared({ 
   student, 
   onClose, 
-  classAverages = {},
+  classAverages,
   classOverallAvg,
-  isMobile = false,
+  isMobile,
   selectedExamName = '',
-  reportButtonLabel = 'Generate Report',
+  reportButtonLabel,
   examId,
   classId,
   mode = 'admin'
 }: StudentDetailsPanelProps) {
   const modeNormalized = mode ?? 'admin';
-  const isAdmin = modeNormalized === 'admin';
   const isTeacher = modeNormalized === 'teacher';
   const showClassAverage = modeNormalized !== 'parent';
 
@@ -60,27 +54,62 @@ export default function StudentDetailsPanelShared({
   const examName = selectedExamName;
   const open = Boolean(student);
   const parentMeetMode = false;
+  const reportButtonText = reportButtonLabel ?? "Generate Report";
 
   // Local responsive flag (to preserve identical animation behavior)
-  const [isMobileView, setIsMobileView] = useState(false);
+  const [isMobileView, setIsMobileView] = useState<boolean>(Boolean(isMobile));
   React.useEffect(() => {
-    const update = () => setIsMobileView(window.innerWidth < 1024);
+    const update = () => {
+      if (typeof isMobile === "boolean") {
+        setIsMobileView(isMobile);
+        return;
+      }
+      setIsMobileView(window.innerWidth < 1024);
+    };
     update();
     window.addEventListener("resize", update);
     return () => window.removeEventListener("resize", update);
-  }, []);
+  }, [isMobile]);
 
   const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
-  const [reportHtml, setReportHtml] = useState<string | null>(null);
   const [showReportPreview, setShowReportPreview] = useState(false);
   const [subjectRows, setSubjectRows] = useState<StudentSubjectRow[]>([]);
   const [subjectsLoading, setSubjectsLoading] = useState(false);
   const [conductSummary, setConductSummary] = useState<ConductSummary | null>(null);
   const [conductSummaryLoading, setConductSummaryLoading] = useState(false);
   const [conductWeightagePct, setConductWeightagePct] = useState<number | null>(null);
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   // Final mark and averages come from RPCs via useWeightedAverages
+
+  // Prefill with data coming from parent (admin/teacher tables) so the panel isn't empty while RPCs load
+  React.useEffect(() => {
+    if (student?.subjects) {
+      const mapped: StudentSubjectRow[] = Object.entries(student.subjects).map(([subjectName, info]) => ({
+        subject_id: subjectName,
+        subject_name: subjectName,
+        result_id: null,
+        mark: typeof info?.score === 'number' ? info.score : null,
+        grade: typeof info?.grade === 'string' ? info.grade : null,
+        final_score: typeof info?.score === 'number' ? info.score : null,
+        updated_at: null,
+      }));
+      setSubjectRows(mapped);
+    }
+
+    if (student?.conduct) {
+      setConductSummary({
+        source: 'average',
+        subjects_count: Object.keys(student.subjects || {}).length,
+        override_id: null,
+        discipline: student.conduct.discipline ?? null,
+        effort: student.conduct.effort ?? null,
+        participation: student.conduct.participation ?? null,
+        motivational_level: student.conduct.motivationalLevel ?? null,
+        character_score: student.conduct.character ?? null,
+        leadership: student.conduct.leadership ?? null,
+      });
+    }
+  }, [student]);
 
   // Load subject rows for student/exam/class
   React.useEffect(() => {
@@ -165,19 +194,20 @@ export default function StudentDetailsPanelShared({
         if (!examId) { setConductWeightagePct(null); return; }
         const res = await fetch('/api/admin/exam-metadata');
         const meta = await res.json();
-        const exam = (meta?.exams || []).find((e: any) => String(e?.id) === String(examId));
+        const exams = Array.isArray(meta?.exams) ? (meta.exams as Array<{ id?: string | number; exam_classes?: Array<{ conduct_weightage?: number; classes?: { id: string } }> }>) : [];
+        const exam = exams.find((e) => String(e?.id) === String(examId));
         if (!exam) { if (!cancelled) setConductWeightagePct(null); return; }
         const examClasses: Array<{ conduct_weightage?: number; classes?: { id: string } }> = Array.isArray(exam?.exam_classes) ? exam.exam_classes : [];
         let pct: number | null = null;
         if (classId) {
-          const found = examClasses.find((ec: any) => String(ec?.classes?.id) === String(classId));
+          const found = examClasses.find((ec) => String(ec?.classes?.id) === String(classId));
           if (found && typeof found?.conduct_weightage !== 'undefined') pct = Number(found.conduct_weightage);
         }
         if (pct == null && examClasses.length === 1 && typeof examClasses[0]?.conduct_weightage !== 'undefined') {
           pct = Number(examClasses[0].conduct_weightage);
         }
         if (!cancelled) setConductWeightagePct(Number.isFinite(pct as number) ? (pct as number) : 0);
-      } catch (e) {
+      } catch {
         if (!cancelled) setConductWeightagePct(0);
       }
     })();
@@ -255,10 +285,16 @@ export default function StudentDetailsPanelShared({
   });
 
   const getClassAverage = React.useCallback(
-    (subjectId: string) => {
-      return subjectAvg[String(subjectId)] ?? null;
+    (subjectId: string, subjectName?: string | null) => {
+      const rpcValue = subjectAvg[String(subjectId)];
+      if (typeof rpcValue === "number" && Number.isFinite(rpcValue)) return rpcValue;
+
+      const fallbackKey = subjectName || subjectId;
+      const fallback = classAverages ? classAverages[fallbackKey] ?? classAverages[subjectId] : null;
+      if (typeof fallback === "number" && Number.isFinite(fallback)) return fallback;
+      return null;
     },
-    [subjectAvg]
+    [subjectAvg, classAverages]
   );
 
   const subjectSummaries = React.useMemo(
@@ -267,7 +303,7 @@ export default function StudentDetailsPanelShared({
         subject: row.subject_name,
         subjectId: row.subject_id,
         score: resolveMark(row),
-        classAvg: getClassAverage(row.subject_id),
+        classAvg: getClassAverage(row.subject_id, row.subject_name),
         grade: row.grade ?? "",
       })),
     [filledRows, getClassAverage]
@@ -354,7 +390,7 @@ export default function StudentDetailsPanelShared({
               })
         )
       );
-    } catch (_) {
+    } catch {
       // Non-fatal if waiting fails
     }
 
@@ -362,7 +398,7 @@ export default function StudentDetailsPanelShared({
     window.requestAnimationFrame(() => {
       try {
         window.focus();
-      } catch (_) {}
+      } catch {}
       window.print();
     });
   };
@@ -570,7 +606,7 @@ export default function StudentDetailsPanelShared({
       const subjectsRowsVisual = filledRows
         .map((row) => {
           const score = resolveMark(row);
-          const classAvgValue = getClassAverage(row.subject_id);
+          const classAvgValue = getClassAverage(row.subject_id, row.subject_name);
           const studentPct = Math.max(0, Math.min(100, typeof score === 'number' ? score : 0));
           const classPct = typeof classAvgValue === 'number' ? Math.max(0, Math.min(100, classAvgValue)) : 0;
           const classBarHtml = showClassAverage ? `<div class=\"bar class\" style=\"width:${classPct}%\"></div>` : '';
@@ -633,7 +669,6 @@ export default function StudentDetailsPanelShared({
     <div style=\"margin-top:24px\"><em class=\"muted\">Use the Print button to save this as a PDF.</em></div>
   </body>
 </html>`;
-      setReportHtml(html);
       setShowReportPreview(true);
     } catch (e) {
       console.error("Failed to generate report", e);
@@ -740,7 +775,7 @@ export default function StudentDetailsPanelShared({
                   className="flex items-center gap-2 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm"
                 >
                   <FileText className="w-4 h-4" />
-                  Generate Report
+                  {reportButtonText}
                 </button>
               </div>
             </div>
@@ -814,6 +849,7 @@ export default function StudentDetailsPanelShared({
                           {/* School header */}
                           <div className="row flex items-center justify-between border border-gray-200 rounded-xl bg-gray-50 px-4 py-3 mb-4">
                             <div className="flex items-center gap-3">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img src="/logo-akademi.png" alt="Akademi Al Khayr" width={36} height={36} className="object-contain" />
                               <div>
                                 <div className="font-bold text-base">Akademi Al Khayr</div>
@@ -980,8 +1016,8 @@ export default function StudentDetailsPanelShared({
                               }))}
                               margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
                               onClick={(data) => {
-                                if (data && (data as any).activeLabel) {
-                                  setSelectedSubject((data as any).activeLabel as string);
+                                if (data && typeof (data as { activeLabel?: unknown }).activeLabel === "string") {
+                                  setSelectedSubject((data as { activeLabel?: string }).activeLabel!);
                                 }
                               }}
                             >
@@ -989,7 +1025,7 @@ export default function StudentDetailsPanelShared({
                               <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
                               <Tooltip
                                 formatter={(value: unknown, name: string, item: unknown) => {
-                                  const payload = (item as { payload?: any })?.payload;
+                                  const payload = (item as { payload?: { subject?: string; score?: number | null; classAvg?: number | null } })?.payload;
                                   if (!payload) {
                                     return [fmt(toNumeric(value)), name];
                                   }

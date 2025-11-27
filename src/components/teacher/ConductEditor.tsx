@@ -89,7 +89,6 @@ function ConductEditor({
   const [dirty, setDirty] = React.useState(false);
   const [prefillError, setPrefillError] = React.useState<string | null>(null);
   const [savedAt, setSavedAt] = React.useState<Date | null>(null);
-  const [justSaved, setJustSaved] = React.useState(false);
 
   const onSummaryChangeRef = React.useRef(onSummaryChange);
   React.useEffect(() => {
@@ -277,8 +276,6 @@ function ConductEditor({
       showToast?.('Conduct saved.', 'success');
       setDirty(false);
       setSavedAt(new Date());
-      setJustSaved(true);
-      setTimeout(() => setJustSaved(false), 2600);
       await loadSummary({ resetForm: true });
 
       // notify admin panel

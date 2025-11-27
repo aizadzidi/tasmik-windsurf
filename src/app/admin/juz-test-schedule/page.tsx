@@ -3,13 +3,21 @@ import React from 'react';
 import AdminNavbar from '@/components/admin/AdminNavbar';
 import AdminScheduleTestModal from '@/components/admin/AdminScheduleTestModal';
 import { Card } from '@/components/ui/Card';
+import { JuzTestSession, JuzTestStatus } from '@/types/juzTest';
+
+type JuzScheduleResponse = {
+  countsByDate?: Record<string, number>;
+  capacityPerDay?: number;
+  sessions?: JuzTestSession[];
+  error?: string;
+};
 
 export default function AdminJuzTestSchedulePage() {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [counts, setCounts] = React.useState<Record<string, number>>({});
   const [capacity, setCapacity] = React.useState(5);
-  const [sessions, setSessions] = React.useState<any[]>([]);
+  const [sessions, setSessions] = React.useState<JuzTestSession[]>([]);
   const [selectedDate, setSelectedDate] = React.useState<string>('');
   const [showScheduleModal, setShowScheduleModal] = React.useState(false);
   const [toast, setToast] = React.useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -38,26 +46,26 @@ function monthLabel(date: Date) {
     return { from: fmt(first), to: fmt(last) };
   }
 
-  async function loadMonth(date: Date) {
+  const loadMonth = React.useCallback(async (date: Date) => {
     const { from, to } = monthRange(date);
     setLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/juz-test-schedule?from=${from}&to=${to}`);
-      const raw = await res.json();
-      if (!res.ok || (raw && (raw as any).error)) throw new Error((raw as any)?.error || 'Failed to load');
-      const json = raw as { countsByDate?: Record<string, number>; capacityPerDay?: number; sessions?: any[] };
+      const raw: JuzScheduleResponse = await res.json();
+      if (!res.ok || raw.error) throw new Error(raw.error || 'Failed to load');
+      const json = raw;
       setCounts(json.countsByDate || {});
       setCapacity(json.capacityPerDay || 5);
       setSessions(json.sessions || []);
-    } catch (e: any) {
-      setError(e.message || 'Failed to load');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to load');
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
-  React.useEffect(() => { loadMonth(viewMonthStart); }, [viewMonthStart]);
+  React.useEffect(() => { loadMonth(viewMonthStart); }, [loadMonth, viewMonthStart]);
 
   const days = React.useMemo(() => {
     const start = new Date(Date.UTC(viewMonthStart.getUTCFullYear(), viewMonthStart.getUTCMonth(), 1));
@@ -77,21 +85,21 @@ const weekdays = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
     return out;
   }, [viewMonthStart, counts]);
 
-  const listForDay = React.useMemo(() => sessions.filter((s: any) => s.scheduled_date === selectedDate), [sessions, selectedDate]);
+  const listForDay = React.useMemo(() => sessions.filter((s) => s.scheduled_date === selectedDate), [sessions, selectedDate]);
 
   const refetchDay = React.useCallback(async () => {
     await loadMonth(viewMonthStart);
-  }, [viewMonthStart]);
+  }, [loadMonth, viewMonthStart]);
 
-  async function updateStatus(id: string, status: 'completed' | 'reschedule_requested' | 'cancelled') {
+  async function updateStatus(id: string, status: JuzTestStatus) {
     try {
       const res = await fetch(`/api/juz-test-schedule?id=${id}`, { method: status === 'cancelled' ? 'DELETE' : 'PATCH', headers: { 'Content-Type': 'application/json' }, body: status === 'cancelled' ? undefined : JSON.stringify({ status }) });
       const json = await res.json();
       if (!res.ok || json.error) throw new Error(json.error || 'Failed');
       await loadMonth(viewMonthStart);
       setToast({ type: 'success', message: 'Updated successfully' });
-    } catch (e) {
-      setToast({ type: 'error', message: (e as any).message || 'Update failed' });
+    } catch (e: unknown) {
+      setToast({ type: 'error', message: e instanceof Error ? e.message : 'Update failed' });
     }
   }
 
@@ -156,7 +164,7 @@ return (
                     } else {
                       alert('No available weekday slots in the next 6 months.');
                     }
-                  } catch (e) {
+                  } catch {
                     alert('Failed to search availability');
                   } finally {
                     setLoading(false);
@@ -197,7 +205,7 @@ return (
               <div className="text-gray-600">No sessions scheduled.</div>
             ) : (
               <div className="space-y-2">
-                {listForDay.map((s: any) => (
+                {listForDay.map((s) => (
                   <div key={s.id} className="flex items-center justify-between border rounded p-2">
                     <div>
                       <div className="font-medium">Slot {s.slot_number} • {s.students?.name || 'Student'}</div>

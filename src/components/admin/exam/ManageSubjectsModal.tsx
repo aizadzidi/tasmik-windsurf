@@ -147,7 +147,7 @@ export default function ManageSubjectsModal({
         alert(`Successfully deleted all ${selectedSubjects.size} subject(s)!`);
       } else {
         // Get specific error details
-        const errorDetails = failedDeletes.map((result, index) => {
+        const errorDetails = failedDeletes.map((result, _index) => {
           const subjectId = subjectArray[results.indexOf(result)];
           const subjectName = subjects.find(s => s.id === subjectId)?.name || 'Unknown';
           return `• ${subjectName}: ${result.error}`;
@@ -166,7 +166,7 @@ export default function ManageSubjectsModal({
         // Clear only successfully deleted subjects from selection
         if (successfulDeletes > 0) {
           const remainingSelected = new Set<string>();
-          failedDeletes.forEach((result, index) => {
+          failedDeletes.forEach((result, _index) => {
             const subjectId = subjectArray[results.indexOf(result)];
             remainingSelected.add(subjectId);
           });

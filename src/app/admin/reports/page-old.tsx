@@ -84,7 +84,14 @@ export default function AdminReportsPage() {
           return;
         }
 
-        const studentsData = await response.json();
+        const studentsData: Array<{
+          id: string;
+          name: string;
+          users?: { name?: string | null } | null;
+          classes?: { name?: string | null } | null;
+          memorization_completed?: boolean;
+          memorization_completed_date?: string | null;
+        }> = await response.json();
 
         if (!studentsData || studentsData.length === 0) {
           setStudents([]);
@@ -92,7 +99,7 @@ export default function AdminReportsPage() {
         }
 
         // Collect student IDs once for batched queries below
-        const studentIds = studentsData.map((s: any) => s.id);
+        const studentIds = studentsData.map((s) => s.id);
 
         if (viewMode === 'juz_tests') {
           // Batch fetch all memorization data and juz tests
@@ -135,7 +142,7 @@ export default function AdminReportsPage() {
           ]);
 
           // Process the batched data
-          const studentProgressData = studentsData.map((student: any) => {
+          const studentProgressData = studentsData.map((student) => {
             // Find highest memorized juz for this student
             const studentMemorization = memorizationResults.data?.filter(r => r.student_id === student.id) || [];
             const highestMemorizedJuz = studentMemorization.length > 0 
@@ -201,7 +208,7 @@ export default function AdminReportsPage() {
           const { data: allReports } = await query.order("date", { ascending: false });
 
           // Process the batched data
-          const studentProgressData = studentsData.map((student: any) => {
+          const studentProgressData = studentsData.map((student) => {
             // Find latest report for this student
             const studentReports = allReports?.filter(r => r.student_id === student.id) || [];
             const latestReport = studentReports.length > 0 ? studentReports[0] : null;

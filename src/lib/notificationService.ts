@@ -1,3 +1,4 @@
+import type { PostgrestError } from '@supabase/supabase-js';
 import { supabase } from './supabaseClient';
 
 export interface JuzTestNotification {
@@ -32,16 +33,26 @@ export const notificationService = {
 
       if (!studentName || !teacherName) {
         const [studentResult, teacherResult] = await Promise.all([
-          !studentName ? supabase
-            .from('students')
-            .select('name')
-            .eq('id', data.student_id)
-            .single() : Promise.resolve({ data: { name: studentName }, error: null }),
-          !teacherName ? supabase
-            .from('users')
-            .select('name')
-            .eq('id', data.teacher_id)
-            .single() : Promise.resolve({ data: { name: teacherName }, error: null })
+          !studentName
+            ? supabase
+                .from('students')
+                .select('name')
+                .eq('id', data.student_id)
+                .single()
+            : Promise.resolve<{ data: { name: string | null }; error: null }>({
+                data: { name: studentName },
+                error: null,
+              }),
+          !teacherName
+            ? supabase
+                .from('users')
+                .select('name')
+                .eq('id', data.teacher_id)
+                .single()
+            : Promise.resolve<{ data: { name: string | null }; error: null }>({
+                data: { name: teacherName },
+                error: null,
+              }),
         ]);
 
         studentName = studentResult.data?.name || data.student_name || 'Unknown Student';
@@ -67,7 +78,7 @@ export const notificationService = {
         status: 'pending' as const
       };
 
-      let insertError: any = null;
+      let insertError: PostgrestError | null = null;
 
       // Try inserting with names first
       const { error: firstError } = await supabase
@@ -120,7 +131,7 @@ export const notificationService = {
         return { notifications: [], error: error.message };
       }
 
-      const notificationsSafe = notifications || [];
+      const notificationsSafe: JuzTestNotification[] = notifications || [];
 
       // Find which names are missing and batch fetch them
       const missingStudentIds = Array.from(new Set(
@@ -139,21 +150,27 @@ export const notificationService = {
       const [studentsLookupRes, teachersLookupRes] = await Promise.all([
         missingStudentIds.length > 0
           ? supabase.from('students').select('id, name').in('id', missingStudentIds)
-          : Promise.resolve({ data: [], error: null } as any),
+          : Promise.resolve<{ data: Array<{ id: string; name: string }>; error: null }>({
+              data: [],
+              error: null,
+            }),
         missingTeacherIds.length > 0
           ? supabase.from('users').select('id, name').in('id', missingTeacherIds)
-          : Promise.resolve({ data: [], error: null } as any)
+          : Promise.resolve<{ data: Array<{ id: string; name: string }>; error: null }>({
+              data: [],
+              error: null,
+            }),
       ]);
 
       const studentIdToName: Record<string, string> = Object.fromEntries(
-        (studentsLookupRes.data || []).map((s: any) => [s.id, s.name])
+        (studentsLookupRes.data || []).map((s) => [s.id, s.name])
       );
       const teacherIdToName: Record<string, string> = Object.fromEntries(
-        (teachersLookupRes.data || []).map((u: any) => [u.id, u.name])
+        (teachersLookupRes.data || []).map((u) => [u.id, u.name])
       );
 
       // Build processed notifications with resolved names
-      const processedNotifications: JuzTestNotification[] = notificationsSafe.map((n: any) => {
+      const processedNotifications: JuzTestNotification[] = notificationsSafe.map((n) => {
         const studentName = n.student_name || studentIdToName[n.student_id] || 'Unknown Student';
         const teacherName = n.teacher_name || teacherIdToName[n.teacher_id] || 'Unknown Teacher';
         return { ...n, student_name: studentName, teacher_name: teacherName } as JuzTestNotification;

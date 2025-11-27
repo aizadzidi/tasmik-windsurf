@@ -26,6 +26,25 @@ import {
 import { formatMurajaahDisplay } from "@/lib/quranMapping";
 
 type ViewMode = 'tasmik' | 'murajaah' | 'juz_tests';
+type LatestReport = {
+  type: string;
+  surah?: string;
+  ayat_from?: number;
+  ayat_to?: number;
+  page_from?: number;
+  page_to?: number;
+  juzuk_from?: number;
+  juzuk_to?: number;
+  juzuk?: number;
+  date?: string;
+};
+type JuzTestEntry = {
+  passed: boolean;
+  juz_number: number;
+  test_date: string;
+  total_percentage?: number;
+  test_hizb?: boolean;
+};
 
 // Helper function to format latest reading
 function formatLatestReading(report: { type: string; surah?: string; ayat_from?: number; ayat_to?: number; page_from?: number; page_to?: number; juzuk_from?: number; juzuk_to?: number; juzuk?: number } | null) {
@@ -124,9 +143,9 @@ export default function AdminReportsPage() {
         teacher_name?: string; 
         class_name?: string; 
         memorized_juzuks?: number[]; 
-        juz_tests?: { passed: boolean; juz_number: number; test_date: string; total_percentage?: number; test_hizb?: boolean }[]; 
-        latestTasmikReport?: any; 
-        latestMurajaahReport?: any; 
+        juz_tests?: JuzTestEntry[]; 
+        latestTasmikReport?: LatestReport | null; 
+        latestMurajaahReport?: LatestReport | null; 
         memorization_completed?: boolean; 
         memorization_completed_date?: string; 
       }) => {
@@ -281,9 +300,10 @@ export default function AdminReportsPage() {
       const params = new URLSearchParams({ student_ids: ids.join(',') });
       const res = await fetch(`/api/juz-test-schedule?${params.toString()}`);
       const raw = await res.json();
-      if (res.ok && raw && raw.activeByStudent) {
+      if (res.ok && raw?.activeByStudent) {
+        const activeByStudent = raw.activeByStudent as Record<string, { scheduled_date: string; slot_number: number }>;
         const map: Record<string, { scheduled_date: string; slot_number: number }> = {};
-        Object.entries(raw.activeByStudent as Record<string, any>).forEach(([k, v]) => {
+        Object.entries(activeByStudent).forEach(([k, v]) => {
           map[k] = { scheduled_date: v.scheduled_date, slot_number: v.slot_number };
         });
         setActiveSchedules(map);
@@ -292,7 +312,7 @@ export default function AdminReportsPage() {
       }
     };
     run();
-  }, [viewMode, JSON.stringify(filteredStudents.map(s => s.id))]);
+  }, [viewMode, filteredStudents]);
 
   if (loading) {
     return (

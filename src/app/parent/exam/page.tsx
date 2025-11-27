@@ -42,10 +42,8 @@ type ExamSummaryResponse = {
 };
 
 export default function ParentExamPage() {
-  const [parentId, setParentId] = React.useState<string | null>(null);
   const [children, setChildren] = React.useState<Child[]>([]);
   const [exams, setExams] = React.useState<MetaExam[]>([]);
-  const [subjects, setSubjects] = React.useState<string[]>([]);
   const [selectedExam, setSelectedExam] = React.useState("");
   const [studentRows, setStudentRows] = React.useState<StudentData[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -72,7 +70,6 @@ export default function ParentExamPage() {
   const loadResults = React.useCallback(async (examId: string, kids: Child[]) => {
     if (!examId || kids.length === 0) {
       setStudentRows([]);
-      setSubjects([]);
       return;
     }
     setLoading(true);
@@ -80,7 +77,6 @@ export default function ParentExamPage() {
       const res = await fetch(`/api/admin/exams?examId=${examId}`);
       const json = (await res.json()) as ExamSummaryResponse;
       const subjectNames: string[] = Array.isArray(json.subjects) ? json.subjects : [];
-      setSubjects(subjectNames);
 
       const studentsArray = Array.isArray(json.students) ? json.students : [];
       const byId = new Map<string, ExamStudentSummary>();
@@ -146,7 +142,6 @@ export default function ParentExamPage() {
     } catch (error: unknown) {
       console.error("Failed to load exam summary for parents", error);
       setStudentRows([]);
-      setSubjects([]);
     } finally {
       setLoading(false);
     }
@@ -157,7 +152,6 @@ export default function ParentExamPage() {
     (async () => {
       const { data } = await supabase.auth.getUser();
       const uid = data.user?.id || null;
-      setParentId(uid);
       if (!uid) return;
 
       const { data: kids } = await supabase
@@ -170,7 +164,7 @@ export default function ParentExamPage() {
 
   // Load results when exam selection or children change
   React.useEffect(() => {
-    if (!selectedExam) { setStudentRows([]); setSubjects([]); return; }
+    if (!selectedExam) { setStudentRows([]); return; }
     loadResults(selectedExam, children);
   }, [selectedExam, children, loadResults]);
 

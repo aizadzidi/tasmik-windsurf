@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import AdminNavbar from "@/components/admin/AdminNavbar";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -69,10 +69,10 @@ export default function AdminPage() {
   const [editParentOpen, setEditParentOpen] = useState(false);
 
   // Dev log helper
-  const isDev = process.env.NODE_ENV !== 'production';
+  const isDev = useMemo(() => process.env.NODE_ENV !== 'production', []);
 
   // Safe error parsing helper
-  async function parseError(res: Response) {
+  const parseError = useCallback(async (res: Response) => {
     try {
       const ct = res.headers.get('content-type') || '';
       if (ct.includes('application/json')) {
@@ -84,7 +84,7 @@ export default function AdminPage() {
     } catch {
       return res.statusText || 'Unknown error';
     }
-  }
+  }, []);
 
   useEffect(() => {
     async function fetchData() {
@@ -138,7 +138,7 @@ export default function AdminPage() {
       }
     }
     fetchData();
-  }, []);
+  }, [isDev, parseError]);
 
   const handleAddStudent = async () => {
     if (!newStudentName.trim()) return;
@@ -171,7 +171,7 @@ export default function AdminPage() {
         const err = await parseError(response);
         setError("Failed to add student: " + err);
       }
-    } catch (error) {
+    } catch {
       setError("Failed to add student: Network error");
     }
     setLoading(false);
@@ -217,7 +217,7 @@ export default function AdminPage() {
         const err = await parseError(response);
         setEditError("Failed to update student: " + err);
       }
-    } catch (error) {
+  } catch {
       setEditError("Failed to update student: Network error");
     }
     setEditLoading(false);
@@ -239,7 +239,7 @@ export default function AdminPage() {
         const err = await parseError(response);
         setError("Failed to delete student: " + err);
       }
-    } catch (error) {
+    } catch {
       setError("Failed to delete student: Network error");
     }
   };
@@ -270,7 +270,7 @@ export default function AdminPage() {
         const err = await parseError(response);
         setError("Failed to update completion status: " + err);
       }
-    } catch (err) {
+    } catch {
       setError("Failed to update completion status: Network error");
     } finally {
       setLoading(false);
@@ -637,13 +637,13 @@ export default function AdminPage() {
                     <>
                       <td className="px-4 py-3 font-medium text-gray-900">{s.name}</td>
                       <td className="px-4 py-3 text-gray-600">
-                        {parentById.get((s as any).parent_id)?.name || '-'}
+                        {s.parent_id ? parentById.get(s.parent_id)?.name || '-' : '-'}
                       </td>
                       <td className="px-4 py-3 text-gray-600">
-                        {teacherById.get((s as any).assigned_teacher_id)?.name || '-'}
+                        {s.assigned_teacher_id ? teacherById.get(s.assigned_teacher_id)?.name || '-' : '-'}
                       </td>
                       <td className="px-4 py-3 text-gray-600">
-                        {classById.get((s as any).class_id)?.name || '-'}
+                        {s.class_id ? classById.get(s.class_id)?.name || '-' : '-'}
                       </td>
                       <td className="px-4 py-3 text-center">
                         <div className="flex flex-col items-center gap-2">

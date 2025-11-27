@@ -12,6 +12,7 @@ import type { ConductSummary } from "@/data/conduct";
 import { fetchGradeSummary } from "@/lib/db/exams";
 import type { GradeSummaryRow } from "@/lib/db/exams";
 import StudentDetailsPanelTeacher from "@/components/teacher/StudentDetailsPanelTeacher";
+import type { StudentData } from "@/components/admin/exam/StudentTable";
 
 // Dynamically import charts to avoid SSR issues
 const LineChart = dynamic(() => import("@/components/teacher/ExamLineChart"), { ssr: false });
@@ -54,12 +55,18 @@ const defaultConductCategories: { key: ConductKey; label: string; maxScore: numb
 
 interface ClassItem { id: string; name: string }
 interface SubjectItem { id: string; name: string }
+type ExamClassSubject = {
+  classes?: { id: string; name?: string };
+  subjects?: { id: string; name?: string };
+};
+
 interface ExamItem {
   id: string;
   name: string;
   type: string;
   exam_classes?: { conduct_weightage: number; classes: { id: string; name: string } }[];
   exam_subjects?: { subjects: { id: string; name: string } }[];
+  exam_class_subjects?: ExamClassSubject[];
 }
 
 type StudentRow = {
@@ -91,10 +98,10 @@ export default function TeacherExamDashboard() {
   const [saving, setSaving] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState<string>("");
   // RPC-backed grade summary per student (filtered to allowed subjects)
-  const [gradeSummaryMap, setGradeSummaryMap] = React.useState<Map<string, Array<{ grade: string; cnt: number }>>>(new Map());
+  const [gradeSummaryMap, setGradeSummaryMap] = React.useState<Map<string, GradeSummaryRow[]>>(new Map());
   const [gradeSubjectsMap, setGradeSubjectsMap] = React.useState<Map<string, Record<string, string[]>>>(new Map());
-  const [loadingGradeSummary, setLoadingGradeSummary] = React.useState(false);
-  const [gradeSummaryError, setGradeSummaryError] = React.useState<string | null>(null);
+  const [, setLoadingGradeSummary] = React.useState(false);
+  const [, setGradeSummaryError] = React.useState<string | null>(null);
   const [sortBy, setSortBy] = React.useState<{ key: 'name' | 'mark' | 'grade' | 'missing' | null; dir: 'asc' | 'desc' | null }>({ key: null, dir: null });
   // Aggregate per-student across all subjects for the selected exam (used when no subject selected)
   const [aggregateByStudent, setAggregateByStudent] = React.useState<Map<string, { avg: number | null; gradeCounts: Record<string, number> }>>(new Map());
@@ -109,15 +116,15 @@ export default function TeacherExamDashboard() {
   // Metadata readiness to avoid UI flicker while initial selections are being computed
   // Toast state for quick popup notifications
   const [toast, setToast] = React.useState<{ message: string; type: 'success' | 'error' } | null>(null);
-  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+  const showToast = React.useCallback((message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 2200);
-  };
+  }, []);
 
   const fetchFullStudentRoster = React.useCallback(async () => {
     const pageSize = 1000;
     let from = 0;
-    const allStudents: Array<{ id: string; name: string; class_id: string | null }> = [];
+    const allStudents: StudentRosterItem[] = [];
     while (true) {
       const { data, error } = await supabase
         .from('students')
@@ -192,7 +199,7 @@ export default function TeacherExamDashboard() {
 
       // Do not auto-select exam/class/subject on first load; leave filters empty by default
     })();
-  }, []);
+  }, [fetchFullStudentRoster]);
 
   // No defaults: keep filters empty to avoid UI thrash on first load
 
@@ -209,7 +216,7 @@ export default function TeacherExamDashboard() {
       // Handle "all" selections
       const hasClass = selectedClassId === "all" || (ex.exam_classes || []).some(ec => ec?.classes?.id === selectedClassId);
       // If per-class mapping exists, require matching pair; otherwise check exam_subjects only
-      const ecs = (ex as any)?.exam_class_subjects as Array<{ classes?: { id: string }, subjects?: { id: string } }> | undefined;
+      const ecs = ex.exam_class_subjects;
       let hasSubject = false;
       if (Array.isArray(ecs) && ecs.length > 0) {
         if (selectedClassId === 'all') {
@@ -230,7 +237,7 @@ export default function TeacherExamDashboard() {
   const subjectsForUI = React.useMemo(() => {
     if (!selectedExamId) return subjects;
     const ex = exams.find(e => String(e.id) === String(selectedExamId));
-    const ecs = (ex as any)?.exam_class_subjects as Array<{ classes?: { id: string }, subjects?: { id: string, name: string } }> | undefined;
+    const ecs = Array.isArray(ex?.exam_class_subjects) ? ex?.exam_class_subjects : undefined;
     if (Array.isArray(ecs) && ecs.length > 0) {
       if (selectedClassId && selectedClassId !== 'all') {
         const arr = ecs
@@ -281,12 +288,6 @@ export default function TeacherExamDashboard() {
     if (!selectedClassId || selectedClassId === 'all') return null;
     return classes.find((cls) => cls.id === selectedClassId)?.name ?? null;
   }, [classes, selectedClassId]);
-
-  // Subject validity for current exam/class options
-  const subjectIsInUI = React.useMemo(() => {
-    if (!selectedSubjectId) return false;
-    return subjectsForUI.some(s => s.id === selectedSubjectId);
-  }, [subjectsForUI, selectedSubjectId]);
 
   // Keep selected subject valid for the chosen exam+class; reset to blank if invalid
   React.useEffect(() => {
@@ -352,7 +353,8 @@ export default function TeacherExamDashboard() {
         const perStudentFilled = new Map<string, Set<string>>();
         const perSubjectCompleted = new Map<string, number>();
         const perSubjectTH = new Map<string, number>();
-        (data || []).forEach((r: any) => {
+        type ExamResultRow = { student_id: string | number; subject_id: string | number; mark: number | null; grade: string | null; final_score: number | null };
+        (data as ExamResultRow[] | null | undefined)?.forEach((r) => {
           const sid = String(r.student_id);
           const subId = String(r.subject_id);
           const fs = typeof r.final_score === 'number' ? r.final_score : null;
@@ -462,7 +464,7 @@ export default function TeacherExamDashboard() {
         const allowedSet = new Set(allSubjectIds.map(String));
         const idToName = new Map(subjectsForUI.map(s => [String(s.id), s.name]));
         const gradeSubjectsByStudent = new Map<string, Record<string, string[]>>();
-        (data || []).forEach((r: any) => {
+        (data as ExamResultRow[] | null | undefined)?.forEach((r) => {
           const sid = String(r.student_id);
           const subId = String(r.subject_id);
           const grade = (r.grade || '').toUpperCase();
@@ -482,7 +484,7 @@ export default function TeacherExamDashboard() {
         setSubjectCompletion(new Map());
       }
     })();
-  }, [selectedExamId, studentRows, subjectsForUI, subjectOptOutMap]);
+  }, [selectedExamId, selectedSubjectId, studentRows, subjectsForUI, subjectOptOutMap]);
 
   // Load RPC grade summaries for each student (filtered to allowed subjects)
   React.useEffect(() => {
@@ -498,23 +500,23 @@ export default function TeacherExamDashboard() {
           studentRows.map(async (row): Promise<[string, GradeSummaryRow[]]> => {
             try {
               const rows = await fetchGradeSummary(String(selectedExamId), String(selectedClassId), String(row.id));
-              return [String(row.id), rows as GradeSummaryRow[]];
-            } catch (err: any) {
-              console.warn('grade summary RPC failed for student', row.id, err?.message || err);
-              return [String(row.id), [] as GradeSummaryRow[]];
+              return [String(row.id), rows];
+            } catch (err: unknown) {
+              console.warn('grade summary RPC failed for student', row.id, (err as Error)?.message || err);
+              return [String(row.id), []];
             }
           })
         );
         setGradeSummaryMap(new Map(entries));
-      } catch (err: any) {
-        setGradeSummaryError(err?.message || 'Failed to load grade summaries');
+      } catch (err: unknown) {
+        setGradeSummaryError((err as Error)?.message || 'Failed to load grade summaries');
         setGradeSummaryMap(new Map());
       } finally {
         setLoadingGradeSummary(false);
       }
     };
     load();
-  }, [selectedExamId, selectedClassId, studentRows]);
+  }, [selectedExamId, selectedClassId, selectedSubjectId, studentRows]);
 
   // Compute conduct categories from dynamic criteria or use defaults
   const conductCategories = React.useMemo(() => {
@@ -583,7 +585,7 @@ export default function TeacherExamDashboard() {
       }
     
       const { data: studentsData } = await studentsQuery;
-      let roster = studentsData || [];
+      let roster: StudentRosterItem[] = studentsData || [];
 
       // Prepare containers to fill inside try
       let marksByStudent = new Map<string, { mark: number | null; grade: string | null }>();
@@ -603,35 +605,39 @@ export default function TeacherExamDashboard() {
                 .select('student_id, mark, grade')
                 .eq('exam_id', selectedExamId)
                 .eq('subject_id', selectedSubjectId)
-            : Promise.resolve({ data: [] as any[] }),
+            : Promise.resolve<{ data: Array<{ student_id: string; mark: number | null; grade: string | null }> }>({
+                data: [],
+              }),
           userId
             ? supabase
                 .from('conduct_entries')
                 .select('student_id, discipline, effort, participation, motivational_level, character, leadership')
                 .eq('exam_id', selectedExamId)
                 .eq('teacher_id', userId)
-            : Promise.resolve({ data: [] as any[] }),
+            : Promise.resolve<{ data: Array<{ student_id: string; discipline?: number; effort?: number; participation?: number; motivational_level?: number; character?: number; leadership?: number }> }>({
+                data: [],
+              }),
           fetch(`/api/teacher/subject-opt-outs?${optOutQuery.toString()}`)
             .then((r) => r.json())
-            .catch(() => ({ entries: [] as any[] }))
+            .catch(() => ({ entries: [] as Array<{ student_id: string; subject_id: string }> }))
         ]);
         // Exclusions
         try {
           const json = await exclRes.json();
           const excluded: string[] = Array.isArray(json.excludedStudentIds) ? json.excludedStudentIds : [];
           const excludedSet = new Set(excluded);
-          roster = roster.filter((s: any) => !excludedSet.has(String(s.id)));
+          roster = roster.filter((s) => !excludedSet.has(String(s.id)));
         } catch {}
         // Marks
         marksByStudent = new Map<string, { mark: number | null; grade: string | null }>();
-        const results = (resultsRes as any)?.data || [];
-        (results || []).forEach((r: any) => {
+        const results = (resultsRes as { data?: Array<{ student_id: string; mark: number | null; grade: string | null }> })?.data || [];
+        (results || []).forEach((r) => {
           marksByStudent.set(String(r.student_id), { mark: r.mark, grade: r.grade });
         });
         // Conduct
         conductByStudent = new Map<string, Record<ConductKey, number>>();
-        const conductEntries = (conductRes as any)?.data || [];
-        (conductEntries || []).forEach((e: any) => {
+        const conductEntries = (conductRes as { data?: Array<{ student_id: string; discipline?: number; effort?: number; participation?: number; motivational_level?: number; character?: number; leadership?: number }> })?.data || [];
+        (conductEntries || []).forEach((e) => {
           conductByStudent.set(String(e.student_id), {
             discipline: Number(e.discipline) || 0,
             effort: Number(e.effort) || 0,
@@ -644,7 +650,7 @@ export default function TeacherExamDashboard() {
 
         const optOutEntriesRaw = Array.isArray(optOutJson?.entries) ? optOutJson.entries : [];
         const optOutMap = new Map<string, Set<string>>();
-        (optOutEntriesRaw || []).forEach((entry: any) => {
+        (optOutEntriesRaw || []).forEach((entry: { student_id?: string; subject_id?: string } | null) => {
           if (!entry) return;
           const sid = entry?.student_id ? String(entry.student_id) : null;
           const subId = entry?.subject_id ? String(entry.subject_id) : null;
@@ -660,7 +666,7 @@ export default function TeacherExamDashboard() {
       }
 
       // Build rows
-      const rows: StudentRow[] = roster.map((s: any) => {
+      const rows: StudentRow[] = roster.map((s) => {
         const m = marksByStudent.get(String(s.id));
         const c = conductByStudent.get(String(s.id));
         const emptyConduct = conductCategories.reduce((acc, cat) => {
@@ -715,7 +721,7 @@ export default function TeacherExamDashboard() {
       
       setExpandedRows([]);
     })();
-  }, [selectedClassId, selectedSubjectId, selectedExamId, userId]);
+  }, [conductCategories, selectedClassId, selectedSubjectId, selectedExamId, userId, unsavedDataCache]);
 
   // Dynamic grade computation using exam's actual grading scale
   const computeGradeClientSide = (mark: number): string => {
@@ -766,7 +772,7 @@ export default function TeacherExamDashboard() {
     if (lines.length === 0) return;
 
     // Build order of indices in the current visible ordering
-    const orderIdxs = visibleRows.map((v) => (v as any)._idx as number);
+    const orderIdxs = visibleRows.map((v) => v._idx);
     const startPos = Math.max(0, Math.min(startDisplayIdx, orderIdxs.length - 1));
 
     setStudentRows((prev) => {
@@ -911,14 +917,6 @@ export default function TeacherExamDashboard() {
     setExpandedRows((prev) => (prev.includes(idx) ? prev.filter((i) => i !== idx) : [...prev, idx]));
   };
 
-  // Handle selection changes with unsaved changes warning
-  const handleClassChange = async (newClassId: string) => {
-    if (hasUnsavedChanges()) {
-      await handleSaveAll();
-    }
-    setSelectedClassId(newClassId);
-  };
-
   const handleConductSummaryUpdate = React.useCallback((studentId: string, summary: ConductSummary | null) => {
     const nextConduct = FIELD_KEYS.reduce((acc, key) => {
       const value = summary?.[key] as number | null | undefined;
@@ -935,24 +933,6 @@ export default function TeacherExamDashboard() {
     );
   }, []);
 
-  const handleSubjectChange = async (newSubjectId: string) => {
-    if (hasUnsavedChanges()) {
-      await handleSaveAll();
-    }
-    setSelectedSubjectId(newSubjectId);
-  };
-
-  const handleExamChange = async (newExamId: string) => {
-    if (hasUnsavedChanges()) {
-      await handleSaveAll();
-    }
-    setSelectedExamId(newExamId);
-    // Do not auto-select a subject; keep it empty to avoid transient invalid states
-    setSelectedSubjectId('');
-    // Proactively set class to 'all' so teacher sees students immediately after choosing exam
-    if (!selectedClassId) setSelectedClassId('all');
-  };
-
   // Toggle sort for a given column
   const toggleSort = (key: 'name' | 'mark' | 'grade' | 'missing') => {
     setSortBy((prev) => {
@@ -963,7 +943,7 @@ export default function TeacherExamDashboard() {
   };
 
   // Check for unsaved changes
-  const hasUnsavedChanges = () => {
+  const hasUnsavedChanges = React.useCallback(() => {
     if (!initialRowsRef.current || initialRowsRef.current.length === 0) return false;
     const initialMap = new Map(initialRowsRef.current.map(r => [r.id, r]));
     return studentRows.some((curr) => {
@@ -977,25 +957,10 @@ export default function TeacherExamDashboard() {
       if (optOutChanged) return true;
       return false;
     });
-  };
-
-  // Autosave with debounce when there are changes and selections are valid
-  const autoSaveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  React.useEffect(() => {
-    if (!selectedExamId || !selectedSubjectId || !selectedClassId) return;
-    if (saving) return;
-    if (!hasUnsavedChanges()) return;
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(() => {
-      handleSaveAll();
-    }, 1200);
-    return () => {
-      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    };
-  }, [studentRows, selectedExamId, selectedSubjectId, selectedClassId, saving]);
+  }, [studentRows]);
 
   // Save all rows using new single-endpoint API
-  const handleSaveAll = async () => {
+  const handleSaveAll = React.useCallback(async () => {
     setSaving(true);
     try {
       if (!selectedExamId || !selectedSubjectId) {
@@ -1043,143 +1008,128 @@ export default function TeacherExamDashboard() {
             }
             return null;
           }
-          // Clamp to valid range to satisfy DB constraints
-          const bounded = Math.max(0, Math.min(100, mark));
+
+          const finalScore = mark;
           
           return {
             studentId: r.id,
-            mark: bounded,
-            finalScore: bounded,
+            mark: mark,
+            finalScore,
             isAbsent: false
           };
         })
-        .filter(Boolean);
+        .filter(Boolean) as Array<{
+          studentId: string;
+          mark: number | null;
+          finalScore: number | null;
+          isAbsent: boolean;
+        }>;
 
+      // Submit exam results
       if (examResults.length > 0) {
-        // Use new single-endpoint API for atomic upsert-and-return
         const response = await fetch('/api/teacher/exam-results', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             examId: selectedExamId,
             subjectId: selectedSubjectId,
+            classId: selectedClassId === 'all' ? null : selectedClassId,
             results: examResults
           })
         });
-
-        const data = await response.json();
-        
         if (!response.ok) {
-          // Improved error reporting
-          const errorMessage = data.details?.message || data.error || 'Failed to save exam results';
-          const errorDetails = data.details ? 
-            `Code: ${data.details.code || 'Unknown'}\nHint: ${data.details.hint || 'No additional info'}` :
-            'No additional details available';
-          
-          showToast(`Save failed: ${errorMessage}`, 'error');
-          console.error('Save error details:', data.details);
-          throw new Error(`${errorMessage}\n${errorDetails}`);
-        }
-
-        // SUCCESS: Use returned data immediately (no delay needed!)
-        const savedResults = data.results || [];
-        if (savedResults.length > 0) {
-          const byId = new Map<string, { mark: number | null; grade: string | null }>(
-            savedResults.map((r: any) => [String(r.student_id), { mark: r.mark, grade: r.grade }])
-          );
-          
-          // Atomic update with DB truth
-          const updatedRows = studentRows.map(row => {
-            const v = byId.get(row.id);
-            if (!v) return row;
-            return {
-              ...row,
-              mark: String(v.mark ?? ''),
-              grade: String(v.grade ?? ''),
-            };
-          });
-          
-          const updatedBaseline = initialRowsRef.current.map(base => {
-            const v = byId.get(base.id);
-            if (!v) return base;
-            return { 
-              ...base, 
-              mark: String(v.mark ?? ''),
-              grade: String(v.grade ?? '') 
-            };
-          });
-          
-          setStudentRows(updatedRows);
-          initialRowsRef.current = updatedBaseline;
+          throw new Error('Failed to save exam results');
         }
       }
+
+      // Update conduct if we have changes for this subject
+      const conductChanges = changedRows
+        .filter(r => !r.optedOut)
+        .map((r) => ({
+          studentId: r.id,
+          conduct: r.conduct
+        }));
+
+      if (conductChanges.length > 0) {
+        await fetch('/api/teacher/conduct-entries', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            examId: selectedExamId,
+            classId: selectedClassId === 'all' ? null : selectedClassId,
+            entries: conductChanges
+          })
+        });
+      }
+
+      // After saving, update initial rows baseline
+      initialRowsRef.current = studentRows.map((r) => ({ ...r, conduct: { ...r.conduct } }));
+      setUnsavedDataCache((prev) => {
+        const next = new Map(prev);
+        const cacheKey = `${selectedClassId}-${selectedSubjectId}-${selectedExamId}`;
+        next.set(cacheKey, studentRows.map((r) => ({ ...r, conduct: { ...r.conduct } })));
+        return next;
+      });
 
       showToast('Saved', 'success');
-      
-      // Update baseline with successfully saved changes
-      if (examResults.length > 0) {
-        const baseMap = new Map(initialRowsRef.current.map(r => [r.id, { ...r }]));
-        const markIds = new Set((examResults as any[]).map((r) => String(r.studentId)));
-        studentRows.forEach((r) => {
-          const base = baseMap.get(r.id);
-          if (!base) return;
-          if (markIds.has(r.id)) {
-            base.mark = r.mark;
-            base.grade = r.grade;
-            base.isAbsent = r.isAbsent;
-          }
-        });
-        initialRowsRef.current = Array.from(baseMap.values());
-      }
-
-      // Clear cache for current selection after successful save
-      const currentCacheKey = `${selectedClassId}-${selectedSubjectId}-${selectedExamId}`;
-      setUnsavedDataCache(prevCache => {
-        const newCache = new Map(prevCache);
-        newCache.delete(currentCacheKey);
-        return newCache;
-      });
-    } catch (e: any) {
-      console.error('Save error:', e);
-      
-      // Improved error reporting
-      const errorMessage = e?.message || 'Failed to save';
-      let displayMessage = errorMessage;
-      
-      // Handle specific error types with user-friendly messages
-      if (errorMessage.includes('duplicate key')) {
-        displayMessage = 'Duplicate record detected. Please refresh and try again.';
-      } else if (errorMessage.includes('constraint')) {
-        displayMessage = 'Database constraint violation. Please check your data.';
-      } else if (errorMessage.includes('network') || errorMessage.includes('fetch')) {
-        displayMessage = 'Network error. Please check your connection and try again.';
-      } else if (errorMessage.includes('unauthorized') || errorMessage.includes('forbidden')) {
-        displayMessage = 'You do not have permission to perform this action.';
-      }
-      
-      showToast(`Save failed: ${displayMessage}`, 'error');
-      
-      // Log detailed error for debugging
-      console.error('Detailed error info:', {
-        message: e?.message,
-        stack: e?.stack,
-        name: e?.name,
-        code: e?.code
-      });
+    } catch (error) {
+      console.error('Error saving exam data:', error);
+      showToast('Failed to save', 'error');
     } finally {
       setSaving(false);
     }
+  }, [selectedExamId, selectedSubjectId, selectedClassId, studentRows, showToast]);
+
+  // Handle selection changes with unsaved changes warning
+  const handleClassChange = async (newClassId: string) => {
+    if (hasUnsavedChanges()) {
+      await handleSaveAll();
+    }
+    setSelectedClassId(newClassId);
   };
+
+  const handleSubjectChange = async (newSubjectId: string) => {
+    if (hasUnsavedChanges()) {
+      await handleSaveAll();
+    }
+    setSelectedSubjectId(newSubjectId);
+  };
+
+  const handleExamChange = async (newExamId: string) => {
+    if (hasUnsavedChanges()) {
+      await handleSaveAll();
+    }
+    setSelectedExamId(newExamId);
+    // Do not auto-select a subject; keep it empty to avoid transient invalid states
+    setSelectedSubjectId('');
+    // Proactively set class to 'all' so teacher sees students immediately after choosing exam
+    if (!selectedClassId) setSelectedClassId('all');
+  };
+
+  // Autosave with debounce when there are changes and selections are valid
+  const autoSaveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(() => {
+    if (!selectedExamId || !selectedSubjectId || !selectedClassId) return;
+    if (saving) return;
+    if (!hasUnsavedChanges()) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      handleSaveAll();
+    }, 1200);
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [studentRows, selectedExamId, selectedSubjectId, selectedClassId, saving, handleSaveAll, hasUnsavedChanges]);
 
   // Section 3: Graph Data
   // Drawer panel state
-  const [panelStudent, setPanelStudent] = React.useState<any>(null);
+  const [panelStudent, setPanelStudent] = React.useState<StudentData | null>(null);
   const [panelClassOverallAvg, setPanelClassOverallAvg] = React.useState<number | null>(null);
 
   // Visible rows based on search (map indexes back to original array)
-  const visibleRows = React.useMemo(() => {
+  const visibleRows: StudentRowWithIndex[] = React.useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    let base = studentRows.map((r, idx) => ({ ...r, _idx: idx } as StudentRow & { _idx: number }));
+    let base: StudentRowWithIndex[] = studentRows.map((r, idx) => ({ ...r, _idx: idx }));
     if (q) {
       base = base.filter(r => (r.name || '').toLowerCase().includes(q));
     }
@@ -1253,7 +1203,7 @@ export default function TeacherExamDashboard() {
       base = base.filter(r => (missingByStudent.get(r.id)?.length || 0) > 0);
     }
     return base;
-  }, [studentRows, searchQuery, sortBy, aggregateByStudent, selectedSubjectId, showOnlyMissing, missingByStudent]);
+  }, [studentRows, searchQuery, sortBy, aggregateByStudent, selectedSubjectId, showOnlyMissing, missingByStudent, gradeSummaryMap]);
 
   const marksData = visibleRows.map((s) => ({ name: s.name, mark: parseFloat(s.mark) || 0 }));
   const avgConduct: Record<string, number> = {};
@@ -1560,19 +1510,12 @@ export default function TeacherExamDashboard() {
                 </thead>
                 <tbody>
                   {visibleRows.map((student, displayIdx) => {
-                    const idx = (student as any)._idx as number; // original index in studentRows
+                    const idx = student._idx; // original index in studentRows
                     const expanded = expandedRows.includes(idx);
                     // Calculate weighted average conduct score
                     const totalScore = conductCategories.reduce((sum, cat) => sum + (parseFloat(student.conduct[cat.key]) || 0), 0);
                     const totalMaxScore = conductCategories.reduce((sum, cat) => sum + cat.maxScore, 0);
                     const avgConduct = totalMaxScore > 0 ? (totalScore / totalMaxScore) * 100 : 0;
-                    const agg = aggregateByStudent.get(student.id);
-                    const getScoreColor = (score: number) => {
-                      if (score >= 90) return 'text-green-700';
-                      if (score >= 80) return 'text-blue-700';
-                      if (score >= 70) return 'text-yellow-600';
-                      return 'text-red-600';
-                    };
                     return (
                       <React.Fragment key={student.id}>
                         <tr className="border-b" onClick={async () => {
@@ -1592,14 +1535,31 @@ export default function TeacherExamDashboard() {
                               if (selectedClassId) params.append('classId', selectedClassId);
                               const res = await fetch(`/api/admin/exams?${params.toString()}`);
                               const json = await res.json();
-                              const list = Array.isArray(json.students) ? json.students : [];
-                              const me = list.find((s: any) => String(s.id) === String(student.id));
-                              const classAvg = list.length > 0 ? (list.reduce((a: number, s: any) => a + (Number(s?.overall?.average) || 0), 0) / list.length) : null;
+                              const list: Array<{ id: string; overall?: { average?: number; rank?: number; needsAttention?: boolean } }> =
+                                Array.isArray(json.students)
+                                  ? json.students.map((s: Record<string, unknown>) => ({
+                                      id: String(s.id),
+                                      overall: s.overall as { average?: number; rank?: number; needsAttention?: boolean } | undefined,
+                                    }))
+                                  : [];
+                              const me = list.find((s) => String(s.id) === String(student.id));
+                              const classAvg = list.length > 0 ? (list.reduce((a: number, s) => a + (Number(s?.overall?.average) || 0), 0) / list.length) : null;
                               if (me) {
-                                setPanelStudent((prev: any) => ({
-                                  ...(prev || {}),
-                                  overall: me.overall || { average: 0, rank: 0, needsAttention: false },
-                                }));
+                                setPanelStudent((prev) =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        overall: {
+                                          average: typeof me.overall?.average === "number" ? me.overall.average : prev.overall?.average ?? 0,
+                                          rank: typeof me.overall?.rank === "number" ? me.overall.rank : prev.overall?.rank ?? 0,
+                                          needsAttention:
+                                            typeof me.overall?.needsAttention === "boolean"
+                                              ? me.overall.needsAttention
+                                              : prev.overall?.needsAttention ?? false,
+                                        },
+                                      }
+                                    : prev
+                                );
                               }
                               setPanelClassOverallAvg(classAvg);
                             }
@@ -1803,3 +1763,5 @@ export default function TeacherExamDashboard() {
     </div>
   );
 }
+type StudentRosterItem = { id: string; name: string; class_id: string | null };
+type StudentRowWithIndex = StudentRow & { _idx: number };

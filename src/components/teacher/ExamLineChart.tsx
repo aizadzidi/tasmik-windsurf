@@ -11,7 +11,7 @@ export default function ExamLineChart({ students }: { students: Student[] }) {
     {
       id: "Mark",
       color: "hsl(210, 70%, 50%)",
-      data: students.map((s, i) => ({ x: s.name, y: s.mark })),
+      data: students.map((s, _idx) => ({ x: s.name, y: s.mark })),
     },
   ];
 

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 
 interface JuzTest {
@@ -44,14 +44,7 @@ export default function JuzTestHistoryModalViewOnly({
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Fetch tests when modal opens
-  useEffect(() => {
-    if (isOpen && studentId) {
-      fetchTests();
-    }
-  }, [isOpen, studentId]);
-
-  const fetchTests = async () => {
+  const fetchTests = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -78,7 +71,14 @@ export default function JuzTestHistoryModalViewOnly({
     } finally {
       setLoading(false);
     }
-  };
+  }, [studentId]);
+
+  // Fetch tests when modal opens
+  useEffect(() => {
+    if (isOpen && studentId) {
+      fetchTests();
+    }
+  }, [fetchTests, isOpen, studentId]);
 
   // Simple filter by search term
   const filteredTests = tests.filter(test => 

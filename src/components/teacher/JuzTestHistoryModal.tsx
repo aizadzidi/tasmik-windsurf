@@ -117,11 +117,6 @@ export default function JuzTestHistoryModal({
     }
   }, [fetchTests, isOpen, studentId]);
 
-  const calculateTotalPercentage = (tajweedScore: number, recitationScore: number): number => {
-    const total = tajweedScore + recitationScore;
-    return Math.round((total / 10) * 100);
-  };
-
   // Function to get question category configuration
   const getQuestionConfig = (isHizbTest: boolean = false) => {
     if (isHizbTest) {

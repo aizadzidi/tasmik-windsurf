@@ -1,16 +1,19 @@
 "use client";
 import React from 'react';
+import { JuzTestSession } from '@/types/juzTest';
 
 interface AdminScheduleTestModalProps {
   date: string; // YYYY-MM-DD
   onClose: () => void;
-  onScheduled?: (session: any) => void;
+  onScheduled?: (session: JuzTestSession) => void;
 }
 
 export default function AdminScheduleTestModal({ date, onClose, onScheduled }: AdminScheduleTestModalProps) {
+  type StudentSummary = { id: string; name: string };
+
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [students, setStudents] = React.useState<Array<{ id: string; name: string }>>([]);
+  const [students, setStudents] = React.useState<StudentSummary[]>([]);
   const [query, setQuery] = React.useState('');
   const [selectedId, setSelectedId] = React.useState<string>('');
   const [juzNumber, setJuzNumber] = React.useState<number | ''>('');
@@ -20,10 +23,14 @@ export default function AdminScheduleTestModal({ date, onClose, onScheduled }: A
     async function load() {
       try {
         const res = await fetch('/api/admin/students');
-        const list = await res.json();
-        setStudents(Array.isArray(list) ? list.map((s: any) => ({ id: s.id, name: s.name })) : []);
-      } catch (e: any) {
-        setError(e.message || 'Failed to load students');
+        const list: unknown = await res.json();
+        if (Array.isArray(list)) {
+          setStudents(list.map((s) => ({ id: String((s as Record<string, unknown>).id), name: String((s as Record<string, unknown>).name || '') })));
+        } else {
+          setStudents([]);
+        }
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : 'Failed to load students');
       }
     }
     load();
@@ -45,12 +52,12 @@ export default function AdminScheduleTestModal({ date, onClose, onScheduled }: A
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ student_id: selectedId, scheduled_date: date, juz_number: juzNumber || null, notes })
       });
-      const json = await res.json();
-      if (!res.ok || json.error) throw new Error(json.error || 'Failed to schedule');
+      const json: { session?: JuzTestSession; error?: string } = await res.json();
+      if (!res.ok || json.error || !json.session) throw new Error(json.error || 'Failed to schedule');
       onScheduled?.(json.session);
       onClose();
-    } catch (e: any) {
-      setError(e.message || 'Failed to schedule');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to schedule');
     } finally {
       setLoading(false);
     }

@@ -30,6 +30,8 @@ export interface PaymentBreakdownProps {
   merchantFeeCents: number;
   isSubmitting: boolean;
   onCheckout: () => void;
+  isContactComplete: boolean;
+  onRequestContactFocus: () => void;
   outstandingSelection?: OutstandingTarget | null;
   outstandingSelectionActive?: boolean;
 }

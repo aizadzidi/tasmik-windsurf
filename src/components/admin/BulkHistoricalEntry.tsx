@@ -44,14 +44,17 @@ export default function BulkHistoricalEntry() {
     try {
       const res = await fetch("/api/admin/students", { cache: "no-store" });
       if (!res.ok) {
-        const j = await res.json().catch(() => ({} as any));
-        throw new Error(j?.error || `HTTP ${res.status}`);
+        const j = await res.json().catch(() => ({} as Record<string, unknown>));
+        throw new Error((j?.error as string) || `HTTP ${res.status}`);
       }
-      const data = await res.json();
-      const mapped: Student[] = (Array.isArray(data) ? data : []).map((s: any) => ({ id: s.id, name: s.name }))
+      const data: unknown = await res.json();
+      const mapped: Student[] = (Array.isArray(data) ? data : []).map((s) => {
+        const row = s as { id: string | number; name?: string | null };
+        return { id: String(row.id), name: row.name || "Unnamed" };
+      });
       setStudents(mapped);
-    } catch (err: any) {
-      setError("Failed to fetch students: " + (err?.message || "Unknown error"));
+    } catch (err: unknown) {
+      setError("Failed to fetch students: " + ((err as Error)?.message || "Unknown error"));
     } finally {
       setLoading(false);
     }

@@ -5,6 +5,7 @@ import { X, FileText, Users, CheckSquare, ChevronDown, Calendar, Award } from 'l
 import { DateRangePicker } from "@/components/ui/date-picker";
 import { DateRange } from "react-day-picker";
 import { supabase } from '@/lib/supabaseClient';
+import type { ExamFormData } from './CreateExamModal';
 
 interface GradingSystem {
   id: string;
@@ -17,19 +18,19 @@ interface ExamData {
   id: string;
   name: string;
   type: string;
-  exam_start_date: string;
+  exam_start_date?: string;
   exam_end_date?: string;
   grading_system_id?: string;
   exam_classes?: Array<{
-    classes: { id: string; name: string };
-    conduct_weightage: number;
+    classes?: { id: string; name?: string };
+    conduct_weightage?: number;
   }>;
   exam_subjects?: Array<{
-    subjects: { id: string; name: string };
+    subjects?: { id: string; name?: string };
   }>;
   exam_class_subjects?: Array<{
-    classes: { id: string; name: string };
-    subjects: { id: string; name: string };
+    classes?: { id: string; name?: string };
+    subjects?: { id: string; name?: string };
   }>;
 }
 
@@ -40,17 +41,6 @@ interface EditExamModalProps {
   classes: Array<{ id: string; name: string }>;
   subjects: string[];
   exam: ExamData | null;
-}
-
-interface ExamFormData {
-  title: string;
-  subjects: string[];
-  classIds: string[];
-  dateRange: DateRange | undefined;
-  conductWeightages: { [classId: string]: number };
-  gradingSystemId: string;
-  excludedStudentIdsByClass: { [classId: string]: string[] };
-  subjectConfigByClass: { [classId: string]: string[] };
 }
 
 type ExamFormErrors = Partial<Record<keyof ExamFormData, string>>;
@@ -103,11 +93,16 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
   // Initialize form data when exam changes
   useEffect(() => {
     if (exam && isOpen) {
-      const examClassIds = exam.exam_classes?.map(ec => ec.classes.id) || [];
-      const examSubjects = exam.exam_subjects?.map(es => es.subjects.name) || [];
+      const examClassIds = (exam.exam_classes ?? [])
+        .map(ec => ec.classes?.id)
+        .filter((id): id is string => Boolean(id));
+      const examSubjects = (exam.exam_subjects ?? [])
+        .map(es => es.subjects?.name)
+        .filter((name): name is string => Boolean(name));
       const conductWeightages: { [classId: string]: number } = {};
       
       exam.exam_classes?.forEach(ec => {
+        if (!ec.classes?.id) return;
         conductWeightages[ec.classes.id] = ec.conduct_weightage || 0;
       });
 
@@ -152,16 +147,15 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
           .eq('exam_id', exam.id);
         if (error) {
           // Gracefully ignore if table doesn't exist yet (migration not run)
-          const msg = String((error as any)?.message || '')
-            .toLowerCase();
-          const code = (error as any)?.code;
-          if (code === '42P01' || msg.includes('relation') && msg.includes('does not exist')) {
+          const msg = String(error.message || '').toLowerCase();
+          const code = (error as { code?: string }).code;
+          if (code === '42P01' || (msg.includes('relation') && msg.includes('does not exist'))) {
             return;
           }
           throw error;
         }
         const grouped: Record<string, string[]> = {};
-        (data || []).forEach((row: any) => {
+        (data || []).forEach((row) => {
           const cid = String(row.class_id);
           const sid = String(row.student_id);
           if (!grouped[cid]) grouped[cid] = [];
@@ -455,9 +449,9 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
     }
 
     // Validate per-class subject configuration: at least one subject per selected class
-    const emptyConfigs = formData.classIds.filter((cid) => !(Array.isArray((formData as any).subjectConfigByClass?.[cid]) && (formData as any).subjectConfigByClass?.[cid].length > 0));
+    const emptyConfigs = formData.classIds.filter((cid) => !(Array.isArray(formData.subjectConfigByClass?.[cid]) && formData.subjectConfigByClass?.[cid].length > 0));
     if (emptyConfigs.length > 0) {
-      (newErrors as any).subjectConfigByClass = 'Each selected class must have at least one subject chosen in "Subjects per class"';
+      newErrors.subjectConfigByClass = 'Each selected class must have at least one subject chosen in "Subjects per class"';
     }
 
     setErrors(newErrors);
@@ -843,72 +837,6 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
               <p className="text-sm text-gray-600">Choose which of the selected subjects apply to each selected class.</p>
               {formData.classIds.map((classId) => {
                 const classData = classes.find(c => c.id === classId);
-                const selected = new Set((formData as any).subjectConfigByClass?.[classId] || []);
-                const allSelected = formData.subjects.length > 0 && formData.subjects.every(s => selected.has(s));
-                return (
-                  <div key={`subjcfg-${classId}`} className="border border-gray-200 rounded-lg">
-                    <div className="flex items-center justify-between p-3 bg-gray-50 rounded-t-lg">
-                      <div className="font-semibold text-gray-700">{classData?.name}</div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setFormData(prev => ({
-                            ...prev,
-                            subjectConfigByClass: {
-                              ...(prev as any).subjectConfigByClass,
-                              [classId]: allSelected ? [] : [...prev.subjects]
-                            }
-                          } as any));
-                        }}
-                        className="text-sm text-blue-600 hover:text-blue-700"
-                      >
-                        {allSelected ? 'Clear All' : 'Select All'}
-                      </button>
-                    </div>
-                    <div className="max-h-44 overflow-y-auto p-2">
-                      {formData.subjects.map((subj) => (
-                        <label key={`${classId}-${subj}`} className="flex items-center gap-3 px-2 py-1 hover:bg-gray-50 rounded cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={selected.has(subj)}
-                            onChange={(e) => {
-                              setFormData(prev => {
-                                const current = new Set((prev as any).subjectConfigByClass?.[classId] || []);
-                                if (e.target.checked) current.add(subj); else current.delete(subj);
-                                return {
-                                  ...prev,
-                                  subjectConfigByClass: {
-                                    ...(prev as any).subjectConfigByClass,
-                                    [classId]: Array.from(current)
-                                  }
-                                } as any;
-                              });
-                            }}
-                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                          />
-                          <span className="text-sm text-gray-800">{subj}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-              {(errors as any).subjectConfigByClass && (
-                <p className="text-red-500 text-xs">{(errors as any).subjectConfigByClass}</p>
-              )}
-            </div>
-          )}
-
-          {/* Subject configuration per class */}
-          {formData.classIds.length > 0 && formData.subjects.length > 0 && (
-            <div className="space-y-4">
-              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                <CheckSquare className="w-5 h-5" />
-                Subjects per class
-              </h3>
-              <p className="text-sm text-gray-600">Choose which of the selected subjects apply to each selected class.</p>
-              {formData.classIds.map((classId) => {
-                const classData = classes.find(c => c.id === classId);
                 const selected = new Set(formData.subjectConfigByClass[classId] || []);
                 const allSelected = formData.subjects.length > 0 && formData.subjects.every(s => selected.has(s));
                 return (
@@ -959,6 +887,9 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
                   </div>
                 );
               })}
+              {errors.subjectConfigByClass && (
+                <p className="text-red-500 text-xs">{errors.subjectConfigByClass}</p>
+              )}
             </div>
           )}
 

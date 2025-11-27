@@ -7,13 +7,6 @@ import { DateRange } from "react-day-picker";
 import { supabase } from '@/lib/supabaseClient';
 import { useGradingSystems } from '@/hooks/useGradingSystems';
 
-interface GradingSystem {
-  id: string;
-  name: string;
-  description: string | null;
-  is_default: boolean;
-}
-
 interface CreateExamModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -22,7 +15,7 @@ interface CreateExamModalProps {
   subjects: string[];
 }
 
-interface ExamFormData {
+export interface ExamFormData {
   title: string;
   subjects: string[];
   classIds: string[];

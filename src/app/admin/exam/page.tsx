@@ -4,7 +4,7 @@ import AdminNavbar from "@/components/admin/AdminNavbar";
 import HeaderToolbar from "@/components/admin/exam/HeaderToolbar";
 import StudentTable, { StudentData } from "@/components/admin/exam/StudentTable";
 import StudentDetailsPanel from "@/components/exam/StudentDetailsPanelShared";
-import CreateExamModal from "@/components/admin/exam/CreateExamModal";
+import CreateExamModal, { ExamFormData } from "@/components/admin/exam/CreateExamModal";
 import EditExamModal from "@/components/admin/exam/EditExamModal";
 import ManageExamsModal from "@/components/admin/exam/ManageExamsModal";
 import ManageSubjectsModal from "@/components/admin/exam/ManageSubjectsModal";
@@ -28,8 +28,9 @@ interface ExamItem {
   name: string;
   type: string;
   created_at?: string;
-  exam_classes?: { conduct_weightage: number; classes: { id: string; name: string } }[];
-  exam_subjects?: { subjects: { id: string; name: string } }[];
+  exam_classes?: { conduct_weightage?: number; classes?: { id: string; name?: string } }[];
+  exam_subjects?: { subjects?: { id: string; name?: string } }[];
+  exam_class_subjects?: Array<{ classes?: { id: string; name?: string }; subjects?: { id: string; name?: string } }>;
 }
 
 interface ExamMetadata {
@@ -59,7 +60,7 @@ export default function AdminExamPage() {
   const [isManageSubjectsModalOpen, setIsManageSubjectsModalOpen] = useState(false);
   const [isManageCriteriasModalOpen, setIsManageCriteriasModalOpen] = useState(false);
   const [isManageGradingModalOpen, setIsManageGradingModalOpen] = useState(false);
-  const [selectedExamForEdit, setSelectedExamForEdit] = useState<any>(null);
+  const [selectedExamForEdit, setSelectedExamForEdit] = useState<ExamItem | null>(null);
   
   // Filters
   const [selectedClass, setSelectedClass] = useState('');
@@ -78,11 +79,11 @@ export default function AdminExamPage() {
         // Safety checks before setting state
         setClasses(Array.isArray(data.classes) ? data.classes : []);
         setExams(Array.isArray(data.exams) ? data.exams : []);
-        setSubjects(Array.isArray(data.subjects) ? data.subjects.map((s: any) => s?.name || '') : []);
+        setSubjects(Array.isArray(data.subjects) ? data.subjects.map((s) => (typeof s?.name === 'string' ? s.name : '')).filter(Boolean) : []);
         
         // Auto-select the first exam if available
-        if (Array.isArray(data.exams) && data.exams.length > 0 && (data.exams as any)[0]?.id) {
-          setSelectedExam((data.exams as any)[0].id);
+        if (Array.isArray(data.exams) && data.exams.length > 0 && data.exams[0]?.id) {
+          setSelectedExam(data.exams[0].id);
         }
       }
     } catch (error) {
@@ -118,7 +119,7 @@ export default function AdminExamPage() {
             const excludedIds: string[] = Array.isArray(exclJson.excludedStudentIds) ? exclJson.excludedStudentIds : [];
             if (excludedIds.length > 0) {
               const excludedSet = new Set(excludedIds.map(String));
-              studentsList = studentsList.filter((s: any) => !excludedSet.has(String(s.id)));
+              studentsList = studentsList.filter((s) => s && !excludedSet.has(String(s.id)));
             }
           } catch (e) {
             console.error('Client-side exclusion fetch failed', e);
@@ -162,7 +163,7 @@ export default function AdminExamPage() {
       setLoading(false);
       setStudents([]);
     }
-  }, [selectedExam, selectedClass, exams.length, fetchExamData]);
+  }, [selectedExam, selectedClass, exams.length, exams, fetchExamData]);
 
   // Optimized class name lookup with safety check
   const selectedClassName = useMemo(() => {
@@ -190,8 +191,8 @@ export default function AdminExamPage() {
     if (!selectedExam) return subjects;
     const ex = exams.find(e => e && e.id === selectedExam);
     // If per-class mapping exists
-    const ecs = (ex as any)?.exam_class_subjects as Array<{ classes?: { id: string }, subjects?: { id: string, name: string } }> | undefined;
-    if (Array.isArray(ecs) && ecs.length > 0) {
+    const ecs = Array.isArray(ex?.exam_class_subjects) ? ex.exam_class_subjects : undefined;
+    if (ecs && ecs.length > 0) {
       if (selectedClass) {
         const names = ecs
           .filter(row => row?.classes?.id === selectedClass)
@@ -203,7 +204,9 @@ export default function AdminExamPage() {
         if (names.length > 0) return names;
       }
     }
-    const list = (ex as any)?.exam_subjects?.map((es: any) => es?.subjects?.name).filter((n: any): n is string => typeof n === 'string' && n.length > 0) || [];
+    const list = (ex?.exam_subjects || [])
+      .map((es) => es?.subjects?.name)
+      .filter((n): n is string => typeof n === 'string' && n.length > 0);
     return list.length ? list : subjects;
   }, [selectedExam, selectedClass, exams, subjects]);
 
@@ -218,7 +221,7 @@ export default function AdminExamPage() {
     if (selectedSubject && !subjectsForUI.includes(selectedSubject)) {
       setSelectedSubject('');
     }
-  }, [selectedExam, classesForUI, subjectsForUI]);
+  }, [selectedExam, classesForUI, subjectsForUI, selectedClass, selectedSubject]);
   
   // Filter students based on current filters - optimized with safety checks
   const filteredStudents = useMemo(() => {
@@ -294,7 +297,7 @@ export default function AdminExamPage() {
   }, [students, selectedStudent, selectedClassName]);
 
   // Handler functions
-  const handleCreateExam = async (examData: any) => {
+  const handleCreateExam = async (examData: ExamFormData) => {
     try {
       // Convert DateRange to the format expected by the backend
       const processedExamData = {
@@ -338,7 +341,7 @@ export default function AdminExamPage() {
     setSelectedStudent(null);
   };
 
-  const handleEditExam = async (examId: string, examData: any) => {
+  const handleEditExam = async (examId: string, examData: ExamFormData) => {
     try {
       // Convert DateRange to the format expected by the backend
       const processedExamData = {
@@ -432,7 +435,7 @@ export default function AdminExamPage() {
     }
   };
 
-  const openEditModal = (exam: any) => {
+  const openEditModal = (exam: ExamItem) => {
     setSelectedExamForEdit(exam);
     setIsEditModalOpen(true);
   };

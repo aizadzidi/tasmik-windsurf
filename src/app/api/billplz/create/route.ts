@@ -128,6 +128,13 @@ export async function POST(request: NextRequest) {
       };
     });
 
+    const hasMissingMonths = normalizedItems.some(
+      (item) => item.months && item.months.length === 0
+    );
+    if (hasMissingMonths) {
+      return NextResponse.json({ error: 'Set at least one month for each monthly fee before paying' }, { status: 400 });
+    }
+
     const merchantFee =
       typeof body.merchantFeeCents === 'number' ? body.merchantFeeCents : MERCHANT_FEE_CENTS;
     const preview = buildPaymentPreview(normalizedItems, merchantFee);

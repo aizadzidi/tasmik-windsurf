@@ -141,7 +141,7 @@ export default function TeacherAttendancePage() {
   const [fetchError, setFetchError] = React.useState<string | null>(null);
   const [holidays, setHolidays] = React.useState<SchoolHoliday[]>([]);
   const [holidaysError, setHolidaysError] = React.useState<string | null>(null);
-  const [loadingHolidays, setLoadingHolidays] = React.useState(true);
+  const [, setLoadingHolidays] = React.useState(true);
 
   const selectedClass = classes.find((item) => item.id === selectedClassId);
   const formattedSelectedDate = formatDisplayDate(selectedDate);

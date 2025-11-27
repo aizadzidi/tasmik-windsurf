@@ -22,7 +22,7 @@ function formatDateTime(date: Date) {
   );
 }
 
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
 // Next 180 days
     const from = new Date();

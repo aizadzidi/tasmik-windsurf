@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from 'react';
+import Image from 'next/image';
 import { motion } from 'framer-motion';
 import {
   useReactTable,
@@ -146,10 +147,12 @@ export default function StudentTable({ data, onRowClick, loading, selectedSubjec
         <div className="flex items-center gap-3 min-w-0">
           <div className="flex-shrink-0">
             {row.original.avatar ? (
-              <img 
-                src={row.original.avatar} 
+              <Image
+                src={row.original.avatar}
                 alt={row.original.name}
-                className="w-9 h-9 rounded-full ring-2 ring-white shadow-sm"
+                width={36}
+                height={36}
+                className="w-9 h-9 rounded-full ring-2 ring-white shadow-sm object-cover"
               />
             ) : (
               <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center text-white text-sm font-semibold shadow-sm">

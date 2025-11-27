@@ -1,7 +1,11 @@
 "use client";
 
+import type { ComponentProps } from 'react';
 import StudentDetailsPanelShared from '@/components/exam/StudentDetailsPanelShared';
 
-export default function StudentDetailsPanelAdmin(props: any) {
+type SharedProps = ComponentProps<typeof StudentDetailsPanelShared>;
+type StudentDetailsPanelAdminProps = Omit<SharedProps, 'mode'>;
+
+export default function StudentDetailsPanelAdmin(props: StudentDetailsPanelAdminProps) {
   return <StudentDetailsPanelShared {...props} mode="admin" />;
 }

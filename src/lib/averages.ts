@@ -7,7 +7,13 @@ export type AveragesPayload = {
   finalWeighted: number | null;         // weighted final for the current student
 };
 
-type RpcResponse<T> = { data: T | null; error: any | null };
+type RpcResponse<T> = { data: T | null; error: any };
+type RpcArgs = Record<string, unknown>;
+
+type SubjectAverageRow = {
+  subject_id: string | null;
+  avg_mark: number | string | null;
+};
 
 export function toWeightFraction(w: number | null | undefined) {
   // Accepts 0..1 or 0..100; auto-normalize to 0..1
@@ -34,14 +40,14 @@ export async function fetchAllAverages(
     primaryArgs: Record<string, unknown>,
     secondaryArgs: Record<string, unknown>
   ): Promise<RpcResponse<T>> {
-    const r1 = await supabase.rpc(fn, primaryArgs);
-    if (!r1.error) return r1 as unknown as RpcResponse<T>;
-    const r2 = await supabase.rpc(fn, secondaryArgs);
-    return r2 as unknown as RpcResponse<T>;
+    const r1 = await supabase.rpc(fn, primaryArgs) as RpcResponse<T>;
+    if (!r1.error) return r1;
+    const r2 = await supabase.rpc(fn, secondaryArgs) as RpcResponse<T>;
+    return r2;
   }
 
-  const [subjRes, classRes, stuRes] = await Promise.all([
-    rpcWithFallback<any[]>(
+  const [subjRes, classRes, stuRes] = (await Promise.all([
+    rpcWithFallback<SubjectAverageRow[]>(
       'get_subject_class_averages',
       { exam_id: examId, class_id: classId, allowed_subject_ids: allowed },
       { exam: examId, class: classId, allowed_subject_ids: allowed }
@@ -56,11 +62,11 @@ export async function fetchAllAverages(
       { exam_id: examId, student_id: studentId, w_conduct: wConduct, allowed_subject_ids: allowed },
       { exam: examId, stu: studentId, w_conduct: wConduct, allowed_subject_ids: allowed }
     ),
-  ]);
+  ])) as [RpcResponse<SubjectAverageRow[]>, RpcResponse<number>, RpcResponse<number>];
 
   const subjectAvg: Record<string, number> = {};
   if (!subjRes.error) {
-    for (const row of (subjRes.data as any[]) ?? []) {
+    for (const row of subjRes.data ?? []) {
       if (row?.subject_id && row?.avg_mark != null) subjectAvg[row.subject_id] = Number(row.avg_mark);
     }
   } else {
@@ -71,7 +77,7 @@ export async function fetchAllAverages(
   }
 
   const classAvgWeighted = !classRes.error
-    ? (classRes.data == null ? null : Number(classRes.data as any))
+    ? (classRes.data == null ? null : Number(classRes.data))
     : null;
 
   if (classRes.error) {
@@ -82,7 +88,7 @@ export async function fetchAllAverages(
   }
 
   const finalWeighted = !stuRes.error
-    ? (stuRes.data == null ? null : Number(stuRes.data as any))
+    ? (stuRes.data == null ? null : Number(stuRes.data))
     : null;
 
   if (stuRes.error) {

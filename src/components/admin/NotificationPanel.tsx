@@ -33,7 +33,7 @@ export default function NotificationPanel({ isVisible, onClose }: NotificationPa
         if (result.error) setError(result.error);
         else setNotifications(result.notifications);
       }
-    } catch (e: any) {
+    } catch {
       const result = await notificationService.getNotificationsForAdmin();
       if (result.error) setError(result.error);
       else setNotifications(result.notifications);

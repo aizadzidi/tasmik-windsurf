@@ -1,6 +1,36 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { rpcGetConductSummary } from '@/data/conduct';
 
+type ExamClass = {
+  conduct_weightage?: number | null;
+  classes?: { id: string | number } | null;
+};
+
+type ExamClassSubject = {
+  classes?: { id: string | number } | null;
+  subjects?: { id: string | number } | null;
+};
+
+type ExamMeta = {
+  id: string | number;
+  exam_classes?: ExamClass[];
+  exam_class_subjects?: ExamClassSubject[];
+};
+
+type GradeSummaryRow = {
+  average?: number | string | null;
+  academic_avg?: number | string | null;
+  avg_mark?: number | string | null;
+  avg?: number | string | null;
+};
+
+type ExamResultRow = {
+  subject_id: string | number | null;
+  mark: number | null;
+  final_score: number | null;
+  grade: string | null;
+};
+
 export function computeFinalMark(
   academicAvg: number | null,
   conductAvg: number | null,
@@ -38,12 +68,11 @@ async function fetchConductWeightageFromMeta(examId: string, allowedSubjectIds: 
   try {
     const res = await fetch('/api/admin/exam-metadata');
     const meta = await res.json();
-    const exam = (meta?.exams || []).find((e: any) => String(e?.id) === String(examId));
+    const exams = Array.isArray(meta?.exams) ? (meta.exams as ExamMeta[]) : [];
+    const exam = exams.find((item) => String(item?.id) === String(examId));
     if (!exam) return 0;
 
-    const examClasses: Array<{ conduct_weightage?: number; classes?: { id: string } }> = Array.isArray(exam?.exam_classes)
-      ? exam.exam_classes
-      : [];
+    const examClasses: ExamClass[] = Array.isArray(exam?.exam_classes) ? exam.exam_classes : [];
 
     // If only a single class has a weight, use it directly
     if (examClasses.length === 1) {
@@ -52,9 +81,7 @@ async function fetchConductWeightageFromMeta(examId: string, allowedSubjectIds: 
     }
 
     // Try to infer class from exam_class_subjects mapping
-    const pairs: Array<{ classes?: { id: string }, subjects?: { id: string } }> = Array.isArray(exam?.exam_class_subjects)
-      ? exam.exam_class_subjects
-      : [];
+    const pairs: ExamClassSubject[] = Array.isArray(exam?.exam_class_subjects) ? exam.exam_class_subjects : [];
 
     if (pairs.length > 0 && Array.isArray(allowedSubjectIds) && allowedSubjectIds.length > 0) {
       // Build class -> set(subjectIds)
@@ -76,7 +103,7 @@ async function fetchConductWeightageFromMeta(examId: string, allowedSubjectIds: 
 
       // If exactly one class matches, use its weight
       if (matches.length === 1) {
-        const found = examClasses.find((ec: any) => String(ec?.classes?.id) === String(matches[0]));
+        const found = examClasses.find((ec) => String(ec?.classes?.id) === String(matches[0]));
         if (found) {
           const w = Number(found?.conduct_weightage ?? 0);
           return Number.isFinite(w) ? w : 0;
@@ -86,8 +113,8 @@ async function fetchConductWeightageFromMeta(examId: string, allowedSubjectIds: 
 
     // Fallback: use 0 if we cannot uniquely determine
     return 0;
-  } catch (e) {
-    console.warn('Failed to fetch conduct weightage from metadata', e);
+  } catch (err) {
+    console.warn('Failed to fetch conduct weightage from metadata', err);
     return 0;
   }
 }
@@ -108,19 +135,22 @@ export async function fetchSummaryForFinal({
   try {
     // Try RPC that may expose an academic average (if available in your schema)
     // Note: Parameters can vary; we intentionally keep a conservative call.
-    const r = await supabase.rpc('get_grade_summary', { p_exam_id: examId, p_student_id: studentId });
+    const r = await supabase.rpc('get_grade_summary', { p_exam_id: examId, p_student_id: studentId }) as {
+      data: GradeSummaryRow[] | null;
+      error: any;
+    };
     if (!r.error && Array.isArray(r.data) && r.data.length > 0) {
       // Look for a numeric average field if present
-      const row0 = r.data[0] as any;
-      const fromKnownFields = [row0.average, row0.academic_avg, row0.avg_mark, row0.avg]
-        .map((x: unknown) => (typeof x === 'number' ? x : Number(x)))
-        .find((x: number) => Number.isFinite(x));
-      if (Number.isFinite(fromKnownFields)) {
+      const row0 = r.data[0];
+      const fromKnownFields = [row0?.average, row0?.academic_avg, row0?.avg_mark, row0?.avg]
+        .map((x) => (typeof x === 'number' ? x : Number(x)))
+        .find((x) => Number.isFinite(x));
+      if (fromKnownFields != null && Number.isFinite(fromKnownFields)) {
         academicAvg = Number(fromKnownFields);
       }
     }
-  } catch (e) {
-    // Non-fatal; fallback below
+  } catch (_err) {
+    console.warn('get_grade_summary RPC failed, falling back to exam_results', _err);
   }
 
   if (academicAvg == null) {
@@ -134,18 +164,23 @@ export async function fetchSummaryForFinal({
       if (!error && Array.isArray(data)) {
         const allowed = new Set((allowedSubjectIds || []).map(String));
         const nums: number[] = [];
-        for (const r of data) {
-          const sid = r?.subject_id ? String(r.subject_id) : null;
+        for (const row of data as ExamResultRow[]) {
+          const sid = row?.subject_id ? String(row.subject_id) : null;
           if (!sid || (allowed.size > 0 && !allowed.has(sid))) continue;
-          const grade = String(r?.grade || '').toUpperCase();
+          const grade = String(row?.grade || '').toUpperCase();
           if (grade === 'TH') continue; // Absent
-          const candidate = typeof r?.final_score === 'number' ? r.final_score : (typeof r?.mark === 'number' ? r.mark : Number(r?.final_score ?? r?.mark));
+          const candidate =
+            typeof row?.final_score === 'number'
+              ? row.final_score
+              : typeof row?.mark === 'number'
+                ? row.mark
+                : Number(row?.final_score ?? row?.mark);
           if (Number.isFinite(candidate)) nums.push(Number(candidate));
         }
         academicAvg = nums.length > 0 ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
       }
-    } catch (e) {
-      // leave as null
+    } catch (_err) {
+      console.warn('exam_results fetch failed while deriving academicAvg', _err);
     }
   }
 
@@ -164,8 +199,8 @@ export async function fetchSummaryForFinal({
         summary.leadership,
       ]);
     }
-  } catch (e) {
-    // leave as null
+  } catch (err) {
+    console.warn('rpcGetConductSummary failed while deriving conductAvg', err);
   }
 
   // 3) Weightage (conduct weight) from exam metadata or configuration (normalize to 0..1)

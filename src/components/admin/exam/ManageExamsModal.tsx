@@ -7,9 +7,9 @@ interface ExamItem {
   id: string;
   name: string;
   type: string;
-  exam_classes?: { conduct_weightage: number; classes?: { id: string; name: string } }[];
-  exam_subjects?: { subjects?: { id: string; name: string } }[];
-  exam_class_subjects?: { classes?: { id: string; name: string }; subjects?: { id: string; name: string } }[];
+  exam_classes?: { conduct_weightage?: number; classes?: { id: string; name?: string } }[];
+  exam_subjects?: { subjects?: { id: string; name?: string } }[];
+  exam_class_subjects?: { classes?: { id: string; name?: string }; subjects?: { id: string; name?: string } }[];
   released?: boolean;
 }
 

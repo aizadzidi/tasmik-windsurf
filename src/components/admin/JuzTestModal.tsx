@@ -114,7 +114,7 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
     });
     
     return scores;
-  }, [formData.test_hizb, getQuestionConfig]);
+  }, [getQuestionConfig]);
 
   const [tajweedScore, setTajweedScore] = useState(0);
   const [recitationScore, setRecitationScore] = useState(0);

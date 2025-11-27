@@ -105,8 +105,8 @@ export async function POST(request: Request) {
     let body: CreateExamData;
     try {
       body = JSON.parse(raw);
-    } catch (e) {
-      console.error('Invalid JSON in exam creation request:', raw?.slice(0, 500));
+    } catch (err) {
+      console.error('Invalid JSON in exam creation request:', raw?.slice(0, 500), err);
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     }
 
@@ -315,8 +315,8 @@ export async function PUT(request: Request) {
     let body: CreateExamData;
     try {
       body = JSON.parse(raw);
-    } catch (e) {
-      console.error('Invalid JSON in exam update request:', raw?.slice(0, 500));
+    } catch (err) {
+      console.error('Invalid JSON in exam update request:', raw?.slice(0, 500), err);
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     }
     const { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId, excludedStudentIdsByClass, subjectConfigByClass } = body;

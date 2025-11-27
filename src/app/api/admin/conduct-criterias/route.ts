@@ -150,7 +150,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     // Check if criteria is being used in any conduct entries
-    const { data: conductEntries, error: checkError } = await supabase
+    const { data: _conductEntries, error: checkError } = await supabase
       .from('conduct_entries')
       .select('id')
       .limit(1);

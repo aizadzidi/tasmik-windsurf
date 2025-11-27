@@ -26,6 +26,7 @@ import { MERCHANT_FEE_CENTS, buildPaymentPreview } from "@/lib/payments/pricingU
 import type { PaymentCartItem } from "@/types/payments";
 import { Input } from "@/components/ui/Input";
 import { Card, CardContent } from "@/components/ui/Card";
+import { CheckCircle2 } from "lucide-react";
 
 interface RawAssignment extends ChildFeeAssignment {
   fee?: FeeCatalogItem;
@@ -134,7 +135,11 @@ export default function ParentPaymentsPage() {
   const [selections, setSelections] = useState<Record<string, FeeSelectionState>>({});
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [contactSaveStatus, setContactSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [contactAttention, setContactAttention] = useState(false);
   const paymentSectionRef = useRef<HTMLDivElement | null>(null);
+  const contactSectionRef = useRef<HTMLLabelElement | null>(null);
+  const phoneInputRef = useRef<HTMLInputElement | null>(null);
   const [outstandingLedger, setOutstandingLedger] = useState<ParentOutstandingBreakdown | null>(null);
   const [outstandingLedgerLoading, setOutstandingLedgerLoading] = useState(false);
   const [outstandingSelection, setOutstandingSelection] = useState<OutstandingTarget | null>(null);
@@ -148,11 +153,52 @@ export default function ParentPaymentsPage() {
   type TabId = (typeof tabs)[number]["id"];
   const [activeTab, setActiveTab] = useState<TabId>("payment");
 
-  const monthOptions = useMemo(() => buildMonthOptions(8), []);
-  const monthFallback = useMemo(
-    () => (monthOptions[0]?.key ? [monthOptions[0].key] : []),
-    [monthOptions]
-  );
+  const monthOptions = useMemo(() => {
+    const base = buildMonthOptions(8);
+    if (outstandingSelection?.monthKey && !base.some(opt => opt.key === outstandingSelection.monthKey)) {
+      const label = formatMonthLabel(outstandingSelection.monthKey) || outstandingSelection.monthKey;
+      const injected = { key: outstandingSelection.monthKey, label };
+      return [...base, injected].sort((a, b) => a.key.localeCompare(b.key));
+    }
+    return base;
+  }, [outstandingSelection?.monthKey]);
+
+  const isContactComplete = Boolean(contactInputs.email && contactInputs.phone);
+
+  // Auto-save contact info to Supabase auth metadata so it persists across sessions
+  useEffect(() => {
+    if (!parentId) return;
+    const hasSomeContact = Boolean(contactInputs.email || contactInputs.phone || contactInputs.name);
+    if (!hasSomeContact) return;
+    const timer = setTimeout(async () => {
+      try {
+        setContactSaveStatus("saving");
+        const { error: updateError } = await supabase.auth.updateUser({
+          data: {
+            name: contactInputs.name,
+            email: contactInputs.email,
+            phone: contactInputs.phone
+          }
+        });
+        if (updateError) throw updateError;
+        setContactSaveStatus("saved");
+        setTimeout(() => setContactSaveStatus("idle"), 1500);
+      } catch (err) {
+        console.error("Failed to save contact info", err);
+        setContactSaveStatus("error");
+      }
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [contactInputs, parentId]);
+
+  const focusContactSection = useCallback(() => {
+    contactSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    requestAnimationFrame(() => {
+      phoneInputRef.current?.focus();
+      setContactAttention(true);
+      setTimeout(() => setContactAttention(false), 900);
+    });
+  }, []);
 
   const registerChildRef = useCallback((childId: string, node: HTMLDivElement | null) => {
     childCardRefs.current[childId] = node;
@@ -202,9 +248,10 @@ export default function ParentPaymentsPage() {
         return;
       }
       setParentId(data.user.id);
+      const meta = data.user.user_metadata as { name?: string; phone?: string } | null | undefined;
       setParentProfile({
-        name: (data.user.user_metadata as any)?.name || data.user.email?.split("@")[0],
-        phone: (data.user.user_metadata as any)?.phone || "",
+        name: meta?.name || data.user.email?.split("@")[0],
+        phone: meta?.phone || "",
         email: data.user.email
       });
     }
@@ -338,9 +385,9 @@ export default function ParentPaymentsPage() {
       setAssignments(assignmentsWithCustomAmounts);
       setPayments((paymentRows ?? []) as PaymentWithItems[]);
       await refreshOutstandingLedger(parentId);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Failed to load payments data", err);
-      setError(err.message ?? "Failed to load payment data");
+      setError(err instanceof Error ? err.message : "Failed to load payment data");
     } finally {
       setLoading(false);
     }
@@ -364,10 +411,7 @@ export default function ParentPaymentsPage() {
       assignments.forEach(assignment => {
         const key = assignment.assignmentKey ?? assignment.id ?? `${assignment.child_id}_${assignment.fee_id}`;
         if (!next[key]) {
-          const months =
-            assignment.fee?.billing_cycle === "monthly"
-              ? assignment.effective_months?.slice(0, 3) ?? monthFallback
-              : [];
+          const months = assignment.fee?.billing_cycle === "monthly" ? [] : [];
           next[key] = { include: false, months, quantity: 1 };
         }
       });
@@ -378,7 +422,7 @@ export default function ParentPaymentsPage() {
       });
       return next;
     });
-  }, [assignments, monthFallback]);
+  }, [assignments]);
 
   const childLookup = useMemo(
     () => Object.fromEntries(children.map(child => [child.id, child.name])),
@@ -481,11 +525,11 @@ export default function ParentPaymentsPage() {
 
       const months =
         item.billingCycle === "monthly"
-          ? (selection.months.length ? selection.months : monthFallback)
+          ? selection.months
           : [];
       const quantity =
         item.billingCycle === "monthly"
-          ? Math.max(1, months.length || 1)
+          ? Math.max(0, months.length)
           : Math.max(1, selection.quantity || 1);
       const subtotal = item.amountCents * quantity;
 
@@ -502,7 +546,7 @@ export default function ParentPaymentsPage() {
         }
       ];
     });
-  }, [familyFeeItems, selections, monthFallback]);
+  }, [familyFeeItems, selections]);
 
   const applyOutstandingSelection = useCallback(
     (target: OutstandingTarget) => {
@@ -566,8 +610,13 @@ export default function ParentPaymentsPage() {
       setError("Select at least one fee.");
       return;
     }
+    if (cartItems.some(item => !item.months || item.months.length === 0)) {
+      setError("Sila pilih bulan yuran sebelum meneruskan pembayaran.");
+      return;
+    }
     if (!parentProfile.email || !parentProfile.phone) {
       setError("Add your email and phone number to your profile before paying.");
+      focusContactSection();
       return;
     }
     setSubmitting(true);
@@ -596,13 +645,13 @@ export default function ParentPaymentsPage() {
 
       const payload = await response.json();
       window.location.href = payload.billUrl;
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("checkout error", err);
-      setError(err.message ?? "Failed to continue with the payment");
+      setError(err instanceof Error ? err.message : "Failed to continue with the payment");
     } finally {
       setSubmitting(false);
     }
-  }, [parentId, cartItems, parentProfile]);
+  }, [parentId, cartItems, parentProfile, focusContactSection]);
 
   const refreshPendingStatus = useCallback(async () => {
     if (!pendingPayment?.billplz_id) return;
@@ -738,20 +787,28 @@ export default function ParentPaymentsPage() {
                               className="h-11 text-sm"
                             />
                           </label>
-                          <label className="flex flex-col sm:col-span-2 lg:col-span-1">
+                          <label className="flex flex-col sm:col-span-2 lg:col-span-1" ref={contactSectionRef}>
                             <span className="mb-1 text-xs font-medium text-slate-600">Mobile number</span>
                             <Input
+                              ref={phoneInputRef}
                               value={contactInputs.phone}
                               onChange={event => handleContactChange("phone", event.target.value)}
                               placeholder="+60123456789"
-                              className="h-11 text-sm"
+                              className={`h-11 text-sm ${contactAttention ? "ring-2 ring-rose-400 ring-offset-1" : ""}`}
                             />
+                            {!contactInputs.phone && (
+                              <span className="mt-1 text-xs text-rose-600">Sila isi nombor telefon untuk meneruskan bayaran.</span>
+                            )}
                           </label>
                         </div>
-                        <div className="rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                          {!parentProfile.email || !parentProfile.phone
-                            ? 'Sila isi emel dan nombor telefon sebelum meneruskan pembayaran.'
-                            : 'Maklumat ini digunakan untuk bil ini sahaja. Simpan kemas kini kekal di halaman profil anda.'}
+                        <div className="flex items-center gap-2 text-xs text-slate-500">
+                          {contactSaveStatus === "saving" && <span>Menyimpan maklumat…</span>}
+                          {contactSaveStatus === "saved" && (
+                            <span className="inline-flex items-center gap-1 text-emerald-600">
+                              <CheckCircle2 className="h-4 w-4" /> Disimpan
+                            </span>
+                          )}
+                          {contactSaveStatus === "error" && <span className="text-rose-600">Gagal simpan maklumat. Cuba lagi.</span>}
                         </div>
                       </CardContent>
                     </Card>
@@ -781,6 +838,8 @@ export default function ParentPaymentsPage() {
                       merchantFeeCents={preview.merchantFeeCents}
                       isSubmitting={submitting}
                       onCheckout={handleCheckout}
+                      isContactComplete={isContactComplete}
+                      onRequestContactFocus={focusContactSection}
                       outstandingSelection={outstandingSelection}
                       outstandingSelectionActive={outstandingSelectionActive}
                     />

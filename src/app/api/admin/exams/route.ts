@@ -189,11 +189,11 @@ export async function GET(request: Request) {
         .filter((id): id is string => Boolean(id));
     });
     return data;
-      } catch (e) {
-        console.error('Admin fetch exam_excluded_students failed:', e);
-        return [];
-      }
-    })();
+  } catch (err) {
+    console.error('Admin fetch exam_excluded_students failed:', err);
+    return [];
+  }
+})();
 
     const [studentsResult, subjectsResult, examResultsResult, conductResult, classesResult, examClassesWeightsResult, subjectOptOutsResult] = await Promise.all([
       // Students (admin client to avoid RLS issues)
@@ -467,7 +467,7 @@ export async function GET(request: Request) {
       }
     } catch (e) {
       // Non-fatal; continue without labels
-      console.warn('Exam meta mapping failed, continuing without labels');
+      console.warn('Exam meta mapping failed, continuing without labels', e);
     }
 
     // Transform data into the format expected by the frontend
@@ -564,7 +564,7 @@ export async function GET(request: Request) {
         summaries.forEach(([sid, row]) => conductSummaryByStudent.set(sid, row));
       }
     } catch (e) {
-      console.warn('Failed to preload conduct summaries; will rely on conduct_entries only');
+      console.warn('Failed to preload conduct summaries; will rely on conduct_entries only', e);
     }
 
     const studentExamData: ExamStudent[] = await Promise.all((students || []).map(async (student) => {

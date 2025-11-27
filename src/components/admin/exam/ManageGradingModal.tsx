@@ -27,7 +27,7 @@ interface CreateGradingForm {
   grades: GradeEntry[];
 }
 
-export default function ManageGradingModal({ isOpen, onClose, onRefresh }: ManageGradingModalProps) {
+export default function ManageGradingModal({ isOpen, onClose, onRefresh: _onRefresh }: ManageGradingModalProps) {
   const { data: gradingSystems, loading, error, refetch } = useGradingSystems();
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [editingSystem, setEditingSystem] = useState<GradingSystem | null>(null);

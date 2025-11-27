@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import AdminNavbar from "@/components/admin/AdminNavbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -176,12 +176,10 @@ export default function AdminPaymentsPage() {
     });
   }
 
-  const formatMonth = (value: string) => formatMonthKey(value);
-
   const monthlyChartData = useMemo(() => {
     const sorted = [...monthlyLedger].sort((a, b) => a.month.localeCompare(b.month));
     return sorted.map((item) => ({
-      month: formatMonth(item.month),
+      month: formatMonthKey(item.month),
       collection: Number((item.collectedCents / 100).toFixed(2)),
       outstanding: Number((Math.max(item.outstandingCents, 0) / 100).toFixed(2)),
     }));
@@ -199,12 +197,12 @@ export default function AdminPaymentsPage() {
     }
 
     return payments.filter((payment) => {
-      const parentName = ((payment as any).parent?.name ?? "").toLowerCase();
-      const parentEmail = ((payment as any).parent?.email ?? "").toLowerCase();
+      const parentName = (payment as PaymentRecord & { parent?: { name?: string } }).parent?.name?.toLowerCase() ?? "";
+      const parentEmail = (payment as PaymentRecord & { parent?: { email?: string } }).parent?.email?.toLowerCase() ?? "";
       const status = payment.status.toLowerCase();
       const billId = (payment.billplz_id ?? "").toLowerCase();
-      const items = ((payment as any).line_items ?? [])
-        .map((item: any) => (item?.label ?? "").toLowerCase())
+      const items = ((payment as { line_items?: Array<{ label?: string }> }).line_items ?? [])
+        .map((item) => (item?.label ?? "").toLowerCase())
         .join(" ");
 
       return [parentName, parentEmail, status, billId, items].some((value) =>
@@ -230,10 +228,6 @@ export default function AdminPaymentsPage() {
     [adjustmentForm.childId, studentOptions]
   );
 
-
-  useEffect(() => {
-    loadDashboard();
-  }, []);
 
   useEffect(() => {
     if (!isFeeFormOpen || parentOptions.length > 0 || loadingParents) return;
@@ -262,7 +256,7 @@ export default function AdminPaymentsPage() {
       });
   }, [hasLoadedStudents, isAdjustmentFormOpen, loadingStudents]);
 
-  async function reloadLedgerData() {
+  const reloadLedgerData = useCallback(async () => {
     try {
       const [summaryRes, outstandingRes, adjustmentsRes] = await Promise.all([
         fetchOutstandingSummary(),
@@ -273,13 +267,13 @@ export default function AdminPaymentsPage() {
       setMonthlyLedger(summaryRes.monthlyLedger ?? []);
       setOutstandingParents(outstandingRes.parents ?? []);
       setAdjustments(adjustmentsRes.adjustments ?? []);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      setError(err.message ?? "Failed to load balance status.");
+      setError((err as Error)?.message ?? "Failed to load balance status.");
     }
-  }
+  }, []);
 
-  async function loadDashboard() {
+  const loadDashboard = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -295,13 +289,17 @@ export default function AdminPaymentsPage() {
       setFees(feesRes.fees ?? []);
       setParentOptions(parentsRes.parents ?? []);
       await reloadLedgerData();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      setError(err.message ?? "Failed to load payment data.");
+      setError((err as Error)?.message ?? "Failed to load payment data.");
     } finally {
       setLoading(false);
     }
-  }
+  }, [reloadLedgerData]);
+
+  useEffect(() => {
+    loadDashboard();
+  }, [loadDashboard]);
 
   type FeeFormField = keyof Omit<FeeFormState, "customAmounts" | "metadata">;
 
@@ -381,7 +379,13 @@ export default function AdminPaymentsPage() {
   ) {
     setFeeForm((prev) => {
       const next = [...prev.customAmounts];
-      next[index] = { ...next[index], [field]: value as any };
+      const current = next[index];
+      if (!current) return prev;
+      const updated: CustomAmountEntry =
+        field === "userIds"
+          ? { ...current, userIds: Array.isArray(value) ? value : [value] }
+          : { ...current, [field]: Array.isArray(value) ? value.join(",") : value };
+      next[index] = updated;
       return { ...prev, customAmounts: next };
     });
   }
@@ -520,9 +524,9 @@ export default function AdminPaymentsPage() {
       resetForm();
       setIsFeeFormOpen(false);
       await loadDashboard();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      setError(err.message ?? "Failed to save fee.");
+      setError((err as Error)?.message ?? "Failed to save fee.");
     } finally {
       setSavingFee(false);
     }
@@ -565,9 +569,9 @@ export default function AdminPaymentsPage() {
       }
       closeAdjustmentForm();
       await reloadLedgerData();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      setError(err.message ?? "Failed to save adjustment.");
+      setError((err as Error)?.message ?? "Failed to save adjustment.");
     } finally {
       setSavingAdjustment(false);
     }
@@ -583,9 +587,9 @@ export default function AdminPaymentsPage() {
         resetForm();
       }
       await loadDashboard();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      setError(err.message ?? "Failed to delete fee.");
+      setError((err as Error)?.message ?? "Failed to delete fee.");
     }
   }
 
@@ -1044,44 +1048,52 @@ export default function AdminPaymentsPage() {
                           </TableCell>
                         </TableRow>
                       ) : (
-                        filteredPayments.map((payment) => (
-                          <TableRow key={payment.id}>
-                            <TableCell>
-                              <div className="flex flex-col">
-                                <span className="font-medium">
-                                  {(payment as any).parent?.name ?? "Unnamed"}
+                        filteredPayments.map((payment) => {
+                          const paymentWithMeta = payment as PaymentRecord & {
+                            parent?: { name?: string; email?: string };
+                            line_items?: Array<{ label?: string }>;
+                          };
+                          const parentName = paymentWithMeta.parent?.name ?? "Unnamed";
+                          const parentEmail = paymentWithMeta.parent?.email ?? "-";
+                          const lineItems =
+                            (paymentWithMeta.line_items ?? [])
+                              .map((item) => item.label)
+                              .filter(Boolean)
+                              .join(", ") || "-";
+                          return (
+                            <TableRow key={payment.id}>
+                              <TableCell>
+                                <div className="flex flex-col">
+                                  <span className="font-medium">{parentName}</span>
+                                  <span className="text-xs text-slate-500">{parentEmail}</span>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <span
+                                  className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
+                                    statusStyles[payment.status] ?? "bg-slate-100 text-slate-600"
+                                  }`}
+                                >
+                                  {payment.status}
                                 </span>
-                                <span className="text-xs text-slate-500">
-                                  {(payment as any).parent?.email ?? "-"}
-                                </span>
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <span
-                                className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
-                                  statusStyles[payment.status] ?? "bg-slate-100 text-slate-600"
-                                }`}
-                              >
-                                {payment.status}
-                              </span>
-                            </TableCell>
-                            <TableCell className="font-semibold">
-                              {formatRinggit(payment.total_amount_cents ?? 0)}
-                            </TableCell>
-                            <TableCell className="text-sm text-slate-500">
-                              {payment.created_at
-                                ? new Date(payment.created_at).toLocaleString("en-MY", {
-                                    dateStyle: "medium",
-                                    timeStyle: "short",
-                                  })
-                                : "-"}
-                            </TableCell>
-                            <TableCell className="max-w-xs text-xs text-slate-500">
-                              {(payment as any).line_items?.map((item: any) => item.label).join(", ") ||
-                                "-"}
-                            </TableCell>
-                          </TableRow>
-                        ))
+                              </TableCell>
+                              <TableCell className="font-semibold">
+                                {formatRinggit(payment.total_amount_cents ?? 0)}
+                              </TableCell>
+                              <TableCell className="text-sm text-slate-500">
+                                {payment.created_at
+                                  ? new Date(payment.created_at).toLocaleString("en-MY", {
+                                      dateStyle: "medium",
+                                      timeStyle: "short",
+                                    })
+                                  : "-"}
+                              </TableCell>
+                              <TableCell className="max-w-xs text-xs text-slate-500">
+                                {lineItems}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })
                       )}
                     </TableBody>
                   </Table>

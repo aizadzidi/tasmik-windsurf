@@ -21,15 +21,22 @@ export function PaymentBreakdown({
   merchantFeeCents,
   isSubmitting,
   onCheckout,
+  isContactComplete,
+  onRequestContactFocus,
   outstandingSelection,
   outstandingSelectionActive
 }: PaymentBreakdownProps) {
   const hasSelection = cartItems.length > 0;
+  const missingMonths = cartItems.some(item => !item.months || item.months.length === 0);
   const grandTotal = totalCents + merchantFeeCents;
   const buttonLabel = hasSelection
-    ? isSubmitting
-      ? 'Menjana bil…'
-      : 'Teruskan ke bayaran'
+    ? !isContactComplete
+      ? 'Lengkapkan maklumat untuk bayar'
+      : missingMonths
+        ? 'Pilih bulan terlebih dahulu'
+        : isSubmitting
+          ? 'Menjana bil…'
+          : 'Teruskan ke bayaran'
     : 'Pilih yuran untuk bayar';
 
   const matchesOutstanding =
@@ -107,16 +114,36 @@ export function PaymentBreakdown({
           </div>
         )}
 
+        {!isContactComplete && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-amber-800">
+            <div className="flex items-start justify-between gap-2">
+              <span>Lengkapkan emel dan nombor telefon sebelum meneruskan bayaran.</span>
+              <button
+                type="button"
+                className="text-xs font-semibold text-amber-900 underline underline-offset-2"
+                onClick={onRequestContactFocus}
+              >
+                Isi maklumat
+              </button>
+            </div>
+          </div>
+        )}
+
         <Button
-          disabled={!hasSelection || isSubmitting}
+          disabled={!hasSelection || isSubmitting || missingMonths || !isContactComplete}
           className="h-11 w-full rounded-xl bg-indigo-600 text-[15px] font-medium text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
           onClick={onCheckout}
         >
           <span className="flex w-full items-center justify-center gap-2">
             {buttonLabel}
-            {!isSubmitting && hasSelection && <ArrowUpRight className="h-4 w-4" />}
+            {!isSubmitting && hasSelection && isContactComplete && !missingMonths && <ArrowUpRight className="h-4 w-4" />}
           </span>
         </Button>
+        {missingMonths && (
+          <p className="text-[11px] text-center text-rose-600">
+            Sila pilih bulan yuran sebelum meneruskan pembayaran.
+          </p>
+        )}
         <p className="text-[11px] text-center text-slate-500">
           Pembayaran diproses secara selamat melalui perbankan internet (FPX).
         </p>
