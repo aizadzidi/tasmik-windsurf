@@ -135,10 +135,24 @@ export async function fetchSummaryForFinal({
   try {
     // Try RPC that may expose an academic average (if available in your schema)
     // Note: Parameters can vary; we intentionally keep a conservative call.
-    const r = await supabase.rpc('get_grade_summary', { p_exam_id: examId, p_student_id: studentId }) as {
+    const params = {
+      exam_id: examId,
+      student_id: studentId,
+    } as { exam_id: string; student_id: string; class_id?: string | null };
+    let r = await supabase.rpc('get_grade_summary', params) as {
       data: GradeSummaryRow[] | null;
       error: any;
     };
+    if (r.error && ((r.error as { code?: string }).code === 'PGRST116' || /function.*get_grade_summary/i.test(String(r.error?.message || '')))) {
+      // Legacy fallback for environments where the RPC signature still uses p_ prefixed params
+      const legacy = await supabase.rpc('get_grade_summary', {
+        p_exam_id: examId,
+        p_student_id: studentId,
+      }) as { data: GradeSummaryRow[] | null; error: any };
+      if (!legacy.error) {
+        r = legacy;
+      }
+    }
     if (!r.error && Array.isArray(r.data) && r.data.length > 0) {
       // Look for a numeric average field if present
       const row0 = r.data[0];

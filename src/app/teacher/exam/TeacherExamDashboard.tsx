@@ -15,7 +15,6 @@ import StudentDetailsPanelTeacher from "@/components/teacher/StudentDetailsPanel
 import type { StudentData } from "@/components/admin/exam/StudentTable";
 
 // Dynamically import charts to avoid SSR issues
-const LineChart = dynamic(() => import("@/components/teacher/ExamLineChart"), { ssr: false });
 const RadarChart = dynamic(() => import("@/components/teacher/ExamRadarChart"), { ssr: false });
 
 // Dynamic conduct criteria from database
@@ -353,6 +352,7 @@ export default function TeacherExamDashboard() {
         const perStudentFilled = new Map<string, Set<string>>();
         const perSubjectCompleted = new Map<string, number>();
         const perSubjectTH = new Map<string, number>();
+        const perStudentTotalSubjects = new Map<string, number>();
         type ExamResultRow = { student_id: string | number; subject_id: string | number; mark: number | null; grade: string | null; final_score: number | null };
         (data as ExamResultRow[] | null | undefined)?.forEach((r) => {
           const sid = String(r.student_id);
@@ -383,6 +383,7 @@ export default function TeacherExamDashboard() {
             }
             if (isTH) perSubjectTH.set(subId, (perSubjectTH.get(subId) || 0) + 1);
           }
+          perStudentTotalSubjects.set(sid, (perStudentTotalSubjects.get(sid) || 0) + 1);
         });
 
         subjectOptOutMap.forEach((studentSet, subId) => {
@@ -459,6 +460,13 @@ export default function TeacherExamDashboard() {
           outSubject.set(sid, { completed: perSubjectCompleted.get(sid) || 0, total, th: perSubjectTH.get(sid) || 0 });
         });
         setSubjectCompletion(outSubject);
+        // Track total subjects per student to align completion pill logic with admin view
+        perStudentTotalSubjects.forEach((total, sid) => {
+          const row = studentRowMap.get(sid);
+          if (row) {
+            (row as unknown as { _totalSubjects?: number })._totalSubjects = total;
+          }
+        });
 
         // Build grade -> subjects map for tooltips using allowed subjects and current exam results
         const allowedSet = new Set(allSubjectIds.map(String));
@@ -495,11 +503,12 @@ export default function TeacherExamDashboard() {
       }
       setLoadingGradeSummary(true);
       setGradeSummaryError(null);
+      const classIdForRpc = selectedClassId ? String(selectedClassId) : null;
       try {
         const entries: [string, GradeSummaryRow[]][] = await Promise.all(
           studentRows.map(async (row): Promise<[string, GradeSummaryRow[]]> => {
             try {
-              const rows = await fetchGradeSummary(String(selectedExamId), String(selectedClassId), String(row.id));
+              const rows = await fetchGradeSummary(String(selectedExamId), classIdForRpc, String(row.id));
               return [String(row.id), rows];
             } catch (err: unknown) {
               console.warn('grade summary RPC failed for student', row.id, (err as Error)?.message || err);
@@ -1205,7 +1214,6 @@ export default function TeacherExamDashboard() {
     return base;
   }, [studentRows, searchQuery, sortBy, aggregateByStudent, selectedSubjectId, showOnlyMissing, missingByStudent, gradeSummaryMap]);
 
-  const marksData = visibleRows.map((s) => ({ name: s.name, mark: parseFloat(s.mark) || 0 }));
   const avgConduct: Record<string, number> = {};
   conductCategories.forEach((cat) => {
     const vals = visibleRows.map((s) => {
@@ -1591,7 +1599,9 @@ export default function TeacherExamDashboard() {
                                   (() => {
                                     const total = subjectsForUI.length;
                                     const missing = missingByStudent.get(student.id) || [];
+                                    // Align with admin: completed is total subjects minus missing (including TH/N/A)
                                     const completed = total - missing.length;
+                                    const totalSubjects = (student as unknown as { _totalSubjects?: number })._totalSubjects ?? total;
                                     const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
                                     const barColor = pct === 100 ? 'bg-green-500' : pct === 0 ? 'bg-red-500' : 'bg-amber-500';
                                     return (
@@ -1599,7 +1609,7 @@ export default function TeacherExamDashboard() {
                                         <div className="h-2 w-28 bg-gray-200 rounded overflow-hidden mx-auto">
                                           <div className={`h-2 ${barColor}`} style={{ width: `${pct}%` }}></div>
                                         </div>
-                                        <div className="text-center mt-1 text-xs text-gray-700">{completed}/{total}</div>
+                                        <div className="text-center mt-1 text-xs text-gray-700">{completed}/{totalSubjects}</div>
                                         {missing.length > 0 && (
                                           <div className="mt-1 flex flex-wrap gap-1 justify-center">
                                             {missing.slice(0,3).map((sid) => {
@@ -1736,13 +1746,17 @@ export default function TeacherExamDashboard() {
               <Card className="rounded-3xl border border-slate-200 bg-white shadow-[0_18px_40px_rgba(15,23,42,0.04)]">
                 <CardContent className="p-6">
                   <h4 className="mb-2 text-base font-semibold text-slate-900">Marks Overview</h4>
-                  <LineChart students={marksData} />
+                  <p className="text-sm text-slate-500">
+                    Charts are temporarily disabled for the teacher dashboard.
+                  </p>
                 </CardContent>
               </Card>
               <Card className="rounded-3xl border border-slate-200 bg-white shadow-[0_18px_40px_rgba(15,23,42,0.04)]">
                 <CardContent className="p-6">
                   <h4 className="mb-2 text-base font-semibold text-slate-900">Class Conduct Radar</h4>
-                  <RadarChart data={avgConduct} />
+                  <p className="text-sm text-slate-500">
+                    Charts are temporarily disabled for the teacher dashboard.
+                  </p>
                 </CardContent>
               </Card>
             </div>

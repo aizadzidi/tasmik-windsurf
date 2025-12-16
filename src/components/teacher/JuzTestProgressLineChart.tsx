@@ -158,6 +158,19 @@ export default function JuzTestProgressLineChart({
     );
   }
 
+  if (!Array.isArray(chartData) || chartData.length === 0 || chartData[0]?.data?.length === 0) {
+    return (
+      <div className={`bg-white rounded-lg border p-6 ${className}`}>
+        <h3 className="text-lg font-semibold text-gray-800 mb-4">
+          Test Results Progress
+        </h3>
+        <div className="flex h-40 items-center justify-center text-sm text-gray-500">
+          No subject data available
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`bg-white rounded-lg border p-6 ${className}`}>
       <div className="flex items-center justify-between mb-4">
@@ -172,6 +185,7 @@ export default function JuzTestProgressLineChart({
       <div style={{ height: 300 }}>
         <ResponsiveLine
           data={chartData}
+          animate={false}
           margin={{ top: 20, right: 50, bottom: 60, left: 60 }}
           xScale={{ 
             type: 'linear',

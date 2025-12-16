@@ -10,8 +10,9 @@ export function useWeightedAverages(opts: {
   studentId: string | null;
   wConduct: number;                 // accepts 0..1 or 0..100; we normalize inside
   allowedSubjectIds?: string[] | null;
+  includeStudentFinal?: boolean;
 }) {
-  const { supabase, examId, classId, studentId, allowedSubjectIds } = opts;
+  const { supabase, examId, classId, studentId, allowedSubjectIds, includeStudentFinal } = opts;
   const w = toWeightFraction(opts.wConduct);
   const allowedKey = React.useMemo(() => JSON.stringify(allowedSubjectIds ?? null), [allowedSubjectIds]);
 
@@ -34,7 +35,11 @@ export function useWeightedAverages(opts: {
       return;
     }
 
-    fetchAllAverages(supabase, { examId, classId, studentId, wConduct: w, allowedSubjectIds })
+    fetchAllAverages(
+      supabase,
+      { examId, classId, studentId, wConduct: w, allowedSubjectIds },
+      { includeStudentFinal }
+    )
       .then((res) => {
         if (cancelled) return;
         setSubjectAvg(res.subjectAvg);
@@ -49,7 +54,7 @@ export function useWeightedAverages(opts: {
       .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
-  }, [supabase, examId, classId, studentId, w, allowedKey, allowedSubjectIds]);
+  }, [supabase, examId, classId, studentId, w, allowedKey, allowedSubjectIds, includeStudentFinal]);
 
   const fmt = React.useCallback((n?: number | null) => (n == null ? '—' : `${Math.round(n * 10) / 10}%`), []);
 

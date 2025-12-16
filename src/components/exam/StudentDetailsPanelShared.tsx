@@ -28,6 +28,7 @@ interface StudentDetailsPanelProps {
   examId?: string;
   classId?: string;
   mode?: StudentPanelMode;
+  showCharts?: boolean;
 }
 
 export default function StudentDetailsPanelShared({ 
@@ -40,7 +41,8 @@ export default function StudentDetailsPanelShared({
   reportButtonLabel,
   examId,
   classId,
-  mode = 'admin'
+  mode = 'admin',
+  showCharts = true,
 }: StudentDetailsPanelProps) {
   const modeNormalized = mode ?? 'admin';
   const isTeacher = modeNormalized === 'teacher';
@@ -111,10 +113,12 @@ export default function StudentDetailsPanelShared({
     }
   }, [student]);
 
-  // Load subject rows for student/exam/class
+  // Load subject rows for student/exam/class (supports "all" class selection)
   React.useEffect(() => {
     let cancelled = false;
-    if (!open || !studentId || !examId || !classId) {
+    const effectiveClassId = classId && classId !== "all" ? classId : null;
+
+    if (!open || !studentId || !examId) {
       setSubjectRows([]);
       setSubjectsLoading(false);
       return;
@@ -122,9 +126,14 @@ export default function StudentDetailsPanelShared({
     setSubjectsLoading(true);
     (async () => {
       try {
-        const data = await rpcGetStudentSubjects(supabase, examId, classId, studentId);
+        const data = await rpcGetStudentSubjects(supabase, examId, effectiveClassId, studentId);
         if (cancelled) return;
-        setSubjectRows(data);
+        if (!Array.isArray(data)) {
+          console.warn('RPC get_exam_student_subjects returned non-array payload', data);
+          setSubjectRows([]);
+        } else {
+          setSubjectRows(data);
+        }
       } catch (error) {
         if (!cancelled) {
           console.error("RPC get_exam_student_subjects failed:", error);
@@ -141,44 +150,7 @@ export default function StudentDetailsPanelShared({
 
   React.useEffect(() => {
     setSelectedSubject(null);
-  }, [studentId]);
-
-
-  React.useEffect(() => {
-    if (!student?.id || !examId || !classId) {
-      setSubjectRows([]);
-      setSubjectsLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setSubjectsLoading(true);
-
-    (async () => {
-      try {
-        const data = await rpcGetStudentSubjects(supabase, examId!, classId!, student.id);
-        if (cancelled) return;
-        setSubjectRows(data);
-      } catch (error) {
-        if (!cancelled) {
-          console.error('RPC get_exam_student_subjects failed:', error);
-          setSubjectRows([]);
-        }
-      } finally {
-        if (!cancelled) {
-          setSubjectsLoading(false);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [student?.id, examId, classId]);
-
-  React.useEffect(() => {
-    setSelectedSubject(null);
-  }, [student?.id]);
+  }, [studentId, student?.id]);
 
   const filledRows = React.useMemo(
     () => subjectRows.filter((row) => row.result_id !== null),
@@ -282,6 +254,7 @@ export default function StudentDetailsPanelShared({
     studentId: studentId || null,
     wConduct,
     allowedSubjectIds,
+    includeStudentFinal: modeNormalized !== 'teacher',
   });
 
   const getClassAverage = React.useCallback(
@@ -881,55 +854,63 @@ export default function StudentDetailsPanelShared({
                           <div className="avoid-break space-y-3 mb-6">
                             <h3 className="text-lg font-semibold text-gray-900">{examName ? `${examName} - Subject Marks` : 'Subject Performance Overview'}</h3>
                             <div className="bg-gray-50 rounded-xl p-6 border border-gray-200">
-                              <div className="h-64">
-                                <ResponsiveContainer width="100%" height="100%">
-                                  {!selectedSubject ? (
-                                    <BarChart
-                                      data={subjectSummaries.map((summary) => ({
-                                        ...summary,
-                                        classAvgForChart: showClassAverage ? summary.classAvg ?? undefined : undefined,
-                                      }))}
-                                      margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                                    >
-                                      <XAxis dataKey="subject" tick={{ fontSize: 12 }} angle={-45} textAnchor="end" height={80} />
-                                      <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
-                                      <Tooltip contentStyle={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }} />
-                                      <Bar dataKey="score" fill="#3b82f6" name="Student Mark" radius={[4, 4, 0, 0]} />
-                                      {showClassAverage && (
-                                        <Bar dataKey="classAvgForChart" fill="#9ca3af" name="Class Average" radius={[4, 4, 0, 0]} />
+                              {showCharts ? (
+                                <>
+                                  <div className="h-64">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                      {!selectedSubject ? (
+                                        <BarChart
+                                          data={subjectSummaries.map((summary) => ({
+                                            ...summary,
+                                            classAvgForChart: showClassAverage ? summary.classAvg ?? undefined : undefined,
+                                          }))}
+                                          margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                                        >
+                                          <XAxis dataKey="subject" tick={{ fontSize: 12 }} angle={-45} textAnchor="end" height={80} />
+                                          <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
+                                          <Tooltip contentStyle={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }} />
+                                          <Bar dataKey="score" fill="#3b82f6" name="Student Mark" radius={[4, 4, 0, 0]} />
+                                          {showClassAverage && (
+                                            <Bar dataKey="classAvgForChart" fill="#9ca3af" name="Class Average" radius={[4, 4, 0, 0]} />
+                                          )}
+                                        </BarChart>
+                                      ) : (
+                                        <LineChart
+                                          data={buildChartData(
+                                            undefined,
+                                            selectedSubjectRow,
+                                            showClassAverage
+                                              ? (subjectSummaries.find((s) => s.subject === selectedSubject)?.classAvg ?? undefined)
+                                              : undefined
+                                          )}
+                                          margin={{ top: 5, right: 5, left: 5, bottom: 5 }}
+                                        >
+                                          <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                                          <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
+                                          <Tooltip />
+                                          <Line type="monotone" dataKey="score" stroke="#3b82f6" name="Student" strokeWidth={2} />
+                                          {showClassAverage && (
+                                            <Line type="monotone" dataKey="classAvg" stroke="#9ca3af" name="Class Avg" strokeDasharray="4 4" />
+                                          )}
+                                        </LineChart>
                                       )}
-                                    </BarChart>
-                                  ) : (
-                                    <LineChart
-                                      data={buildChartData(
-                                        undefined,
-                                        selectedSubjectRow,
-                                        showClassAverage
-                                          ? (subjectSummaries.find((s) => s.subject === selectedSubject)?.classAvg ?? undefined)
-                                          : undefined
-                                      )}
-                                      margin={{ top: 5, right: 5, left: 5, bottom: 5 }}
-                                    >
-                                      <XAxis dataKey="label" tick={{ fontSize: 12 }} />
-                                      <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
-                                      <Tooltip />
-                                      <Line type="monotone" dataKey="score" stroke="#3b82f6" name="Student" strokeWidth={2} />
-                                      {showClassAverage && (
-                                        <Line type="monotone" dataKey="classAvg" stroke="#9ca3af" name="Class Avg" strokeDasharray="4 4" />
-                                      )}
-                                    </LineChart>
-                                  )}
-                                </ResponsiveContainer>
-                              </div>
-                              {/* Subject list under chart */}
-                              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-                                {subjectSummaries.map((s) => (
-                                  <div key={s.subject} className="flex items-center justify-between rounded-lg bg-white border border-gray-200 px-3 py-2">
-                                    <span className="text-sm text-gray-700">{s.subject}</span>
-                                    <span className="text-sm font-semibold">{fmt(s.score)}</span>
+                                    </ResponsiveContainer>
                                   </div>
-                                ))}
-                              </div>
+                                  {/* Subject list under chart */}
+                                  <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    {subjectSummaries.map((s) => (
+                                      <div key={s.subject} className="flex items-center justify-between rounded-lg bg-white border border-gray-200 px-3 py-2">
+                                        <span className="text-sm text-gray-700">{s.subject}</span>
+                                        <span className="text-sm font-semibold">{fmt(s.score)}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="flex h-40 items-center justify-center text-sm text-slate-400">
+                                  Charts are temporarily disabled for the teacher view.
+                                </div>
+                              )}
                             </div>
                           </div>
 
@@ -937,23 +918,29 @@ export default function StudentDetailsPanelShared({
                           <div className="avoid-break space-y-3">
                             <h3 className="text-lg font-semibold text-gray-900">Conduct Profile</h3>
                             <div className="bg-gray-50 rounded-xl p-6 border border-gray-200">
-                              <div className="h-72">
-                                <ResponsiveRadar
-                                  data={radarData}
-                                  keys={["score"]}
-                                  indexBy="aspect"
-                                  margin={{ top: 20, right: 50, bottom: 20, left: 50 }}
-                                  maxValue={100}
-                                  curve="linearClosed"
-                                  borderColor={{ from: 'color' }}
-                                  gridLevels={5}
-                                  gridShape="circular"
-                                  enableDots={true}
-                                  dotSize={6}
-                                  colors={["#3b82f6"]}
-                                  animate={false}
-                                />
-                              </div>
+                              {showCharts ? (
+                                <div className="h-72">
+                                  <ResponsiveRadar
+                                    data={radarData}
+                                    keys={["score"]}
+                                    indexBy="aspect"
+                                    margin={{ top: 20, right: 50, bottom: 20, left: 50 }}
+                                    maxValue={100}
+                                    curve="linearClosed"
+                                    borderColor={{ from: 'color' }}
+                                    gridLevels={5}
+                                    gridShape="circular"
+                                    enableDots={true}
+                                    dotSize={6}
+                                    colors={["#3b82f6"]}
+                                    animate={false}
+                                  />
+                                </div>
+                              ) : (
+                                <div className="flex h-40 items-center justify-center text-sm text-slate-400">
+                                  Charts are temporarily disabled for the teacher view.
+                                </div>
+                              )}
                               {/* Conduct items list */}
                               <div className="mt-4 rounded-xl border border-gray-200 overflow-hidden bg-white">
                                 <div className="grid grid-cols-2 bg-gray-50 text-gray-600 text-sm font-medium px-3 py-2 border-b">

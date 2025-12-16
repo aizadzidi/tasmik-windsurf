@@ -7,5 +7,5 @@ type SharedProps = ComponentProps<typeof StudentDetailsPanelShared>;
 type StudentDetailsPanelTeacherProps = Omit<SharedProps, "mode">;
 
 export default function StudentDetailsPanelTeacher(props: StudentDetailsPanelTeacherProps) {
-  return <StudentDetailsPanelShared {...props} mode="teacher" />;
+  return <StudentDetailsPanelShared {...props} mode="teacher" showCharts={false} />;
 }

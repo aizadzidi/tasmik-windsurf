@@ -29,17 +29,41 @@ export type GradeSummaryRow = {
 export async function rpcGetStudentSubjects(
   supabase: SupabaseClient,
   examId: string,
-  classId: string,
+  classId: string | null | "all",
   studentId: string
 ): Promise<StudentSubjectRow[]> {
-  const { data, error } = await supabase.rpc('get_exam_student_subjects', {
+  const classIdNormalized = classId && classId !== "all" ? classId : null;
+  const primaryParams = {
+    exam_id: examId,
+    student_id: studentId,
+    class_id: classIdNormalized,
+  };
+  const legacyParams = {
     p_exam_id: examId,
-    p_class_id: classId,
     p_student_id: studentId,
-  });
+    p_class_id: classIdNormalized,
+  };
 
-  if (error) throw error;
-  return (data ?? []) as StudentSubjectRow[];
+  const primary = await supabase.rpc('get_exam_student_subjects', primaryParams);
+  if (primary.error) {
+    console.error('get_exam_student_subjects error', primary.error);
+    const fallback = await supabase.rpc('get_exam_student_subjects', legacyParams);
+    if (fallback.error) {
+      console.error('get_exam_student_subjects legacy error', fallback.error);
+      return [];
+    }
+    if (!Array.isArray(fallback.data)) {
+      console.warn('get_exam_student_subjects legacy returned non-array payload', fallback.data);
+      return [];
+    }
+    return fallback.data as StudentSubjectRow[];
+  }
+
+  if (!Array.isArray(primary.data)) {
+    console.warn('get_exam_student_subjects returned non-array payload', primary.data);
+    return [];
+  }
+  return primary.data as StudentSubjectRow[];
 }
 
 type ClassAvgRow = {

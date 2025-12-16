@@ -25,14 +25,17 @@ export async function fetchAllAverages(
   supabase: SupabaseClient,
   params: {
     examId: string;
-    classId: string;
+    classId: string | null | "all";
     studentId: string;
     wConduct: number;                // already normalized 0..1
     allowedSubjectIds?: string[] | null;
-  }
+  },
+  options?: { includeStudentFinal?: boolean }
 ): Promise<AveragesPayload> {
   const { examId, classId, studentId, wConduct, allowedSubjectIds } = params;
+  const { includeStudentFinal = true } = options ?? {};
   const allowed = allowedSubjectIds ?? null;
+  const effectiveClassId = classId && classId !== "all" ? classId : null;
 
   // Helper: try primary named params; if that fails, try secondary
   async function rpcWithFallback<T>(
@@ -46,22 +49,47 @@ export async function fetchAllAverages(
     return r2;
   }
 
+  const subjectPromise = rpcWithFallback<SubjectAverageRow[]>(
+    'get_subject_class_averages',
+    { exam_id: examId, class_id: effectiveClassId, allowed_subject_ids: allowed },
+    { exam: examId, class: effectiveClassId, allowed_subject_ids: allowed }
+  );
+  const classPromise = rpcWithFallback<number>(
+    'get_class_average_weighted',
+    { exam_id: examId, class_id: effectiveClassId, w_conduct: wConduct, allowed_subject_ids: allowed },
+    { exam: examId, class: effectiveClassId, w_conduct: wConduct, allowed_subject_ids: allowed }
+  );
+
+  let studentFinalPromise: Promise<RpcResponse<number>>;
+  if (includeStudentFinal) {
+    studentFinalPromise = (async () => {
+      const primary = await supabase.rpc('get_student_final_weighted', { exam_id: examId, student_id: studentId, w_conduct: wConduct, allowed_subject_ids: allowed }) as RpcResponse<number>;
+      if (!primary.error) return primary;
+      const code = (primary.error as { code?: string })?.code;
+      const msg = String((primary.error as { message?: string })?.message || '');
+      if (code === 'PGRST116' || /function.*get_student_final_weighted/i.test(msg) || /does not exist/i.test(msg) || /404/.test(msg)) {
+        console.warn('get_student_final_weighted RPC missing; returning null', primary.error);
+        return { data: null, error: null } as RpcResponse<number>;
+      }
+      const fallback = await supabase.rpc('get_student_final_weighted', { exam: examId, stu: studentId, w_conduct: wConduct, allowed_subject_ids: allowed }) as RpcResponse<number>;
+      if (fallback.error) {
+        const fCode = (fallback.error as { code?: string })?.code;
+        const fMsg = String((fallback.error as { message?: string })?.message || '');
+        if (fCode === 'PGRST116' || /function.*get_student_final_weighted/i.test(fMsg) || /does not exist/i.test(fMsg) || /404/.test(fMsg)) {
+          console.warn('get_student_final_weighted RPC missing (fallback); returning null', fallback.error);
+          return { data: null, error: null } as RpcResponse<number>;
+        }
+      }
+      return fallback;
+    })();
+  } else {
+    studentFinalPromise = Promise.resolve({ data: null, error: null });
+  }
+
   const [subjRes, classRes, stuRes] = (await Promise.all([
-    rpcWithFallback<SubjectAverageRow[]>(
-      'get_subject_class_averages',
-      { exam_id: examId, class_id: classId, allowed_subject_ids: allowed },
-      { exam: examId, class: classId, allowed_subject_ids: allowed }
-    ),
-    rpcWithFallback<number>(
-      'get_class_average_weighted',
-      { exam_id: examId, class_id: classId, w_conduct: wConduct, allowed_subject_ids: allowed },
-      { exam: examId, class: classId, w_conduct: wConduct, allowed_subject_ids: allowed }
-    ),
-    rpcWithFallback<number>(
-      'get_student_final_weighted',
-      { exam_id: examId, student_id: studentId, w_conduct: wConduct, allowed_subject_ids: allowed },
-      { exam: examId, stu: studentId, w_conduct: wConduct, allowed_subject_ids: allowed }
-    ),
+    subjectPromise,
+    classPromise,
+    studentFinalPromise,
   ])) as [RpcResponse<SubjectAverageRow[]>, RpcResponse<number>, RpcResponse<number>];
 
   const subjectAvg: Record<string, number> = {};
@@ -92,8 +120,8 @@ export async function fetchAllAverages(
     : null;
 
   if (stuRes.error) {
-    console.error(
-      'get_student_final_weighted error',
+    console.warn(
+      'get_student_final_weighted error (non-fatal)',
       typeof stuRes.error === 'object' ? JSON.stringify(stuRes.error, null, 2) : stuRes.error
     );
   }
