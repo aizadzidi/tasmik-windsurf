@@ -253,17 +253,21 @@ export const notificationService = {
     try {
       const { count, error } = await supabase
         .from('juz_test_notifications')
-        .select('*', { count: 'exact', head: true })
+        .select('id', { count: 'exact', head: true })
         .eq('status', 'pending');
 
       if (error) {
-        console.error('Error getting pending count:', error);
-        return { count: 0, error: error.message };
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('Error getting pending count:', error?.message ?? String(error));
+        }
+        return { count: 0, error: error.message ?? 'Failed to get pending count' };
       }
 
       return { count: count || 0 };
     } catch (err) {
-      console.error('Error getting pending count:', err);
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('Error getting pending count:', err);
+      }
       return { count: 0, error: 'Failed to get pending count' };
     }
   },

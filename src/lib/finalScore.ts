@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
 import { rpcGetConductSummary } from '@/data/conduct';
 
 type ExamClass = {
@@ -141,14 +141,14 @@ export async function fetchSummaryForFinal({
     } as { exam_id: string; student_id: string; class_id?: string | null };
     let r = await supabase.rpc('get_grade_summary', params) as {
       data: GradeSummaryRow[] | null;
-      error: any;
+      error: PostgrestError | null;
     };
     if (r.error && ((r.error as { code?: string }).code === 'PGRST116' || /function.*get_grade_summary/i.test(String(r.error?.message || '')))) {
       // Legacy fallback for environments where the RPC signature still uses p_ prefixed params
       const legacy = await supabase.rpc('get_grade_summary', {
         p_exam_id: examId,
         p_student_id: studentId,
-      }) as { data: GradeSummaryRow[] | null; error: any };
+      }) as { data: GradeSummaryRow[] | null; error: PostgrestError | null };
       if (!legacy.error) {
         r = legacy;
       }

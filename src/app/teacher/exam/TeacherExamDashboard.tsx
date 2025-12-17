@@ -3,7 +3,6 @@ import React from "react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { ChevronDown, ChevronUp, Info, Users } from "lucide-react";
-import dynamic from "next/dynamic";
 import { supabase } from "@/lib/supabaseClient";
 import Navbar from "@/components/Navbar";
 import { getGradingScale, computeGrade, type GradingScale } from "@/lib/gradingUtils";
@@ -13,9 +12,6 @@ import { fetchGradeSummary } from "@/lib/db/exams";
 import type { GradeSummaryRow } from "@/lib/db/exams";
 import StudentDetailsPanelTeacher from "@/components/teacher/StudentDetailsPanelTeacher";
 import type { StudentData } from "@/components/admin/exam/StudentTable";
-
-// Dynamically import charts to avoid SSR issues
-const RadarChart = dynamic(() => import("@/components/teacher/ExamRadarChart"), { ssr: false });
 
 // Dynamic conduct criteria from database
 interface ConductCriteria {

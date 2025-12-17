@@ -1,5 +1,5 @@
 // src/lib/averages.ts
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
 
 export type AveragesPayload = {
   subjectAvg: Record<string, number>;   // per-subject class average (academic only)
@@ -7,8 +7,7 @@ export type AveragesPayload = {
   finalWeighted: number | null;         // weighted final for the current student
 };
 
-type RpcResponse<T> = { data: T | null; error: any };
-type RpcArgs = Record<string, unknown>;
+type RpcResponse<T> = { data: T | null; error: PostgrestError | null };
 
 type SubjectAverageRow = {
   subject_id: string | null;
@@ -33,7 +32,7 @@ export async function fetchAllAverages(
   options?: { includeStudentFinal?: boolean }
 ): Promise<AveragesPayload> {
   const { examId, classId, studentId, wConduct, allowedSubjectIds } = params;
-  const { includeStudentFinal = true } = options ?? {};
+  const { includeStudentFinal = false } = options ?? {};
   const allowed = allowedSubjectIds ?? null;
   const effectiveClassId = classId && classId !== "all" ? classId : null;
 
