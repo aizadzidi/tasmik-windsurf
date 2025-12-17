@@ -35,7 +35,7 @@ export default function StudentDetailsPanelShared({
   student, 
   onClose, 
   classAverages,
-  classOverallAvg,
+  classOverallAvg: _classOverallAvg,
   isMobile,
   selectedExamName = '',
   reportButtonLabel,
@@ -297,7 +297,7 @@ export default function StudentDetailsPanelShared({
   // Weighted/averages via RPCs
   const allowedSubjectIds: string[] | null = null; // keep identical filters across calls
   const wConduct = typeof conductWeightagePct === 'number' ? conductWeightagePct : 0;
-  const { subjectAvg, classAvg, finalWeighted, fmt } = useWeightedAverages({
+  const { subjectAvg, finalWeighted, fmt } = useWeightedAverages({
     supabase,
     examId: examId || null,
     classId: classId || null,
@@ -918,7 +918,13 @@ ${conductItems
     return finalWeighted != null && Number.isFinite(finalWeighted) ? finalWeighted : null;
   }, [finalWeighted]);
 
-  const overallTrend = (displayOverall ?? 0) >= 75 ? "positive" : (displayOverall ?? 0) >= 60 ? "stable" : "concerning";
+  const finalScoreForDisplay: number | null = React.useMemo(() => {
+    if (typeof displayOverall === "number" && Number.isFinite(displayOverall)) return displayOverall;
+    if (typeof overallAvgRaw === "number" && Number.isFinite(overallAvgRaw)) return overallAvgRaw;
+    return null;
+  }, [displayOverall, overallAvgRaw]);
+
+  const overallTrend = (finalScoreForDisplay ?? 0) >= 75 ? "positive" : (finalScoreForDisplay ?? 0) >= 60 ? "stable" : "concerning";
 
   const conductDisplayItems = [
     { aspect: "Discipline", value: conductPercentages.discipline },
@@ -1069,12 +1075,9 @@ ${conductItems
           >
             {/* Header */}
             <div className="sticky top-0 bg-white/95 backdrop-blur-sm border-b border-gray-200 p-6 z-10">
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="w-16 h-16 bg-blue-500 rounded-xl flex items-center justify-center text-white text-xl font-semibold">
-                    {(studentName || "S").charAt(0).toUpperCase()}
-                  </div>
-                  <div>
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-center gap-4 min-w-0">
+                  <div className="min-w-0">
                     <h2 className="text-2xl font-semibold text-gray-900">{studentName || "Student"}</h2>
                     <p className="text-gray-600">
                       {className}
@@ -1083,7 +1086,7 @@ ${conductItems
                     {typeof conductWeightagePct === 'number' && (
                       <p className="text-xs text-gray-500 mt-1">Weightage: Academic {Math.max(0, 100 - Math.round(conductWeightagePct))}% • Conduct {Math.round(conductWeightagePct)}%</p>
                     )}
-                    <div className="flex items-center gap-4 mt-2">
+                    <div className="flex flex-wrap items-center gap-3 mt-3">
                       <span
                         className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-semibold ${
                           overallTrend === "positive"
@@ -1106,13 +1109,20 @@ ${conductItems
                           ? "Average Performance"
                           : "Needs Attention"}
                       </span>
-                      <span className="text-2xl font-semibold text-gray-900">{fmt(displayOverall ?? (typeof overallAvgRaw === 'number' ? overallAvgRaw : null))}</span>
                     </div>
                   </div>
                 </div>
-                <button onClick={() => onClose()} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
-                  <X className="w-6 h-6" />
-                </button>
+                <div className="flex items-start gap-2">
+                  <div className="rounded-2xl border border-gray-200 bg-white shadow-sm px-4 py-3 text-right">
+                    <div className="text-[11px] uppercase tracking-wider text-gray-500">Final Mark</div>
+                    <div className="mt-1 flex items-baseline justify-end gap-2">
+                      <span className="text-3xl font-semibold text-gray-900 tabular-nums">{fmt(finalScoreForDisplay)}</span>
+                    </div>
+                  </div>
+                  <button onClick={() => onClose()} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
               </div>
 
               {/* Quick Actions */}
@@ -1617,25 +1627,6 @@ ${conductItems
                       </div>
                     ))}
                   </div>
-                </div>
-              </div>
-
-              {/* Benchmarks */}
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Benchmarks</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="bg-blue-50 rounded-xl p-4 text-center">
-                    <div className="text-2xl font-semibold text-blue-900">{fmt(displayOverall)}</div>
-                    <div className="text-sm text-blue-700">Final Mark</div>
-                  </div>
-                  {showClassAverage && (
-                    <div className="bg-gray-50 rounded-xl p-4 text-center">
-                      <div className="text-2xl font-semibold text-gray-900">
-                        {fmt(classAvg ?? (typeof classOverallAvg === 'number' ? classOverallAvg : null))}
-                      </div>
-                      <div className="text-sm text-gray-700">Class Average</div>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
