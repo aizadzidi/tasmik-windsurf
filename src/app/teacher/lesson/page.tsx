@@ -59,6 +59,7 @@ const todayLocal = () => {
 const displayDate = (value: string | null) => {
   if (!value) return "";
   const normalized = value.split("T")[0];
+  if (normalized === todayLocal()) return "Today";
   const parts = normalized.split("-");
   if (parts.length !== 3) return normalized;
   const [yyyy, mm, dd] = parts;
@@ -80,6 +81,13 @@ const remarkPresets = [
   "Excellent progress",
   "Needs more practice",
 ] as const;
+
+const normalizePresetRemark = (remark: string) => {
+  const trimmed = remark.trim();
+  if (!trimmed) return trimmed;
+  const match = remarkPresets.find((preset) => preset.toLowerCase() === trimmed.toLowerCase());
+  return match ?? trimmed;
+};
 
 type ProgressRingProps = {
   progress: number;
@@ -568,7 +576,7 @@ function TeacherLessonPageContent() {
 
   const handleRemarkModalSave = React.useCallback(async () => {
     if (!remarkModalTarget || !userId) return;
-    const trimmedRemark = remarkModalText.trim();
+    const trimmedRemark = normalizePresetRemark(remarkModalText);
     if (!trimmedRemark) {
       setRemarkModalError("Remark is required.");
       return;
@@ -590,6 +598,11 @@ function TeacherLessonPageContent() {
         taught_on: data.taught_on ?? taughtOn,
         remark: data.remark ?? trimmedRemark,
       });
+      const message = "Remark saved.";
+      setActionMessage(message);
+      window.setTimeout(() => {
+        setActionMessage((current) => (current === message ? null : current));
+      }, 2500);
       closeRemarkModal();
     } catch (error) {
       console.error("Failed to save remark", error);
@@ -779,7 +792,8 @@ function TeacherLessonPageContent() {
                         const trimmed = prev.trim();
                         if (!trimmed) return preset;
                         if (trimmed.toLowerCase().includes(preset.toLowerCase())) return prev;
-                        return `${trimmed}. ${preset}`;
+                        const suffix = /[.!?]$/.test(trimmed) ? "" : ".";
+                        return `${trimmed}${suffix} ${preset}`;
                       });
                       setRemarkModalError(null);
                     }}
@@ -806,21 +820,22 @@ function TeacherLessonPageContent() {
 
             <div className="mt-3 flex flex-wrap items-center gap-1 sm:hidden">
               {remarkPresets.map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  disabled={remarkModalSaving}
-                  onClick={() => {
-                    setRemarkModalText((prev) => {
-                      const trimmed = prev.trim();
-                      if (!trimmed) return preset;
-                      if (trimmed.toLowerCase().includes(preset.toLowerCase())) return prev;
-                      return `${trimmed}. ${preset}`;
-                    });
-                    setRemarkModalError(null);
-                  }}
-                  className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[11px] font-semibold text-gray-600 transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-                >
+                  <button
+                    key={preset}
+                    type="button"
+                    disabled={remarkModalSaving}
+                    onClick={() => {
+                      setRemarkModalText((prev) => {
+                        const trimmed = prev.trim();
+                        if (!trimmed) return preset;
+                        if (trimmed.toLowerCase().includes(preset.toLowerCase())) return prev;
+                        const suffix = /[.!?]$/.test(trimmed) ? "" : ".";
+                        return `${trimmed}${suffix} ${preset}`;
+                      });
+                      setRemarkModalError(null);
+                    }}
+                    className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[11px] font-semibold text-gray-600 transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                  >
                   {preset}
                 </button>
               ))}
@@ -1029,32 +1044,33 @@ function TeacherLessonPageContent() {
 	                                    void handleSubtopicToggle(topic, 0, false);
 	                                  }}
 	                                />
-	                                <div className="min-w-0 flex-1">
-	                                  <div className="flex items-start justify-between gap-2">
-	                                    <span className="text-sm font-medium text-gray-900 dark:text-slate-50">{topic.title}</span>
-	                                    <button
-	                                      type="button"
-	                                      className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-100"
-	                                      onClick={() =>
-	                                        openRemarkModal({
-	                                          topicId: topic.id,
-	                                          subtopicIndex: 0,
-	                                          topicTitle: topic.title,
-	                                          subtopicTitle: topic.title,
-	                                          taughtOn: leafProgressEntry?.taught_on ?? null,
-	                                          remark: leafProgressEntry?.remark ?? leafRemarkDraft,
-	                                        })
-	                                      }
-	                                    >
-	                                      {leafComplete ? "Edit" : "Add"}
-	                                      <Edit2 className="h-3.5 w-3.5" />
-	                                    </button>
-	                                  </div>
-	                                  {!leafRemarkExpanded && leafExistingRemark.trim() ? (
-	                                    <div className="mt-1 text-xs text-gray-500 line-clamp-2 dark:text-slate-400">
-	                                      “{leafExistingRemark}”
-	                                    </div>
-	                                  ) : null}
+		                                <div className="min-w-0 flex-1">
+		                                  <div className="flex items-start justify-between gap-2">
+		                                    <span className="text-sm font-medium text-gray-900 dark:text-slate-50">{topic.title}</span>
+		                                  </div>
+		                                  {!leafRemarkExpanded && leafExistingRemark.trim() ? (
+		                                    <div className="mt-1 flex items-center gap-1 text-xs leading-5 text-gray-500 dark:text-slate-400">
+		                                      <span className="min-w-0 line-clamp-2">“{leafExistingRemark}”</span>
+		                                      <button
+		                                        type="button"
+		                                        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 disabled:opacity-60 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-100"
+		                                        disabled={isSaving}
+		                                        onClick={() =>
+		                                          openRemarkModal({
+		                                            topicId: topic.id,
+		                                            subtopicIndex: 0,
+		                                            topicTitle: topic.title,
+		                                            subtopicTitle: topic.title,
+		                                            taughtOn: leafProgressEntry?.taught_on ?? null,
+		                                            remark: leafProgressEntry?.remark ?? leafRemarkDraft,
+		                                          })
+		                                        }
+		                                      >
+		                                        <span className="sr-only">Edit remark</span>
+		                                        <Edit2 className="h-3.5 w-3.5" />
+		                                      </button>
+		                                    </div>
+		                                  ) : null}
 	                                  {leafRemarkExpanded ? (
 	                                    <div className="mt-2 rounded-xl border border-gray-200 bg-white/70 p-3 dark:border-slate-700 dark:bg-slate-900/40">
 	                                      <textarea
@@ -1142,7 +1158,6 @@ function TeacherLessonPageContent() {
 	                                  >
 	                                    <Calendar className="h-3.5 w-3.5" />
 	                                    <span>{displayDate(leafTaughtDate || todayLocal())}</span>
-	                                    <Edit2 className="h-3.5 w-3.5 opacity-70" />
 	                                  </button>
 	                                ) : null}
 	                              </div>
@@ -1247,38 +1262,39 @@ function TeacherLessonPageContent() {
 	                                                void handleSubtopicToggle(topic, index, false);
 	                                              }}
 	                                            />
-	                                            <div className="min-w-0 flex-1">
-	                                              <div className="flex items-start justify-between gap-2">
-	                                                <span
-	                                                  className={`min-w-0 truncate font-medium ${
-	                                                    subComplete ? "text-gray-800 dark:text-slate-200" : "text-gray-900 dark:text-slate-50"
-	                                                  }`}
-	                                                >
-	                                                  {sub}
-	                                                </span>
-	                                                <button
-	                                                  type="button"
-	                                                  className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-100"
-	                                                  onClick={() =>
-	                                                    openRemarkModal({
-	                                                      topicId: topic.id,
-	                                                      subtopicIndex: index,
-	                                                      topicTitle: topic.title,
-	                                                      subtopicTitle: sub,
-	                                                      taughtOn: progressEntry?.taught_on ?? null,
-	                                                      remark: progressEntry?.remark ?? remarkDraft,
-	                                                    })
-	                                                  }
-	                                                >
-	                                                  {subComplete ? "Edit" : "Add"}
-	                                                  <Edit2 className="h-3.5 w-3.5" />
-	                                                </button>
-	                                              </div>
-	                                              {!remarkExpanded && existingRemark.trim() ? (
-	                                                <div className="mt-1 text-xs text-gray-500 line-clamp-2 dark:text-slate-400">
-	                                                  “{existingRemark}”
-	                                                </div>
-	                                              ) : null}
+		                                            <div className="min-w-0 flex-1">
+		                                              <div className="flex items-start justify-between gap-2">
+		                                                <span
+		                                                  className={`min-w-0 truncate font-medium ${
+		                                                    subComplete ? "text-gray-800 dark:text-slate-200" : "text-gray-900 dark:text-slate-50"
+		                                                  }`}
+		                                                >
+		                                                  {sub}
+		                                                </span>
+		                                              </div>
+		                                              {!remarkExpanded && existingRemark.trim() ? (
+		                                                <div className="mt-1 flex items-center gap-1 text-xs leading-5 text-gray-500 dark:text-slate-400">
+		                                                  <span className="min-w-0 line-clamp-2">“{existingRemark}”</span>
+		                                                  <button
+		                                                    type="button"
+		                                                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 disabled:opacity-60 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-100"
+		                                                    disabled={isSaving}
+		                                                    onClick={() =>
+		                                                      openRemarkModal({
+		                                                        topicId: topic.id,
+		                                                        subtopicIndex: index,
+		                                                        topicTitle: topic.title,
+		                                                        subtopicTitle: sub,
+		                                                        taughtOn: progressEntry?.taught_on ?? null,
+		                                                        remark: progressEntry?.remark ?? remarkDraft,
+		                                                      })
+		                                                    }
+		                                                  >
+		                                                    <span className="sr-only">Edit remark</span>
+		                                                    <Edit2 className="h-3.5 w-3.5" />
+		                                                  </button>
+		                                                </div>
+		                                              ) : null}
 	                                              {remarkExpanded ? (
 	                                                <div className="mt-2 rounded-xl border border-gray-200 bg-white/70 p-3 dark:border-slate-700 dark:bg-slate-900/40">
 	                                                  <textarea
@@ -1366,7 +1382,6 @@ function TeacherLessonPageContent() {
 	                                              >
 	                                                <Calendar className="h-3.5 w-3.5" />
 	                                                <span>{displayDate(taughtDate || todayLocal())}</span>
-	                                                <Edit2 className="h-3.5 w-3.5 opacity-70" />
 	                                              </button>
 	                                            ) : null}
 	                                          </div>
