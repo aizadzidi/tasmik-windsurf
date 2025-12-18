@@ -5,6 +5,7 @@ import Navbar from "@/components/Navbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { Modal } from "@/components/ui/Modal";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { supabase } from "@/lib/supabaseClient";
 import { useSearchParams } from "next/navigation";
@@ -24,9 +25,7 @@ type TopicWithProgress = {
   class_id: string;
   subject_id: string;
   title: string;
-  description: string | null;
   subtopics: string[];
-  objectives: string | null;
   order_index: number;
   subTopicProgress: SubtopicProgress[];
 };
@@ -36,9 +35,7 @@ type EditorState = {
   classId: string;
   subjectId: string;
   title: string;
-  description: string;
   subtopics: string[];
-  objectives: string;
   orderIndex: number;
 };
 
@@ -59,11 +56,30 @@ const todayLocal = () => {
   return `${year}-${month}-${day}`;
 };
 
+const displayDate = (value: string | null) => {
+  if (!value) return "";
+  const normalized = value.split("T")[0];
+  const parts = normalized.split("-");
+  if (parts.length !== 3) return normalized;
+  const [yyyy, mm, dd] = parts;
+  if (!yyyy || !mm || !dd) return normalized;
+  return `${dd}/${mm}/${yyyy}`;
+};
+
 const baseCardClass = "rounded-2xl border border-gray-200 bg-white dark:border-slate-700 dark:bg-slate-900";
 const summaryCardClass = `${baseCardClass} shadow-[0_18px_45px_rgba(15,23,42,0.06)] transition-shadow duration-150 hover:shadow-[0_20px_60px_rgba(15,23,42,0.09)]`;
 const trackingCardClass = `${baseCardClass} shadow-[0_14px_35px_rgba(15,23,42,0.05)] transition-shadow duration-150`;
 const selectorClass =
   "w-full h-10 rounded-xl border border-gray-200 bg-gray-50 px-3 text-sm font-medium text-gray-900 transition duration-150 hover:bg-gray-100 focus:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-200 disabled:opacity-60";
+
+const remarkPresets = [
+  "Good engagement",
+  "Needs revision",
+  "Homework given",
+  "Absent",
+  "Excellent progress",
+  "Needs more practice",
+] as const;
 
 type ProgressRingProps = {
   progress: number;
@@ -123,15 +139,28 @@ function TeacherLessonPageContent() {
   const [inlineError, setInlineError] = React.useState<string | null>(null);
   const [actionMessage, setActionMessage] = React.useState<string | null>(null);
 
+  const [expandedRemarkKeys, setExpandedRemarkKeys] = React.useState<Set<string>>(new Set());
+  const [remarkDrafts, setRemarkDrafts] = React.useState<Record<string, string>>({});
+  const [remarkErrors, setRemarkErrors] = React.useState<Record<string, string>>({});
+
+  const [remarkModalTarget, setRemarkModalTarget] = React.useState<{
+    topicId: string;
+    subtopicIndex: number;
+    topicTitle: string;
+    subtopicTitle: string;
+  } | null>(null);
+  const [remarkModalText, setRemarkModalText] = React.useState("");
+  const [remarkModalDate, setRemarkModalDate] = React.useState(todayLocal());
+  const [remarkModalError, setRemarkModalError] = React.useState<string | null>(null);
+  const [remarkModalSaving, setRemarkModalSaving] = React.useState(false);
+
   const [editorOpen, setEditorOpen] = React.useState(false);
   const [editorMode, setEditorMode] = React.useState<"create" | "edit">("create");
   const [editorState, setEditorState] = React.useState<EditorState>({
     classId: "",
     subjectId: "",
     title: "",
-    description: "",
     subtopics: [],
-    objectives: "",
     orderIndex: 0,
   });
   const [savingEditor, setSavingEditor] = React.useState(false);
@@ -221,9 +250,7 @@ function TeacherLessonPageContent() {
     class_id: string;
     subject_id: string;
     title: string;
-    description: string | null;
     sub_topics: string[] | null;
-    objectives: string | null;
     order_index: number | null;
   };
 
@@ -257,9 +284,7 @@ function TeacherLessonPageContent() {
         class_id: String(topic.class_id),
         subject_id: String(topic.subject_id),
         title: topic.title,
-        description: topic.description ?? null,
         subtopics: Array.isArray(topic.sub_topics) ? topic.sub_topics.filter(Boolean).map(String) : [],
-        objectives: topic.objectives ?? null,
         order_index: topic.order_index ?? 0,
         subTopicProgress: subtopicProgressMap.get(String(topic.id)) ?? [],
       }));
@@ -284,7 +309,7 @@ function TeacherLessonPageContent() {
       try {
         const { data: topicRows, error: topicError } = await supabase
           .from("lesson_topics")
-          .select("id, class_id, subject_id, title, description, sub_topics, objectives, order_index")
+          .select("id, class_id, subject_id, title, sub_topics, order_index")
           .eq("class_id", classId)
           .eq("subject_id", subjectId)
           .order("order_index", { ascending: true })
@@ -334,6 +359,17 @@ function TeacherLessonPageContent() {
   }, [fetchTopics, trackerClassId, trackerSubjectId]);
 
   React.useEffect(() => {
+    setRemarkModalTarget(null);
+    setRemarkModalText("");
+    setRemarkModalDate(todayLocal());
+    setRemarkModalError(null);
+    setRemarkModalSaving(false);
+    setExpandedRemarkKeys(new Set());
+    setRemarkDrafts({});
+    setRemarkErrors({});
+  }, [trackerClassId, trackerSubjectId]);
+
+  React.useEffect(() => {
     setOpenTopicIds(new Set(trackerTopics.map((topic) => topic.id)));
   }, [trackerTopics]);
 
@@ -351,49 +387,163 @@ function TeacherLessonPageContent() {
     });
   }, []);
 
+  const makeRemarkKey = React.useCallback((topicId: string, subtopicIndex: number) => `${topicId}:${subtopicIndex}`, []);
+
+  const toggleRemarkExpanded = React.useCallback((key: string, next?: boolean) => {
+    setExpandedRemarkKeys((prev) => {
+      const updated = new Set(prev);
+      const shouldOpen = typeof next === "boolean" ? next : !updated.has(key);
+      if (shouldOpen) updated.add(key);
+      else updated.delete(key);
+      return updated;
+    });
+  }, []);
+
+  const openRemarkModal = React.useCallback(
+    (params: {
+      topicId: string;
+      subtopicIndex: number;
+      topicTitle: string;
+      subtopicTitle: string;
+      taughtOn: string | null;
+      remark: string | null;
+    }) => {
+      setRemarkModalTarget({
+        topicId: params.topicId,
+        subtopicIndex: params.subtopicIndex,
+        topicTitle: params.topicTitle,
+        subtopicTitle: params.subtopicTitle,
+      });
+      setRemarkModalText(params.remark ?? "");
+      setRemarkModalDate(toDateInput(params.taughtOn) || todayLocal());
+      setRemarkModalError(null);
+    },
+    []
+  );
+
+  const closeRemarkModal = React.useCallback(() => {
+    if (remarkModalSaving) return;
+    setRemarkModalTarget(null);
+    setRemarkModalText("");
+    setRemarkModalDate(todayLocal());
+    setRemarkModalError(null);
+  }, [remarkModalSaving]);
+
+  const upsertSubtopicProgress = React.useCallback(
+    async (params: { topicId: string; subtopicIndex: number; taughtOn: string | null; remark: string | null }) => {
+      const { topicId, subtopicIndex, taughtOn, remark } = params;
+      if (!userId) return null;
+      const { data, error } = await supabase
+        .from("lesson_subtopic_progress")
+        .upsert(
+          {
+            topic_id: topicId,
+            subtopic_index: subtopicIndex,
+            teacher_id: userId,
+            taught_on: taughtOn,
+            remark,
+          },
+          { onConflict: "topic_id,subtopic_index,teacher_id" }
+        )
+        .select("id, subtopic_index, taught_on, remark")
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    [userId]
+  );
+
+  const applySubtopicProgressUpdate = React.useCallback(
+    (topicId: string, subtopicIndex: number, next: { id: string | null; taught_on: string | null; remark: string | null }) => {
+      setTrackerTopics((prev) =>
+        prev.map((row) =>
+          row.id === topicId
+            ? {
+                ...row,
+                subTopicProgress: [
+                  ...row.subTopicProgress.filter((s) => s.subtopic_index !== subtopicIndex),
+                  {
+                    id: next.id,
+                    subtopic_index: subtopicIndex,
+                    taught_on: next.taught_on,
+                    remark: next.remark,
+                  },
+                ],
+              }
+            : row
+        )
+      );
+    },
+    []
+  );
+
+  const markSubtopicTaughtWithRemark = React.useCallback(
+    async (topic: TopicWithProgress, subtopicIndex: number, remark: string) => {
+      if (!userId) return;
+      const trimmedRemark = remark.trim();
+      if (!trimmedRemark) return;
+      setSavingTopicId(topic.id);
+      setActionMessage(null);
+      try {
+        const taughtOn = todayLocal();
+        const data = await upsertSubtopicProgress({
+          topicId: topic.id,
+          subtopicIndex,
+          taughtOn,
+          remark: trimmedRemark,
+        });
+        if (!data) return;
+        applySubtopicProgressUpdate(topic.id, subtopicIndex, {
+          id: data.id ? String(data.id) : null,
+          taught_on: data.taught_on ?? taughtOn,
+          remark: data.remark ?? trimmedRemark,
+        });
+      } catch (error) {
+        console.error("Failed to update subtopic progress", error);
+        setInlineError("Unable to update subtopic status right now.");
+      } finally {
+        setSavingTopicId(null);
+      }
+    },
+    [applySubtopicProgressUpdate, upsertSubtopicProgress, userId]
+  );
+
+  const saveSubtopicRemark = React.useCallback(
+    async (topicId: string, subtopicIndex: number, taughtOn: string, remark: string) => {
+      if (!userId) return;
+      const trimmedRemark = remark.trim();
+      if (!trimmedRemark) return;
+      setSavingTopicId(topicId);
+      setActionMessage(null);
+      try {
+        const data = await upsertSubtopicProgress({
+          topicId,
+          subtopicIndex,
+          taughtOn,
+          remark: trimmedRemark,
+        });
+        if (!data) return;
+        applySubtopicProgressUpdate(topicId, subtopicIndex, {
+          id: data.id ? String(data.id) : null,
+          taught_on: data.taught_on ?? taughtOn,
+          remark: data.remark ?? trimmedRemark,
+        });
+      } catch (error) {
+        console.error("Failed to save subtopic remark", error);
+        setInlineError("Unable to save remark right now.");
+      } finally {
+        setSavingTopicId(null);
+      }
+    },
+    [applySubtopicProgressUpdate, upsertSubtopicProgress, userId]
+  );
+
   const handleSubtopicToggle = async (topic: TopicWithProgress, subtopicIndex: number, checked: boolean) => {
     if (!userId) return;
     setSavingTopicId(topic.id);
     setActionMessage(null);
     try {
-      if (checked) {
-        const taughtOn = todayLocal();
-        const existingRemark =
-          topic.subTopicProgress.find((entry) => entry.subtopic_index === subtopicIndex)?.remark ?? null;
-        const { data, error } = await supabase
-          .from("lesson_subtopic_progress")
-          .upsert(
-            {
-              topic_id: topic.id,
-              subtopic_index: subtopicIndex,
-              teacher_id: userId,
-              taught_on: taughtOn,
-              remark: existingRemark,
-            },
-            { onConflict: "topic_id,subtopic_index,teacher_id" }
-          )
-          .select("id, subtopic_index, taught_on, remark")
-          .single();
-        if (error) throw error;
-        setTrackerTopics((prev) =>
-          prev.map((row) =>
-            row.id === topic.id
-              ? {
-                  ...row,
-                  subTopicProgress: [
-                    ...row.subTopicProgress.filter((s) => s.subtopic_index !== subtopicIndex),
-                    {
-                      id: data?.id ?? null,
-                      subtopic_index: subtopicIndex,
-                      taught_on: data?.taught_on ?? taughtOn,
-                      remark: data?.remark ?? null,
-                    },
-                  ],
-                }
-              : row
-          )
-        );
-      } else {
+      if (!checked) {
         const { error } = await supabase
           .from("lesson_subtopic_progress")
           .delete()
@@ -416,54 +566,47 @@ function TeacherLessonPageContent() {
     }
   };
 
-  const handleSubtopicDateChange = async (topicId: string, subtopicIndex: number, value: string) => {
-    if (!value || !userId) return;
-    setSavingTopicId(topicId);
+  const handleRemarkModalSave = React.useCallback(async () => {
+    if (!remarkModalTarget || !userId) return;
+    const trimmedRemark = remarkModalText.trim();
+    if (!trimmedRemark) {
+      setRemarkModalError("Remark is required.");
+      return;
+    }
+    const taughtOn = remarkModalDate || todayLocal();
+    setRemarkModalSaving(true);
+    setSavingTopicId(remarkModalTarget.topicId);
     setActionMessage(null);
     try {
-      const existingTopic = trackerTopics.find((topic) => topic.id === topicId);
-      const existingRemark =
-        existingTopic?.subTopicProgress.find((entry) => entry.subtopic_index === subtopicIndex)?.remark ?? null;
-      const { data, error } = await supabase
-        .from("lesson_subtopic_progress")
-        .upsert(
-          {
-            topic_id: topicId,
-            subtopic_index: subtopicIndex,
-            teacher_id: userId,
-            taught_on: value,
-            remark: existingRemark,
-          },
-          { onConflict: "topic_id,subtopic_index,teacher_id" }
-        )
-        .select("id, subtopic_index, taught_on, remark")
-        .single();
-      if (error) throw error;
-      setTrackerTopics((prev) =>
-        prev.map((row) =>
-          row.id === topicId
-            ? {
-                ...row,
-                subTopicProgress: [
-                  ...row.subTopicProgress.filter((s) => s.subtopic_index !== subtopicIndex),
-                  {
-                    id: data?.id ?? null,
-                    subtopic_index: subtopicIndex,
-                    taught_on: data?.taught_on ?? value,
-                    remark: data?.remark ?? null,
-                  },
-                ],
-              }
-            : row
-        )
-      );
+      const data = await upsertSubtopicProgress({
+        topicId: remarkModalTarget.topicId,
+        subtopicIndex: remarkModalTarget.subtopicIndex,
+        taughtOn,
+        remark: trimmedRemark,
+      });
+      if (!data) return;
+      applySubtopicProgressUpdate(remarkModalTarget.topicId, remarkModalTarget.subtopicIndex, {
+        id: data.id ? String(data.id) : null,
+        taught_on: data.taught_on ?? taughtOn,
+        remark: data.remark ?? trimmedRemark,
+      });
+      closeRemarkModal();
     } catch (error) {
-      console.error("Failed to save subtopic date", error);
-      setInlineError("Could not save the subtopic taught date. Try again.");
+      console.error("Failed to save remark", error);
+      setInlineError("Unable to save remark right now.");
     } finally {
+      setRemarkModalSaving(false);
       setSavingTopicId(null);
     }
-  };
+  }, [
+    applySubtopicProgressUpdate,
+    closeRemarkModal,
+    remarkModalDate,
+    remarkModalTarget,
+    remarkModalText,
+    upsertSubtopicProgress,
+    userId,
+  ]);
 
   const openEditor = (mode: "create" | "edit", topic?: TopicWithProgress) => {
     setEditorMode(mode);
@@ -473,9 +616,7 @@ function TeacherLessonPageContent() {
         classId: topic.class_id,
         subjectId: topic.subject_id,
         title: topic.title,
-        description: topic.description ?? "",
         subtopics: topic.subtopics ?? [],
-        objectives: topic.objectives ?? "",
         orderIndex: topic.order_index ?? 0,
       });
     } else {
@@ -483,9 +624,7 @@ function TeacherLessonPageContent() {
         classId: manageClassId || trackerClassId,
         subjectId: manageSubjectId || trackerSubjectId,
         title: "",
-        description: "",
         subtopics: [],
-        objectives: "",
         orderIndex: 0,
       });
     }
@@ -506,9 +645,7 @@ function TeacherLessonPageContent() {
         class_id: editorState.classId,
         subject_id: editorState.subjectId,
         title: editorState.title.trim(),
-        description: editorState.description.trim() || null,
         sub_topics: subtopics.length ? subtopics : null,
-        objectives: editorState.objectives.trim() || null,
         order_index: Number(editorState.orderIndex) || 0,
         created_by: userId,
       };
@@ -576,6 +713,121 @@ function TeacherLessonPageContent() {
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar />
+      <Modal
+        open={Boolean(remarkModalTarget)}
+        title={remarkModalTarget?.subtopicTitle || "Remark"}
+        description={remarkModalTarget ? `Topic: ${remarkModalTarget.topicTitle}` : undefined}
+        onClose={closeRemarkModal}
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+              disabled={remarkModalSaving}
+              onClick={closeRemarkModal}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="rounded-full bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black"
+              disabled={remarkModalSaving || !remarkModalText.trim()}
+              onClick={() => void handleRemarkModalSave()}
+            >
+              {remarkModalSaving ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Saving
+                </span>
+              ) : (
+                "Save"
+              )}
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-gray-400 dark:text-slate-500">
+              Taught date
+            </div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm text-gray-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50">
+              <Calendar className="h-4 w-4 text-gray-500 dark:text-slate-400" />
+              <input
+                type="date"
+                value={remarkModalDate}
+                min="2020-01-01"
+                max="2100-12-31"
+                disabled={remarkModalSaving}
+                onChange={(e) => setRemarkModalDate(e.target.value)}
+                className="h-6 border-none bg-transparent p-0 text-sm font-medium text-current focus:outline-none focus:ring-0"
+              />
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <label className="text-xs font-semibold uppercase tracking-[0.14em] text-gray-400 dark:text-slate-500">
+                Remark (required)
+              </label>
+              <div className="hidden flex-wrap items-center justify-end gap-1 sm:flex">
+                {remarkPresets.map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    disabled={remarkModalSaving}
+                    onClick={() => {
+                      setRemarkModalText((prev) => {
+                        const trimmed = prev.trim();
+                        if (!trimmed) return preset;
+                        if (trimmed.toLowerCase().includes(preset.toLowerCase())) return prev;
+                        return `${trimmed}. ${preset}`;
+                      });
+                      setRemarkModalError(null);
+                    }}
+                    className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[11px] font-semibold text-gray-600 transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <textarea
+              value={remarkModalText}
+              onChange={(e) => {
+                setRemarkModalText(e.target.value);
+                if (e.target.value.trim()) setRemarkModalError(null);
+              }}
+              rows={4}
+              disabled={remarkModalSaving}
+              placeholder="Write a short, specific note…"
+              className="w-full resize-none rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-300 focus:outline-none focus:ring-4 focus:ring-gray-100 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50 dark:focus:border-slate-600 dark:focus:ring-slate-800"
+            />
+            {remarkModalError ? <p className="mt-2 text-xs font-semibold text-red-600">{remarkModalError}</p> : null}
+
+            <div className="mt-3 flex flex-wrap items-center gap-1 sm:hidden">
+              {remarkPresets.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  disabled={remarkModalSaving}
+                  onClick={() => {
+                    setRemarkModalText((prev) => {
+                      const trimmed = prev.trim();
+                      if (!trimmed) return preset;
+                      if (trimmed.toLowerCase().includes(preset.toLowerCase())) return prev;
+                      return `${trimmed}. ${preset}`;
+                    });
+                    setRemarkModalError(null);
+                  }}
+                  className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[11px] font-semibold text-gray-600 transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </Modal>
       <main className="mx-auto max-w-4xl px-4 pb-16 pt-16 md:px-0 md:pt-20">
         <header>
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Lessons</p>
@@ -697,7 +949,7 @@ function TeacherLessonPageContent() {
                     Topic Tracking
                   </CardTitle>
                   <p className="text-xs text-gray-500 dark:text-slate-400">
-                    Tap the checkbox to mark taught; date fills automatically.
+                    Tap the checkbox to mark taught; remark required and date fills automatically.
                   </p>
                 </div>
               </CardHeader>
@@ -733,63 +985,171 @@ function TeacherLessonPageContent() {
                       const hasSubtopics = subtopics.length > 0;
                       const bodyId = `topic-${topic.id}-body`;
 
-                      if (isLeafTopic) {
-                        const leafProgressEntry = topic.subTopicProgress.find((p) => p.subtopic_index === 0);
-                        const leafTaughtDate = toDateInput(leafProgressEntry?.taught_on ?? null);
-                        const leafComplete = Boolean(leafProgressEntry?.taught_on);
+	                      if (isLeafTopic) {
+	                        const leafProgressEntry = topic.subTopicProgress.find((p) => p.subtopic_index === 0);
+	                        const leafTaughtDate = toDateInput(leafProgressEntry?.taught_on ?? null);
+	                        const leafComplete = Boolean(leafProgressEntry?.taught_on);
+	                        const leafKey = makeRemarkKey(topic.id, 0);
+	                        const leafExistingRemark = leafProgressEntry?.remark ?? "";
+	                        const leafRemarkDraft = remarkDrafts[leafKey] ?? leafExistingRemark;
+	                        const leafRemarkExpanded = expandedRemarkKeys.has(leafKey);
+	                        const leafRemarkError = remarkErrors[leafKey];
 
-                        return (
-                          <div key={topic.id} className="space-y-2">
-                            <div
-                              className={`flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50 ${leafPadding} ${
-                                isSaving ? "opacity-70" : ""
-                              } dark:border-slate-700/60 dark:bg-slate-800`}
-                            >
-                              <div className="flex items-center gap-3">
-                                <input
-                                  type="checkbox"
-                                  className="h-4 w-4 rounded border-gray-300 text-blue-500 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:border-slate-600 dark:bg-slate-900"
-                                  checked={leafComplete}
-                                  disabled={isSaving}
-                                  onChange={(e) => handleSubtopicToggle(topic, 0, e.target.checked)}
-                                />
-                                <span className="text-sm font-medium text-gray-900 dark:text-slate-50">{topic.title}</span>
-                              </div>
-                              <div className="flex items-center">
-                                {leafComplete ? (
-                                  <div
-                                    className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors duration-150 ease-out focus-within:ring-2 focus-within:ring-blue-500 focus-within:ring-offset-1 ${
-                                      leafTaughtDate
-                                        ? "border-blue-100 bg-blue-50 text-blue-700 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-100"
-                                        : "border-gray-200 bg-white text-gray-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
-                                    }`}
-                                  >
-                                    <Calendar className="h-3.5 w-3.5 text-inherit" />
-                                    <input
-                                      type="date"
-                                      value={leafTaughtDate}
-                                      min="2020-01-01"
-                                      max="2100-12-31"
-                                      disabled={isSaving}
-                                      onChange={(e) => handleSubtopicDateChange(topic.id, 0, e.target.value)}
-                                      className="h-5 w-[118px] border-none bg-transparent p-0 text-[11px] text-current focus:outline-none focus:ring-0"
-                                    />
-                                  </div>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    className="inline-flex items-center gap-1 rounded-full border border-dashed border-gray-300 bg-transparent px-3 py-1 text-xs text-gray-400 transition-colors duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:border-slate-700 dark:text-slate-500"
-                                    disabled
-                                  >
-                                    <Calendar className="h-3.5 w-3.5" />
-                                    Set date
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      }
+	                        return (
+	                          <div key={topic.id} className="space-y-2">
+	                            <div
+	                              className={`flex items-start justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50 ${leafPadding} ${
+	                                isSaving ? "opacity-70" : ""
+	                              } dark:border-slate-700/60 dark:bg-slate-800`}
+	                            >
+	                              <div className="flex min-w-0 flex-1 items-start gap-3">
+	                                <input
+	                                  type="checkbox"
+	                                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-500 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:border-slate-600 dark:bg-slate-900"
+	                                  checked={leafComplete}
+	                                  disabled={isSaving}
+	                                  onChange={(e) => {
+	                                    if (e.target.checked) {
+	                                      toggleRemarkExpanded(leafKey, false);
+	                                      setRemarkErrors((prev) => {
+	                                        const next = { ...prev };
+	                                        delete next[leafKey];
+	                                        return next;
+	                                      });
+	                                      openRemarkModal({
+	                                        topicId: topic.id,
+	                                        subtopicIndex: 0,
+	                                        topicTitle: topic.title,
+	                                        subtopicTitle: topic.title,
+	                                        taughtOn: null,
+	                                        remark: leafRemarkDraft,
+	                                      });
+	                                      return;
+	                                    }
+	                                    void handleSubtopicToggle(topic, 0, false);
+	                                  }}
+	                                />
+	                                <div className="min-w-0 flex-1">
+	                                  <div className="flex items-start justify-between gap-2">
+	                                    <span className="text-sm font-medium text-gray-900 dark:text-slate-50">{topic.title}</span>
+	                                    <button
+	                                      type="button"
+	                                      className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-100"
+	                                      onClick={() =>
+	                                        openRemarkModal({
+	                                          topicId: topic.id,
+	                                          subtopicIndex: 0,
+	                                          topicTitle: topic.title,
+	                                          subtopicTitle: topic.title,
+	                                          taughtOn: leafProgressEntry?.taught_on ?? null,
+	                                          remark: leafProgressEntry?.remark ?? leafRemarkDraft,
+	                                        })
+	                                      }
+	                                    >
+	                                      {leafComplete ? "Edit" : "Add"}
+	                                      <Edit2 className="h-3.5 w-3.5" />
+	                                    </button>
+	                                  </div>
+	                                  {!leafRemarkExpanded && leafExistingRemark.trim() ? (
+	                                    <div className="mt-1 text-xs text-gray-500 line-clamp-2 dark:text-slate-400">
+	                                      “{leafExistingRemark}”
+	                                    </div>
+	                                  ) : null}
+	                                  {leafRemarkExpanded ? (
+	                                    <div className="mt-2 rounded-xl border border-gray-200 bg-white/70 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+	                                      <textarea
+	                                        value={leafRemarkDraft}
+	                                        onChange={(e) => {
+	                                          const nextValue = e.target.value;
+	                                          setRemarkDrafts((prev) => ({ ...prev, [leafKey]: nextValue }));
+	                                          if (nextValue.trim()) {
+	                                            setRemarkErrors((prev) => {
+	                                              const next = { ...prev };
+	                                              delete next[leafKey];
+	                                              return next;
+	                                            });
+	                                          }
+	                                        }}
+	                                        rows={3}
+	                                        className="w-full resize-none rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50"
+	                                        placeholder="Engagement notes (required). e.g. Some students struggled; need recap next class."
+	                                      />
+	                                      {leafRemarkError ? (
+	                                        <p className="mt-2 text-xs font-semibold text-red-600">{leafRemarkError}</p>
+	                                      ) : null}
+	                                      <div className="mt-2 flex items-center justify-end gap-2">
+	                                        {leafComplete ? (
+	                                          <Button
+	                                            className="rounded-full bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-black"
+	                                            disabled={isSaving || !leafRemarkDraft.trim()}
+	                                            onClick={() => {
+	                                              const taughtOn = leafProgressEntry?.taught_on ?? null;
+	                                              if (!taughtOn) return;
+	                                              const remark = leafRemarkDraft.trim();
+	                                              if (!remark) return;
+	                                              toggleRemarkExpanded(leafKey, false);
+	                                              void saveSubtopicRemark(topic.id, 0, taughtOn, remark);
+	                                            }}
+	                                          >
+	                                            Save remark
+	                                          </Button>
+	                                        ) : (
+	                                          <Button
+	                                            className="rounded-full bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-black"
+	                                            disabled={isSaving || !leafRemarkDraft.trim()}
+	                                            onClick={() => {
+	                                              const remark = leafRemarkDraft.trim();
+	                                              if (!remark) {
+	                                                setRemarkErrors((prev) => ({
+	                                                  ...prev,
+	                                                  [leafKey]: "Remark is required to mark this subtopic as taught.",
+	                                                }));
+	                                                return;
+	                                              }
+	                                              setRemarkErrors((prev) => {
+	                                                const next = { ...prev };
+	                                                delete next[leafKey];
+	                                                return next;
+	                                              });
+	                                              toggleRemarkExpanded(leafKey, false);
+	                                              void markSubtopicTaughtWithRemark(topic, 0, remark);
+	                                            }}
+	                                          >
+	                                            Mark taught
+	                                          </Button>
+	                                        )}
+	                                      </div>
+	                                    </div>
+	                                  ) : null}
+	                                </div>
+	                              </div>
+	                              <div className="flex items-center">
+	                                {leafComplete ? (
+	                                  <button
+	                                    type="button"
+	                                    className="inline-flex items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 disabled:opacity-60 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-100 dark:hover:bg-blue-500/15"
+	                                    disabled={isSaving}
+	                                    onClick={() =>
+	                                      openRemarkModal({
+	                                        topicId: topic.id,
+	                                        subtopicIndex: 0,
+	                                        topicTitle: topic.title,
+	                                        subtopicTitle: topic.title,
+	                                        taughtOn: leafProgressEntry?.taught_on ?? leafTaughtDate ?? null,
+	                                        remark: leafProgressEntry?.remark ?? leafRemarkDraft,
+	                                      })
+	                                    }
+	                                  >
+	                                    <Calendar className="h-3.5 w-3.5" />
+	                                    <span>{displayDate(leafTaughtDate || todayLocal())}</span>
+	                                    <Edit2 className="h-3.5 w-3.5 opacity-70" />
+	                                  </button>
+	                                ) : null}
+	                              </div>
+	                            </div>
+	                          </div>
+	                        );
+	                      }
 
                       return (
                         <div key={topic.id} className="space-y-3">
@@ -842,69 +1202,177 @@ function TeacherLessonPageContent() {
                               >
                                 <div className="mt-2 pl-8">
                                   <div className="space-y-2 border-l border-gray-100 pl-4 dark:border-slate-700/60">
-                                    {subtopics.map((sub, index) => {
-                                      const progressEntry = topic.subTopicProgress.find((p) => p.subtopic_index === index);
-                                      const taughtDate = toDateInput(progressEntry?.taught_on ?? null);
-                                      const subComplete = Boolean(progressEntry?.taught_on);
-                                      return (
-                                        <div
-                                          key={`${topic.id}-sub-${index}`}
-                                          className={`flex items-center justify-between gap-3 rounded-xl border text-sm transition-colors duration-150 ease-out ${pillPadding} ${
-                                            subComplete
-                                              ? "border-blue-100 bg-blue-50/70 dark:border-blue-500/30 dark:bg-blue-500/10"
-                                              : "border-gray-100 bg-gray-50 hover:bg-gray-50/80 dark:border-slate-700/60 dark:bg-slate-800 dark:hover:bg-slate-700"
-                                          } ${isSaving ? "opacity-70" : ""}`}
-                                        >
-                                          <div className="flex items-center gap-3">
-                                            <input
-                                              type="checkbox"
-                                              className="h-4 w-4 rounded border-gray-300 text-blue-500 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:border-slate-600 dark:bg-slate-900"
-                                              checked={subComplete}
-                                              disabled={isSaving}
-                                              onChange={(e) => handleSubtopicToggle(topic, index, e.target.checked)}
-                                            />
-                                            <span
-                                              className={`font-medium ${
-                                                subComplete ? "text-gray-800 dark:text-slate-200" : "text-gray-900 dark:text-slate-50"
-                                              }`}
-                                            >
-                                              {sub}
-                                            </span>
-                                          </div>
-                                          <div className="flex items-center">
-                                            {subComplete ? (
-                                              <div
-                                                className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition-colors duration-150 ease-out focus-within:ring-2 focus-within:ring-blue-500 focus-within:ring-offset-1 ${
-                                                  taughtDate
-                                                    ? "border-blue-100 bg-blue-50 text-blue-700 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-100"
-                                                    : "border-gray-200 bg-white text-gray-700 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
-                                                }`}
-                                              >
-                                                <Calendar className="h-3.5 w-3.5 text-inherit" />
-                                                <input
-                                                  type="date"
-                                                  value={taughtDate}
-                                                  min="2020-01-01"
-                                                  max="2100-12-31"
-                                                  disabled={isSaving}
-                                                  onChange={(e) => handleSubtopicDateChange(topic.id, index, e.target.value)}
-                                                  className="h-5 w-[118px] border-none bg-transparent p-0 text-[11px] text-current focus:outline-none focus:ring-0"
-                                                />
-                                              </div>
-                                            ) : (
-                                              <button
-                                                type="button"
-                                                className="inline-flex items-center gap-1 rounded-full border border-dashed border-gray-300 bg-transparent px-3 py-1 text-xs text-gray-400 transition-colors duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:border-slate-700 dark:text-slate-500"
-                                                disabled
-                                              >
-                                                <Calendar className="h-3.5 w-3.5" />
-                                                Set date
-                                              </button>
-                                            )}
-                                          </div>
-                                        </div>
-                                      );
-                                    })}
+	                                    {subtopics.map((sub, index) => {
+	                                      const progressEntry = topic.subTopicProgress.find((p) => p.subtopic_index === index);
+	                                      const taughtDate = toDateInput(progressEntry?.taught_on ?? null);
+	                                      const subComplete = Boolean(progressEntry?.taught_on);
+	                                      const remarkKey = makeRemarkKey(topic.id, index);
+	                                      const existingRemark = progressEntry?.remark ?? "";
+	                                      const remarkDraft = remarkDrafts[remarkKey] ?? existingRemark;
+	                                      const remarkExpanded = expandedRemarkKeys.has(remarkKey);
+	                                      const remarkError = remarkErrors[remarkKey];
+	                                      return (
+	                                        <div
+	                                          key={`${topic.id}-sub-${index}`}
+	                                          className={`flex items-start justify-between gap-3 rounded-xl border text-sm transition-colors duration-150 ease-out ${pillPadding} ${
+	                                            subComplete
+	                                              ? "border-blue-100 bg-blue-50/70 dark:border-blue-500/30 dark:bg-blue-500/10"
+	                                              : "border-gray-100 bg-gray-50 hover:bg-gray-50/80 dark:border-slate-700/60 dark:bg-slate-800 dark:hover:bg-slate-700"
+	                                          } ${isSaving ? "opacity-70" : ""}`}
+	                                        >
+	                                          <div className="flex min-w-0 flex-1 items-start gap-3">
+	                                            <input
+	                                              type="checkbox"
+	                                              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-500 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:border-slate-600 dark:bg-slate-900"
+	                                              checked={subComplete}
+	                                              disabled={isSaving}
+	                                              onChange={(e) => {
+	                                                if (e.target.checked) {
+	                                                  toggleRemarkExpanded(remarkKey, false);
+	                                                  setRemarkErrors((prev) => {
+	                                                    const next = { ...prev };
+	                                                    delete next[remarkKey];
+	                                                    return next;
+	                                                  });
+	                                                  openRemarkModal({
+	                                                    topicId: topic.id,
+	                                                    subtopicIndex: index,
+	                                                    topicTitle: topic.title,
+	                                                    subtopicTitle: sub,
+	                                                    taughtOn: null,
+	                                                    remark: remarkDraft,
+	                                                  });
+	                                                  return;
+	                                                }
+	                                                void handleSubtopicToggle(topic, index, false);
+	                                              }}
+	                                            />
+	                                            <div className="min-w-0 flex-1">
+	                                              <div className="flex items-start justify-between gap-2">
+	                                                <span
+	                                                  className={`min-w-0 truncate font-medium ${
+	                                                    subComplete ? "text-gray-800 dark:text-slate-200" : "text-gray-900 dark:text-slate-50"
+	                                                  }`}
+	                                                >
+	                                                  {sub}
+	                                                </span>
+	                                                <button
+	                                                  type="button"
+	                                                  className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-100"
+	                                                  onClick={() =>
+	                                                    openRemarkModal({
+	                                                      topicId: topic.id,
+	                                                      subtopicIndex: index,
+	                                                      topicTitle: topic.title,
+	                                                      subtopicTitle: sub,
+	                                                      taughtOn: progressEntry?.taught_on ?? null,
+	                                                      remark: progressEntry?.remark ?? remarkDraft,
+	                                                    })
+	                                                  }
+	                                                >
+	                                                  {subComplete ? "Edit" : "Add"}
+	                                                  <Edit2 className="h-3.5 w-3.5" />
+	                                                </button>
+	                                              </div>
+	                                              {!remarkExpanded && existingRemark.trim() ? (
+	                                                <div className="mt-1 text-xs text-gray-500 line-clamp-2 dark:text-slate-400">
+	                                                  “{existingRemark}”
+	                                                </div>
+	                                              ) : null}
+	                                              {remarkExpanded ? (
+	                                                <div className="mt-2 rounded-xl border border-gray-200 bg-white/70 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+	                                                  <textarea
+	                                                    value={remarkDraft}
+	                                                    onChange={(e) => {
+	                                                      const nextValue = e.target.value;
+	                                                      setRemarkDrafts((prev) => ({ ...prev, [remarkKey]: nextValue }));
+	                                                      if (nextValue.trim()) {
+	                                                        setRemarkErrors((prev) => {
+	                                                          const next = { ...prev };
+	                                                          delete next[remarkKey];
+	                                                          return next;
+	                                                        });
+	                                                      }
+	                                                    }}
+	                                                    rows={3}
+	                                                    className="w-full resize-none rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50"
+	                                                    placeholder="Engagement notes (required). e.g. Some students struggled; need recap next class."
+	                                                  />
+	                                                  {remarkError ? (
+	                                                    <p className="mt-2 text-xs font-semibold text-red-600">{remarkError}</p>
+	                                                  ) : null}
+	                                                  <div className="mt-2 flex items-center justify-end gap-2">
+	                                                    {subComplete ? (
+	                                                      <Button
+	                                                        className="rounded-full bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-black"
+	                                                        disabled={isSaving || !remarkDraft.trim()}
+	                                                        onClick={() => {
+	                                                          const taughtOnRaw = progressEntry?.taught_on ?? null;
+	                                                          if (!taughtOnRaw) return;
+	                                                          const remark = remarkDraft.trim();
+	                                                          if (!remark) return;
+	                                                          toggleRemarkExpanded(remarkKey, false);
+	                                                          void saveSubtopicRemark(topic.id, index, taughtOnRaw, remark);
+	                                                        }}
+	                                                      >
+	                                                        Save remark
+	                                                      </Button>
+	                                                    ) : (
+	                                                      <Button
+	                                                        className="rounded-full bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-black"
+	                                                        disabled={isSaving || !remarkDraft.trim()}
+	                                                        onClick={() => {
+	                                                          const remark = remarkDraft.trim();
+	                                                          if (!remark) {
+	                                                            setRemarkErrors((prev) => ({
+	                                                              ...prev,
+	                                                              [remarkKey]: "Remark is required to mark this subtopic as taught.",
+	                                                            }));
+	                                                            return;
+	                                                          }
+	                                                          setRemarkErrors((prev) => {
+	                                                            const next = { ...prev };
+	                                                            delete next[remarkKey];
+	                                                            return next;
+	                                                          });
+	                                                          toggleRemarkExpanded(remarkKey, false);
+	                                                          void markSubtopicTaughtWithRemark(topic, index, remark);
+	                                                        }}
+	                                                      >
+	                                                        Mark taught
+	                                                      </Button>
+	                                                    )}
+	                                                  </div>
+	                                                </div>
+	                                              ) : null}
+	                                            </div>
+	                                          </div>
+	                                          <div className="flex items-center">
+	                                            {subComplete ? (
+	                                              <button
+	                                                type="button"
+	                                                className="inline-flex items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 disabled:opacity-60 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-100 dark:hover:bg-blue-500/15"
+	                                                disabled={isSaving}
+	                                                onClick={() =>
+	                                                  openRemarkModal({
+	                                                    topicId: topic.id,
+	                                                    subtopicIndex: index,
+	                                                    topicTitle: topic.title,
+	                                                    subtopicTitle: sub,
+	                                                    taughtOn: progressEntry?.taught_on ?? taughtDate ?? null,
+	                                                    remark: progressEntry?.remark ?? remarkDraft,
+	                                                  })
+	                                                }
+	                                              >
+	                                                <Calendar className="h-3.5 w-3.5" />
+	                                                <span>{displayDate(taughtDate || todayLocal())}</span>
+	                                                <Edit2 className="h-3.5 w-3.5 opacity-70" />
+	                                              </button>
+	                                            ) : null}
+	                                          </div>
+	                                        </div>
+	                                      );
+	                                    })}
                                   </div>
                                 </div>
                               </div>
@@ -991,16 +1459,15 @@ function TeacherLessonPageContent() {
                   </div>
                 ) : (
                   <div className="divide-y divide-gray-100">
-                    {manageTopics.map((topic) => (
-                      <div key={topic.id} className="flex items-center justify-between gap-3 px-2 py-3">
-                        <div>
-                          <div className="text-sm font-semibold text-gray-900">{topic.title}</div>
-                          <div className="text-xs text-gray-500 line-clamp-2">{topic.description}</div>
-                          {topic.subtopics?.length ? (
-                            <div className="text-[11px] text-gray-500 line-clamp-2">
-                              Subtopics: {topic.subtopics.join(", ")}
-                            </div>
-                          ) : null}
+	                    {manageTopics.map((topic) => (
+	                      <div key={topic.id} className="flex items-center justify-between gap-3 px-2 py-3">
+	                        <div>
+	                          <div className="text-sm font-semibold text-gray-900">{topic.title}</div>
+	                          {topic.subtopics?.length ? (
+	                            <div className="text-[11px] text-gray-500 line-clamp-2">
+	                              Subtopics: {topic.subtopics.join(", ")}
+	                            </div>
+	                          ) : null}
                         </div>
                         <div className="flex items-center gap-2">
                           <button
@@ -1097,22 +1564,12 @@ function TeacherLessonPageContent() {
                       min={0}
                     />
                   </div>
-                </div>
-                <div className="mt-4 grid grid-cols-1 gap-4">
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Description</span>
-                    <textarea
-                      value={editorState.description}
-                      onChange={(e) => setEditorState((prev) => ({ ...prev, description: e.target.value }))}
-                      rows={3}
-                      className="w-full resize-none rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-200"
-                      placeholder="Key context or notes."
-                    />
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-                      Subtopics (optional)
-                    </span>
+	                </div>
+	                <div className="mt-4 grid grid-cols-1 gap-4">
+	                  <div className="flex flex-col gap-2">
+	                    <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+	                      Subtopics (optional)
+	                    </span>
                     <div className="space-y-2">
                       {(editorState.subtopics.length ? editorState.subtopics : [""]).map((value, index) => (
                         <div
@@ -1189,20 +1646,10 @@ function TeacherLessonPageContent() {
                         <span className="text-base leading-none">＋</span>
                         Add Subtopic
                       </button>
-                    </div>
-                    <p className="text-xs text-gray-500">Add as many subtopics as needed; leave empty if none.</p>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Objectives</span>
-                    <textarea
-                      value={editorState.objectives}
-                      onChange={(e) => setEditorState((prev) => ({ ...prev, objectives: e.target.value }))}
-                      rows={3}
-                      className="w-full resize-none rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-200"
-                      placeholder="Learning outcomes or milestones."
-                    />
-                  </div>
-                </div>
+	                    </div>
+	                    <p className="text-xs text-gray-500">Add as many subtopics as needed; leave empty if none.</p>
+	                  </div>
+	                </div>
                 <div className="mt-5 flex items-center justify-end gap-3">
                   <Button
                     variant="ghost"
