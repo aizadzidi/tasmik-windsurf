@@ -7,12 +7,35 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { supabase } from "@/lib/supabaseClient";
 import { useSearchParams } from "next/navigation";
-import { Calendar, Check, ChevronDown, Edit2, GripVertical, List, Loader2, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import {
+  Calendar,
+  Check,
+  ChevronDown,
+  ChevronsUpDown,
+  Edit2,
+  GripVertical,
+  List,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Trash2,
+  X,
+} from "lucide-react";
 
 type ClassItem = { id: string; name: string | null };
 type SubjectItem = { id: string; name: string | null };
+type TeacherItem = { id: string; name: string | null; email: string | null };
 type SubtopicProgress = {
   id: string | null;
   subtopic_index: number;
@@ -127,18 +150,27 @@ function TeacherLessonPageContent() {
   const [classes, setClasses] = React.useState<ClassItem[]>([]);
   const [subjects, setSubjects] = React.useState<SubjectItem[]>([]);
   const [activeTab, setActiveTab] = React.useState<"tracker" | "manage">("tracker");
+  const [academicYear, setAcademicYear] = React.useState<number>(() => new Date().getFullYear());
+  const yearOptions = React.useMemo(() => {
+    const now = new Date().getFullYear();
+    const start = now - 2;
+    const end = now + 3;
+    return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  }, []);
 
   // Tracker selections
   const [trackerClassId, setTrackerClassId] = React.useState("");
   const [trackerSubjectId, setTrackerSubjectId] = React.useState("");
   const [trackerTopics, setTrackerTopics] = React.useState<TopicWithProgress[]>([]);
   const [openTopicIds, setOpenTopicIds] = React.useState<Set<string>>(new Set());
+  const [trackerTeacherName, setTrackerTeacherName] = React.useState("");
 
   // Management selections
   const [manageClassId, setManageClassId] = React.useState("");
   const [manageSubjectId, setManageSubjectId] = React.useState("");
   const [manageTopics, setManageTopics] = React.useState<TopicWithProgress[]>([]);
   const [draggingSubtopicIndex, setDraggingSubtopicIndex] = React.useState<number | null>(null);
+  const [manageTeacherName, setManageTeacherName] = React.useState("");
 
   const [loadingMeta, setLoadingMeta] = React.useState(true);
   const [loadingTopics, setLoadingTopics] = React.useState(false);
@@ -146,6 +178,12 @@ function TeacherLessonPageContent() {
   const [savingTopicId, setSavingTopicId] = React.useState<string | null>(null);
   const [inlineError, setInlineError] = React.useState<string | null>(null);
   const [actionMessage, setActionMessage] = React.useState<string | null>(null);
+  const [loadingTeacherName, setLoadingTeacherName] = React.useState(false);
+  const [savingTeacherName, setSavingTeacherName] = React.useState(false);
+  const [teachers, setTeachers] = React.useState<TeacherItem[]>([]);
+  const [loadingTeachers, setLoadingTeachers] = React.useState(false);
+  const [teacherComboboxOpen, setTeacherComboboxOpen] = React.useState(false);
+  const [teacherComboboxQuery, setTeacherComboboxQuery] = React.useState("");
 
   const [expandedRemarkKeys, setExpandedRemarkKeys] = React.useState<Set<string>>(new Set());
   const [remarkDrafts, setRemarkDrafts] = React.useState<Record<string, string>>({});
@@ -217,23 +255,36 @@ function TeacherLessonPageContent() {
 
   const fetchMetadata = React.useCallback(async () => {
     setLoadingMeta(true);
+    setLoadingTeachers(true);
     try {
-      const [{ data: classData, error: classError }, { data: subjectData, error: subjectError }] =
-        await Promise.all([
-          supabase.from("classes").select("id, name").order("name"),
-          supabase.from("subjects").select("id, name").order("name"),
-        ]);
+      const [
+        { data: classData, error: classError },
+        { data: subjectData, error: subjectError },
+        { data: teacherData, error: teacherError },
+      ] = await Promise.all([
+        supabase.from("classes").select("id, name").order("name"),
+        supabase.from("subjects").select("id, name").order("name"),
+        supabase.from("users").select("id, name, email").eq("role", "teacher").order("name"),
+      ]);
       if (classError) throw classError;
       if (subjectError) throw subjectError;
+      if (teacherError) throw teacherError;
 
       const sortedClasses = (classData ?? []).map((cls) => ({ id: String(cls.id), name: cls.name })) ?? [];
       const sortedSubjects = (subjectData ?? []).map((subj) => ({ id: String(subj.id), name: subj.name })) ?? [];
+      const sortedTeachers =
+        (teacherData ?? []).map((teacher) => ({
+          id: String(teacher.id),
+          name: teacher.name ?? null,
+          email: teacher.email ?? null,
+        })) ?? [];
 
       const defaultClass = sortedClasses[0]?.id || "";
       const defaultSubject = sortedSubjects[0]?.id || "";
 
       setClasses(sortedClasses);
       setSubjects(sortedSubjects);
+      setTeachers(sortedTeachers);
       setTrackerClassId((current) => current || defaultClass);
       setTrackerSubjectId((current) => current || defaultSubject);
       setManageClassId((current) => current || defaultClass);
@@ -248,8 +299,10 @@ function TeacherLessonPageContent() {
       setInlineError("Unable to load classes or subjects.");
       setClasses([]);
       setSubjects([]);
+      setTeachers([]);
     } finally {
       setLoadingMeta(false);
+      setLoadingTeachers(false);
     }
   }, []);
 
@@ -326,11 +379,13 @@ function TeacherLessonPageContent() {
 
         const topicIds = (topicRows ?? []).map((t) => t.id as string);
         let subtopicProgressRows: LessonSubtopicProgressRow[] = [];
-        if (topicIds.length > 0) {
+        if (topicIds.length > 0 && userId) {
           const { data: fetchedSubtopicProgress, error: subtopicProgressError } = await supabase
             .from("lesson_subtopic_progress")
             .select("id, topic_id, subtopic_index, taught_on, remark, teacher_id")
-            .in("topic_id", topicIds);
+            .in("topic_id", topicIds)
+            .eq("teacher_id", userId)
+            .eq("academic_year", academicYear);
           if (subtopicProgressError) {
             console.warn("Failed to fetch subtopic progress", subtopicProgressError);
           } else {
@@ -355,7 +410,82 @@ function TeacherLessonPageContent() {
         }
       }
     },
-    [mapTopicsWithProgress]
+    [academicYear, mapTopicsWithProgress, userId]
+  );
+
+  const fetchTeacherName = React.useCallback(
+    async (params: { classId: string; subjectId: string; target: "tracker" | "manage" }) => {
+      const { classId, subjectId, target } = params;
+      if (!classId || !subjectId) {
+        if (target === "tracker") setTrackerTeacherName("");
+        else setManageTeacherName("");
+        return;
+      }
+      setLoadingTeacherName(true);
+      try {
+        const { data, error } = await supabase
+          .from("lesson_class_subject_year")
+          .select("subject_teacher_name")
+          .eq("class_id", classId)
+          .eq("subject_id", subjectId)
+          .eq("academic_year", academicYear)
+          .maybeSingle();
+        if (error) throw error;
+        const name = data?.subject_teacher_name ? String(data.subject_teacher_name) : "";
+        if (target === "tracker") setTrackerTeacherName(name);
+        else setManageTeacherName(name);
+      } catch (error) {
+        console.warn("Failed to fetch teacher name", error);
+        if (target === "tracker") setTrackerTeacherName("");
+        else setManageTeacherName("");
+      } finally {
+        setLoadingTeacherName(false);
+      }
+    },
+    [academicYear]
+  );
+
+  const saveTeacherName = React.useCallback(
+    async (params: { classId: string; subjectId: string; target: "tracker" | "manage" }) => {
+      const { classId, subjectId, target } = params;
+      if (!classId || !subjectId || !userId) return;
+      const name = (target === "tracker" ? trackerTeacherName : manageTeacherName).trim();
+      setSavingTeacherName(true);
+      setInlineError(null);
+      setActionMessage(null);
+      try {
+        const { error } = await supabase.from("lesson_class_subject_year").upsert(
+          {
+            class_id: classId,
+            subject_id: subjectId,
+            academic_year: academicYear,
+            subject_teacher_name: name || null,
+            created_by: userId,
+          },
+          { onConflict: "class_id,subject_id,academic_year" }
+        );
+        if (error) throw error;
+        if (target === "manage") {
+          setManageTeacherName(name);
+          if (classId === trackerClassId && subjectId === trackerSubjectId) {
+            setTrackerTeacherName(name);
+          }
+        } else {
+          setTrackerTeacherName(name);
+        }
+        const message = "Teacher name saved.";
+        setActionMessage(message);
+        window.setTimeout(() => {
+          setActionMessage((current) => (current === message ? null : current));
+        }, 2500);
+      } catch (error) {
+        console.error("Failed to save teacher name", error);
+        setInlineError("Unable to save teacher name right now.");
+      } finally {
+        setSavingTeacherName(false);
+      }
+    },
+    [academicYear, manageTeacherName, trackerClassId, trackerSubjectId, trackerTeacherName, userId]
   );
 
   React.useEffect(() => {
@@ -367,6 +497,10 @@ function TeacherLessonPageContent() {
   }, [fetchTopics, trackerClassId, trackerSubjectId]);
 
   React.useEffect(() => {
+    fetchTeacherName({ classId: trackerClassId, subjectId: trackerSubjectId, target: "tracker" });
+  }, [fetchTeacherName, trackerClassId, trackerSubjectId]);
+
+  React.useEffect(() => {
     setRemarkModalTarget(null);
     setRemarkModalText("");
     setRemarkModalDate(todayLocal());
@@ -375,7 +509,7 @@ function TeacherLessonPageContent() {
     setExpandedRemarkKeys(new Set());
     setRemarkDrafts({});
     setRemarkErrors({});
-  }, [trackerClassId, trackerSubjectId]);
+  }, [academicYear, trackerClassId, trackerSubjectId]);
 
   React.useEffect(() => {
     setOpenTopicIds(new Set(trackerTopics.map((topic) => topic.id)));
@@ -384,6 +518,10 @@ function TeacherLessonPageContent() {
   React.useEffect(() => {
     fetchTopics({ classId: manageClassId, subjectId: manageSubjectId, target: "manage" });
   }, [fetchTopics, manageClassId, manageSubjectId]);
+
+  React.useEffect(() => {
+    fetchTeacherName({ classId: manageClassId, subjectId: manageSubjectId, target: "manage" });
+  }, [fetchTeacherName, manageClassId, manageSubjectId]);
 
   const reorderSubtopics = React.useCallback((from: number, to: number) => {
     setEditorState((prev) => {
@@ -448,17 +586,18 @@ function TeacherLessonPageContent() {
             topic_id: topicId,
             subtopic_index: subtopicIndex,
             teacher_id: userId,
+            academic_year: academicYear,
             taught_on: taughtOn,
             remark,
           },
-          { onConflict: "topic_id,subtopic_index,teacher_id" }
+          { onConflict: "topic_id,subtopic_index,teacher_id,academic_year" }
         )
         .select("id, subtopic_index, taught_on, remark")
         .single();
       if (error) throw error;
       return data;
     },
-    [userId]
+    [academicYear, userId]
   );
 
   const applySubtopicProgressUpdate = React.useCallback(
@@ -556,7 +695,9 @@ function TeacherLessonPageContent() {
           .from("lesson_subtopic_progress")
           .delete()
           .eq("topic_id", topic.id)
-          .eq("subtopic_index", subtopicIndex);
+          .eq("subtopic_index", subtopicIndex)
+          .eq("teacher_id", userId)
+          .eq("academic_year", academicYear);
         if (error) throw error;
         setTrackerTopics((prev) =>
           prev.map((row) =>
@@ -888,7 +1029,7 @@ function TeacherLessonPageContent() {
           <TabsContent value="tracker" className="mt-6 space-y-5">
             <Card className={`${summaryCardClass} mt-1.5 space-y-6 p-8`}>
               <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-3">
                   <div className="flex flex-col gap-1.5">
                     <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Class</span>
                     <div className="mt-1">
@@ -923,6 +1064,23 @@ function TeacherLessonPageContent() {
                       </select>
                     </div>
                   </div>
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Year</span>
+                    <div className="mt-1">
+                      <select
+                        value={String(academicYear)}
+                        onChange={(e) => setAcademicYear(Number(e.target.value))}
+                        className={selectorClass}
+                        disabled={loadingMeta}
+                      >
+                        {yearOptions.map((year) => (
+                          <option key={year} value={year}>
+                            {year}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -935,6 +1093,17 @@ function TeacherLessonPageContent() {
                 </button>
               </div>
 
+              <div className="flex items-end justify-between gap-3">
+                <div className="flex min-w-0 flex-col gap-1.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                    Subject teacher
+                  </span>
+                  <p className="truncate text-sm font-semibold text-gray-900">
+                    {loadingTeacherName ? "Loading…" : trackerTeacherName.trim() ? trackerTeacherName : "Not set"}
+                  </p>
+                </div>
+              </div>
+
               <div className="border-t border-gray-100 pt-6">
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -945,7 +1114,7 @@ function TeacherLessonPageContent() {
                     {completedSubtopics} / {totalSubtopics || 0} subtopics taught
                   </p>
                   <p className="text-sm text-gray-500">
-                    {trackerClassName} · {trackerSubjectName}
+                    {trackerClassName} · {trackerSubjectName} · {academicYear}
                   </p>
                   <div className="mt-3 h-2.5 w-full rounded-full bg-gray-200">
                     <div
@@ -1404,7 +1573,7 @@ function TeacherLessonPageContent() {
 
           <TabsContent value="manage" className="mt-6 space-y-6">
             <Card className={`${summaryCardClass} p-8`}>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="flex flex-col gap-1.5">
                   <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Target Class</span>
                   <div className="mt-1">
@@ -1439,6 +1608,115 @@ function TeacherLessonPageContent() {
                     </select>
                   </div>
                 </div>
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Year</span>
+                  <div className="mt-1">
+                    <select
+                      value={String(academicYear)}
+                      onChange={(e) => setAcademicYear(Number(e.target.value))}
+                      className={selectorClass}
+                      disabled={loadingMeta}
+                    >
+                      {yearOptions.map((year) => (
+                        <option key={year} value={year}>
+                          {year}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div className="flex w-full flex-col gap-1.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                    Subject teacher name
+                  </span>
+                  <Popover open={teacherComboboxOpen} onOpenChange={setTeacherComboboxOpen}>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        role="combobox"
+                        aria-expanded={teacherComboboxOpen}
+                        aria-controls="teacher-combobox-list"
+                        aria-haspopup="listbox"
+                        className={`${selectorClass} inline-flex items-center justify-between`}
+                        disabled={loadingMeta || loadingTeacherName || savingTeacherName || loadingTeachers}
+                      >
+                        <span className="truncate">
+                          {manageTeacherName.trim() ? manageTeacherName : "Select teacher…"}
+                        </span>
+                        <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-60" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                      <Command>
+                        <CommandInput
+                          placeholder="Search teacher..."
+                          value={teacherComboboxQuery}
+                          onValueChange={setTeacherComboboxQuery}
+                        />
+                        <CommandList id="teacher-combobox-list">
+                          <CommandEmpty>
+                            {teacherComboboxQuery.trim() ? (
+                              <button
+                                type="button"
+                                className="w-full px-2 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+                                onClick={() => {
+                                  setManageTeacherName(teacherComboboxQuery.trim());
+                                  setTeacherComboboxOpen(false);
+                                  setTeacherComboboxQuery("");
+                                }}
+                              >
+                                Use “{teacherComboboxQuery.trim()}”
+                              </button>
+                            ) : (
+                              "No teachers found."
+                            )}
+                          </CommandEmpty>
+                          <CommandGroup heading="Teachers">
+                            {teachers.map((teacher) => {
+                              const label = teacher.name || teacher.email || "Unnamed teacher";
+                              const selected = label === manageTeacherName;
+                              return (
+                                <CommandItem
+                                  key={teacher.id}
+                                  value={`${label} ${teacher.email ?? ""}`.trim()}
+                                  onSelect={() => {
+                                    setManageTeacherName(label);
+                                    setTeacherComboboxOpen(false);
+                                    setTeacherComboboxQuery("");
+                                  }}
+                                >
+                                  <span className="truncate">{label}</span>
+                                  {selected ? <Check className="ml-auto h-4 w-4 opacity-70" /> : null}
+                                </CommandItem>
+                              );
+                            })}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                  {manageTeacherName.trim() ? (
+                    <button
+                      type="button"
+                      className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-gray-500 hover:text-gray-900"
+                      onClick={() => setManageTeacherName("")}
+                      disabled={savingTeacherName}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      Clear
+                    </button>
+                  ) : null}
+                </div>
+                <Button
+                  className="inline-flex h-10 items-center gap-2 rounded-full bg-gray-900 px-4 text-sm font-semibold text-white shadow-[0_1px_3px_rgba(15,23,42,0.2)] transition hover:bg-black disabled:opacity-60"
+                  onClick={() => saveTeacherName({ classId: manageClassId, subjectId: manageSubjectId, target: "manage" })}
+                  disabled={loadingMeta || loadingTeacherName || savingTeacherName || !manageClassId || !manageSubjectId}
+                >
+                  {savingTeacherName ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  Save
+                </Button>
               </div>
               <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
                 <div>
