@@ -19,6 +19,7 @@ import {
 import type { AttendanceRecord, AttendanceStatus, ClassAttendance, SchoolHoliday } from "@/types/attendance";
 import { Calendar, CalendarX, CheckCircle2, GraduationCap } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { deleteAttendanceRecord, listAttendanceRecords, upsertAttendanceRecord } from "@/lib/attendanceApi";
 
 const tabs = [
   { id: "rollcall", label: "Daily Roll Call" },
@@ -139,12 +140,20 @@ export default function TeacherAttendancePage() {
   const [attendanceState, setAttendanceState] = React.useState<AttendanceRecord>({});
   const [loadingClasses, setLoadingClasses] = React.useState(true);
   const [fetchError, setFetchError] = React.useState<string | null>(null);
+  const [loadingAttendance, setLoadingAttendance] = React.useState(false);
+  const [attendanceError, setAttendanceError] = React.useState<string | null>(null);
   const [holidays, setHolidays] = React.useState<SchoolHoliday[]>([]);
   const [holidaysError, setHolidaysError] = React.useState<string | null>(null);
   const [, setLoadingHolidays] = React.useState(true);
 
   const selectedClass = classes.find((item) => item.id === selectedClassId);
   const formattedSelectedDate = formatDisplayDate(selectedDate);
+  const attendanceLookbackStart = React.useMemo(() => {
+    const end = new Date();
+    const start = new Date(end);
+    start.setDate(start.getDate() - 400);
+    return toLocalDateKey(start);
+  }, []);
   const currentRangeMeta = React.useMemo(
     () => ANALYTICS_RANGE_OPTIONS.find((option) => option.id === analyticsRange) ?? ANALYTICS_RANGE_OPTIONS[0],
     [analyticsRange],
@@ -206,6 +215,7 @@ export default function TeacherAttendancePage() {
   const fetchClassRosters = React.useCallback(async () => {
     setLoadingClasses(true);
     setFetchError(null);
+    setAttendanceError(null);
     try {
       const [{ data: classData, error: classError }, studentRows] = await Promise.all([
         supabase.from("classes").select("id, name").order("name"),
@@ -254,6 +264,68 @@ export default function TeacherAttendancePage() {
       setSelectedClassId((current) => (current || roster[0]?.id) ?? "");
       setIsDirty(false);
       setStatusMessage("");
+
+      setLoadingAttendance(true);
+      const endDate = todayIso();
+      const res = await listAttendanceRecords({
+        classIds: roster.map((item) => item.id),
+        startDate: attendanceLookbackStart,
+        endDate,
+      });
+      if (res.error) {
+        setAttendanceError("Unable to load saved attendance. You can still mark attendance, but it may not persist.");
+        return;
+      }
+      const classMapById = new Map<string, ClassAttendance>(roster.map((item) => [item.id, item]));
+      setAttendanceState((prev) => {
+        const next = { ...prev };
+
+        const aggregated = new Map<
+          string,
+          {
+            classId: string;
+            dateKey: string;
+            statuses: Record<string, AttendanceStatus>;
+            studentIds: Set<string>;
+          }
+        >();
+
+        res.records.forEach((row) => {
+          const classId = String(row.class_id);
+          const dateKey = String(row.attendance_date);
+          const key = `${classId}__${dateKey}`;
+          const current =
+            aggregated.get(key) ?? {
+              classId,
+              dateKey,
+              statuses: {},
+              studentIds: new Set<string>(),
+            };
+          const studentId = String(row.student_id);
+          current.statuses[studentId] = row.status ?? "present";
+          current.studentIds.add(studentId);
+          aggregated.set(key, current);
+        });
+
+        aggregated.forEach((record) => {
+          const classItem = classMapById.get(record.classId);
+          if (!classItem) return;
+          const statuses = classItem.students.reduce<Record<string, AttendanceStatus>>((acc, student) => {
+            acc[student.id] = record.statuses[student.id] ?? "present";
+            return acc;
+          }, {});
+          const submitted = record.studentIds.size >= classItem.students.length;
+          next[record.classId] = {
+            ...(next[record.classId] ?? {}),
+            [record.dateKey]: {
+              statuses,
+              submitted,
+            },
+          };
+        });
+
+        return next;
+      });
     } catch (error) {
       console.error("Failed to load class roster", error);
       setClasses([]);
@@ -262,8 +334,9 @@ export default function TeacherAttendancePage() {
       setFetchError("Unable to load the latest class roster. Please try again.");
     } finally {
       setLoadingClasses(false);
+      setLoadingAttendance(false);
     }
-  }, [fetchStudentRoster]);
+  }, [fetchStudentRoster, attendanceLookbackStart]);
 
   const fetchHolidays = React.useCallback(async () => {
     setLoadingHolidays(true);
@@ -367,8 +440,16 @@ export default function TeacherAttendancePage() {
     setStatusMessage("");
   };
 
-  const handleResetSubmission = () => {
+  const handleResetSubmission = async () => {
     if (!selectedClass) return;
+    setSaving(true);
+    setStatusMessage("");
+    const res = await deleteAttendanceRecord({ classId: selectedClass.id, date: selectedDate });
+    if (res.error) {
+      setSaving(false);
+      setStatusMessage("Unable to reset submission. Please try again.");
+      return;
+    }
     setAttendanceState((prev) => {
       const classState = prev[selectedClass.id] ?? {};
       const entry = classState[selectedDate] ?? createDefaultDailyRecord(selectedClass.students);
@@ -386,30 +467,54 @@ export default function TeacherAttendancePage() {
     });
     setIsDirty(false);
     setStatusMessage("Submission reset");
+    setSaving(false);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!selectedClass || isHoliday) return;
     setSaving(true);
-    setTimeout(() => {
-      setAttendanceState((prev) => {
-        const classState = prev[selectedClass.id] ?? {};
-        const entry = classState[selectedDate] ?? createDefaultDailyRecord(selectedClass.students);
-        return {
-          ...prev,
-          [selectedClass.id]: {
-            ...classState,
-            [selectedDate]: {
-              ...entry,
-              submitted: true,
-            },
-          },
-        };
-      });
+    setStatusMessage("");
+    const { data } = await supabase.auth.getUser();
+    const recordedBy = data?.user?.id ?? null;
+
+    const classState = attendanceState[selectedClass.id] ?? {};
+    const entry = classState[selectedDate] ?? createDefaultDailyRecord(selectedClass.students);
+    const normalizedStatuses = selectedClass.students.reduce<Record<string, AttendanceStatus>>((acc, student) => {
+      acc[student.id] = entry.statuses?.[student.id] ?? "present";
+      return acc;
+    }, {});
+
+    const existingSubmitted = Boolean(entry.submitted);
+    const res = await upsertAttendanceRecord({
+      classId: selectedClass.id,
+      date: selectedDate,
+      statuses: normalizedStatuses,
+      recordedBy,
+    });
+
+    if (res.error) {
       setSaving(false);
-      setIsDirty(false);
-      setStatusMessage("Submitted just now");
-    }, 1000);
+      setStatusMessage("Submit failed (no permission or table missing).");
+      return;
+    }
+
+    setAttendanceState((prev) => {
+      const nextClassState = prev[selectedClass.id] ?? {};
+      return {
+        ...prev,
+        [selectedClass.id]: {
+          ...nextClassState,
+          [selectedDate]: {
+            ...entry,
+            statuses: normalizedStatuses,
+            submitted: true,
+          },
+        },
+      };
+    });
+    setSaving(false);
+    setIsDirty(false);
+    setStatusMessage(existingSubmitted ? "Updated just now" : "Submitted just now");
   };
 
   const classStats = selectedClass
@@ -500,6 +605,16 @@ export default function TeacherAttendancePage() {
             {holidaysError && (
               <div className="mt-3 rounded-2xl border border-amber-100 bg-amber-50 px-3 py-2 text-[13px] text-amber-800">
                 {holidaysError}
+              </div>
+            )}
+            {attendanceError && (
+              <div className="mt-3 rounded-2xl border border-amber-100 bg-amber-50 px-3 py-2 text-[13px] text-amber-800">
+                {attendanceError}
+              </div>
+            )}
+            {loadingAttendance && !attendanceError && (
+              <div className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-600">
+                Loading saved attendance…
               </div>
             )}
             <div className="mt-2">
