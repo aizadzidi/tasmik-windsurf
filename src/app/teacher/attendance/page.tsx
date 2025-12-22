@@ -67,7 +67,7 @@ function SegmentedControl({
             key={option.id}
             onClick={() => onChange(option.id)}
             className={cn(
-              "relative flex-1 flex items-center justify-center gap-2 px-6 py-2.5 text-sm font-medium transition-colors z-10",
+              "relative flex-1 flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-6 py-2 sm:py-2.5 text-xs sm:text-sm font-medium transition-colors z-10",
               isActive ? "text-slate-900" : "text-slate-500 hover:text-slate-700"
             )}
           >
@@ -78,8 +78,8 @@ function SegmentedControl({
                 transition={{ type: "spring", bounce: 0.2, duration: 0.3 }}
               />
             )}
-            <span className="relative z-10 flex items-center gap-2">
-              {option.icon && <option.icon className="w-4 h-4" />}
+            <span className="relative z-10 flex items-center gap-1 sm:gap-2">
+              {option.icon && <option.icon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
               {option.label}
             </span>
           </button>
@@ -478,7 +478,7 @@ export default function TeacherAttendancePage() {
   }
 
   return (
-    <div className="h-screen overflow-hidden bg-[#F2F2F7] selection:bg-indigo-100 selection:text-indigo-900 flex flex-col">
+    <div className="min-h-screen bg-[#F2F2F7] selection:bg-indigo-100 selection:text-indigo-900 flex flex-col">
       <Navbar />
 
       <main className="flex-1 max-w-[1100px] w-full mx-auto px-4 sm:px-6 py-8 flex flex-col min-h-0">
@@ -582,7 +582,7 @@ export default function TeacherAttendancePage() {
                 </div>
 
                 {/* Main List */}
-                <div className="bg-white rounded-[32px] shadow-[0_8px_40px_-12px_rgba(0,0,0,0.08)] overflow-hidden flex flex-col flex-1 border border-slate-100 min-h-[400px]">
+                <div className="bg-white rounded-[32px] shadow-[0_8px_40px_-12px_rgba(0,0,0,0.08)] overflow-hidden flex flex-col border border-slate-100 max-h-[60vh] min-h-[300px]">
                   {/* List Header & Search */}
                   <div className="px-8 py-6 border-b border-slate-50 flex items-center justify-between shrink-0 bg-white z-10 shadow-sm gap-4">
                     <div className="flex-1">
