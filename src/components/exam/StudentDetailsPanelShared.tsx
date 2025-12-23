@@ -91,7 +91,7 @@ export default function StudentDetailsPanelShared({
     const subjectEntries = student?.subjects ? Object.entries(student.subjects) : [];
 
     if (isNewStudent && subjectEntries.length > 0) {
-      const mapped: StudentSubjectRow[] = Object.entries(student.subjects).map(([subjectName, info]) => ({
+      const mapped: StudentSubjectRow[] = subjectEntries.map(([subjectName, info]) => ({
         subject_id: subjectName,
         subject_name: subjectName,
         result_id: null,
