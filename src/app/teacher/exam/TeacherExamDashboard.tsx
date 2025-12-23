@@ -1531,7 +1531,7 @@ export default function TeacherExamDashboard() {
                             class: clsName,
                             subjects: {},
                             conduct: { discipline: 0, effort: 0, participation: 0, motivationalLevel: 0, character: 0, leadership: 0 },
-                            overall: { average: 0, rank: 0, needsAttention: false },
+                            overall: { average: Number.NaN, rank: 0, needsAttention: false },
                           });
                           try {
                             if (selectedExamId) {

@@ -80,12 +80,17 @@ export default function StudentDetailsPanelShared({
   const [conductSummaryLoading, setConductSummaryLoading] = useState(false);
   const [conductWeightagePct, setConductWeightagePct] = useState<number | null>(null);
   const [gradingScale, setGradingScale] = useState<GradingScale | null>(null);
+  const lastPrefillStudentIdRef = React.useRef<string | null>(null);
 
   // Final mark and averages come from RPCs via useWeightedAverages
 
   // Prefill with data coming from parent (admin/teacher tables) so the panel isn't empty while RPCs load
   React.useEffect(() => {
-    if (student?.subjects) {
+    const nextStudentId = student?.id ?? null;
+    const isNewStudent = nextStudentId !== lastPrefillStudentIdRef.current;
+    const subjectEntries = student?.subjects ? Object.entries(student.subjects) : [];
+
+    if (isNewStudent && subjectEntries.length > 0) {
       const mapped: StudentSubjectRow[] = Object.entries(student.subjects).map(([subjectName, info]) => ({
         subject_id: subjectName,
         subject_name: subjectName,
@@ -98,7 +103,13 @@ export default function StudentDetailsPanelShared({
       setSubjectRows(mapped);
     }
 
-    if (student?.conduct) {
+    const hasPrefillConduct =
+      !!student?.conduct &&
+      Object.values(student.conduct).some(
+        (value) => typeof value === "number" && Number.isFinite(value) && value > 0
+      );
+
+    if (isNewStudent && hasPrefillConduct && student?.conduct) {
       setConductSummary({
         source: 'average',
         subjects_count: Object.keys(student.subjects || {}).length,
@@ -110,6 +121,12 @@ export default function StudentDetailsPanelShared({
         character_score: student.conduct.character ?? null,
         leadership: student.conduct.leadership ?? null,
       });
+    } else if (isNewStudent) {
+      setConductSummary(null);
+    }
+
+    if (isNewStudent) {
+      lastPrefillStudentIdRef.current = nextStudentId;
     }
   }, [student]);
 
@@ -297,7 +314,7 @@ export default function StudentDetailsPanelShared({
   // Weighted/averages via RPCs
   const allowedSubjectIds: string[] | null = null; // keep identical filters across calls
   const wConduct = typeof conductWeightagePct === 'number' ? conductWeightagePct : 0;
-  const { subjectAvg, finalWeighted, fmt } = useWeightedAverages({
+  const { subjectAvg, finalWeighted, fmt, loading: averagesLoading } = useWeightedAverages({
     supabase,
     examId: examId || null,
     classId: classId || null,
@@ -1116,7 +1133,11 @@ ${conductItems
                   <div className="rounded-2xl border border-gray-200 bg-white shadow-sm px-4 py-3 text-right">
                     <div className="text-[11px] uppercase tracking-wider text-gray-500">Final Mark</div>
                     <div className="mt-1 flex items-baseline justify-end gap-2">
-                      <span className="text-3xl font-semibold text-gray-900 tabular-nums">{fmt(finalScoreForDisplay)}</span>
+                      {averagesLoading && finalScoreForDisplay == null ? (
+                        <Loader2 className="h-5 w-5 animate-spin text-gray-400" aria-label="Loading final mark" />
+                      ) : (
+                        <span className="text-3xl font-semibold text-gray-900 tabular-nums">{fmt(finalScoreForDisplay)}</span>
+                      )}
                     </div>
                   </div>
                   <button onClick={() => onClose()} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
