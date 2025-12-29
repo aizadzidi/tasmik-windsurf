@@ -25,7 +25,7 @@ export default function ClassDistributionChart({ students, classes, onSelectClas
       : classes?.find(c => c.id === classId)?.name || "Unknown Class";
 
     if (!acc[classId]) {
-      acc[classId] = { id: className, label: className, classId, value: 0 };
+      acc[classId] = { id: classId, label: className, classId, value: 0 };
     }
     acc[classId].value += 1;
     return acc;
@@ -45,6 +45,7 @@ export default function ClassDistributionChart({ students, classes, onSelectClas
         borderWidth={1}
         borderColor={{ from: "color", modifiers: [["darker", 0.2]] }}
         arcLinkLabelsSkipAngle={10}
+        arcLinkLabel={(datum) => String(datum.label)}
         arcLinkLabelsTextColor="#333333"
         arcLinkLabelsThickness={2}
         arcLinkLabelsColor={{ from: "color" }}
@@ -78,6 +79,21 @@ export default function ClassDistributionChart({ students, classes, onSelectClas
         ]}
         animate={true}
         isInteractive={true}
+        tooltip={({ datum }) => (
+          <div
+            style={{
+              background: "white",
+              padding: "9px 12px",
+              border: "1px solid #ccc",
+              borderRadius: "4px",
+              boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+            }}
+          >
+            <strong>{datum.label}</strong>
+            <br />
+            Students: {datum.value}
+          </div>
+        )}
         onClick={(datum) => onSelectClass?.(String(datum.data?.classId || datum.id))}
       />
     </div>

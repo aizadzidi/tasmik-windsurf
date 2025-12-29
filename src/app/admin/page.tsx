@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ChevronsUpDown, Check, Layers, UserPlus, Plus, Settings } from "lucide-react";
+import { ChevronsUpDown, Check, Plus, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ClassDistributionChart from "@/components/admin/ClassDistributionChart";
 import TeacherAssignmentChart from "@/components/admin/TeacherAssignmentChart";
