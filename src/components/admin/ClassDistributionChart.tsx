@@ -5,38 +5,33 @@ import { StudentProgressData } from "@/lib/reportUtils";
 interface ClassDistributionChartProps {
   students: StudentProgressData[] | Array<{ class_name?: string; class_id?: string | null }>;
   classes?: Array<{ id: string; name: string }>;
+  onSelectClass?: (classId: string) => void;
 }
 
-export default function ClassDistributionChart({ students, classes }: ClassDistributionChartProps) {
+export default function ClassDistributionChart({ students, classes, onSelectClass }: ClassDistributionChartProps) {
   const classStats = students.reduce((acc, student) => {
-    let className: string;
-    
-    // Handle both types of student objects
-    if ('class_name' in student) {
-      // StudentProgressData format
-      className = student.class_name || "Unassigned";
-    } else {
-      // Admin page Student format - need to map class_id to class name
-      if (student.class_id && classes) {
-        const classObj = classes.find(c => c.id === student.class_id);
-        className = classObj?.name || "Unknown Class";
-      } else {
-        className = "Unassigned";
+    if ("class_name" in student) {
+      const className = student.class_name || "Unassigned";
+      if (!acc[className]) {
+        acc[className] = { id: className, label: className, classId: className === "Unassigned" ? "unassigned" : className, value: 0 };
       }
+      acc[className].value += 1;
+      return acc;
     }
-    
-    if (!acc[className]) {
-      acc[className] = 0;
-    }
-    acc[className]++;
-    return acc;
-  }, {} as Record<string, number>);
 
-  const data = Object.entries(classStats).map(([className, count]) => ({
-    id: className,
-    label: className,
-    value: count,
-  }));
+    const classId = student.class_id || "unassigned";
+    const className = classId === "unassigned"
+      ? "Unassigned"
+      : classes?.find(c => c.id === classId)?.name || "Unknown Class";
+
+    if (!acc[classId]) {
+      acc[classId] = { id: className, label: className, classId, value: 0 };
+    }
+    acc[classId].value += 1;
+    return acc;
+  }, {} as Record<string, { id: string; label: string; classId: string; value: number }>);
+
+  const data = Object.values(classStats);
 
   return (
     <div style={{ height: 300 }}>
@@ -83,6 +78,7 @@ export default function ClassDistributionChart({ students, classes }: ClassDistr
         ]}
         animate={true}
         isInteractive={true}
+        onClick={(datum) => onSelectClass?.(String(datum.data?.classId || datum.id))}
       />
     </div>
   );

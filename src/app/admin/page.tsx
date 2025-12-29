@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import AdminNavbar from "@/components/admin/AdminNavbar";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -77,6 +77,7 @@ export default function AdminPage() {
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState("");
   const [editParentOpen, setEditParentOpen] = useState(false);
+  const studentListRef = useRef<HTMLDivElement | null>(null);
 
   // Dev log helper
   const isDev = useMemo(() => process.env.NODE_ENV !== 'production', []);
@@ -443,6 +444,22 @@ export default function AdminPage() {
   const teacherById = useMemo(() => new Map(teachers.map((t) => [t.id, t])), [teachers]);
   const classById = useMemo(() => new Map(classes.map((c) => [c.id, c])), [classes]);
 
+  const scrollToStudentList = useCallback(() => {
+    studentListRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  const handleClassChartSelect = useCallback((classId: string) => {
+    setFilterClass(classId);
+    setFilterTeacher("");
+    scrollToStudentList();
+  }, [scrollToStudentList]);
+
+  const handleTeacherChartSelect = useCallback((teacherId: string) => {
+    setFilterTeacher(teacherId);
+    setFilterClass("");
+    scrollToStudentList();
+  }, [scrollToStudentList]);
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
       <AdminNavbar />
@@ -489,11 +506,19 @@ export default function AdminPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
           <Card className="p-6">
             <h3 className="text-lg font-semibold text-gray-800 mb-4">Class Distribution</h3>
-            <ClassDistributionChart students={students} classes={classes} />
+            <ClassDistributionChart
+              students={students}
+              classes={classes}
+              onSelectClass={handleClassChartSelect}
+            />
           </Card>
           <Card className="p-6">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4">Teacher Assignments</h3>
-            <TeacherAssignmentChart students={students} teachers={teachers} />
+            <h3 className="text-lg font-semibold text-gray-800 mb-4">Halaqah</h3>
+            <TeacherAssignmentChart
+              students={students}
+              teachers={teachers}
+              onSelectTeacher={handleTeacherChartSelect}
+            />
           </Card>
         </div>
 
@@ -517,8 +542,15 @@ export default function AdminPage() {
       </div>
 
       {/* Students List Section */}
-      <Card className="p-4">
-        <h2 className="text-xl font-semibold text-gray-900 mb-4">Students List</h2>
+      <Card className="p-4" ref={studentListRef}>
+        <div className="flex items-baseline justify-between mb-4">
+          <h2 className="text-xl font-semibold text-gray-900">Students List</h2>
+          {filteredStudents.length !== students.length && (
+            <span className="text-sm text-gray-500">
+              {filteredStudents.length} of {students.length} students
+            </span>
+          )}
+        </div>
         
         {/* Filters */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
@@ -655,7 +687,7 @@ export default function AdminPage() {
                         </div>
                       </div>
                       {editError && <p className="text-red-500 text-sm mt-2">{editError}</p>}
-                      <div className="flex gap-2 items-center mt-4">
+                      <div className="flex flex-col gap-2 items-start mt-4">
                         <button 
                           onClick={() => handleSaveEditStudent(s.id)} 
                           disabled={editLoading} 
@@ -711,7 +743,7 @@ export default function AdminPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex gap-2">
+                        <div className="flex flex-col gap-2">
                           <button 
                             onClick={() => handleEditStudent(s)} 
                             className="bg-blue-600 text-white px-3 py-1 rounded text-xs hover:bg-blue-700"

@@ -18,13 +18,15 @@ interface Teacher {
 interface TeacherAssignmentChartProps {
   students: Student[];
   teachers: Teacher[];
+  onSelectTeacher?: (teacherId: string) => void;
 }
 
-export default function TeacherAssignmentChart({ students, teachers }: TeacherAssignmentChartProps) {
+export default function TeacherAssignmentChart({ students, teachers, onSelectTeacher }: TeacherAssignmentChartProps) {
   // Create teacher assignment stats
   const teacherStats = teachers.map(teacher => {
     const assignedStudents = students.filter(s => s.assigned_teacher_id === teacher.id);
     return {
+      teacherId: teacher.id,
       teacher: teacher.name,
       students: assignedStudents.length,
       color: "hsl(210, 70%, 50%)"
@@ -35,6 +37,7 @@ export default function TeacherAssignmentChart({ students, teachers }: TeacherAs
   const unassignedStudents = students.filter(s => !s.assigned_teacher_id);
   if (unassignedStudents.length > 0) {
     teacherStats.push({
+      teacherId: "unassigned",
       teacher: "Unassigned",
       students: unassignedStudents.length,
       color: "hsl(0, 70%, 50%)"
@@ -57,10 +60,13 @@ export default function TeacherAssignmentChart({ students, teachers }: TeacherAs
         axisTop={null}
         axisRight={null}
         axisBottom={{
-          tickRotation: -45,
-          legend: "Teachers",
+          tickSize: 0,
+          tickPadding: 0,
+          tickRotation: 0,
+          format: () => "",
+          legend: "Halaqah",
           legendPosition: "middle",
-          legendOffset: 60,
+          legendOffset: 50,
         }}
         axisLeft={{
           legend: "Number of Students",
@@ -72,6 +78,12 @@ export default function TeacherAssignmentChart({ students, teachers }: TeacherAs
         labelTextColor={{ from: "color", modifiers: [["darker", 1.6]] }}
         animate={true}
         isInteractive={true}
+        onClick={(datum) => {
+          const teacherId = datum.data?.teacherId;
+          if (teacherId) {
+            onSelectTeacher?.(String(teacherId));
+          }
+        }}
         tooltip={({ value, indexValue }) => (
           <div
             style={{
