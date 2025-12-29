@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ChevronsUpDown, Check } from "lucide-react";
+import { ChevronsUpDown, Check, Layers, UserPlus, Plus, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ClassDistributionChart from "@/components/admin/ClassDistributionChart";
 import TeacherAssignmentChart from "@/components/admin/TeacherAssignmentChart";
@@ -35,6 +35,7 @@ interface Parent {
 interface Class {
   id: string;
   name: string;
+  level?: string | null;
 }
 
 
@@ -49,12 +50,21 @@ export default function AdminPage() {
   const [success, setSuccess] = useState("");
 
   // Form states
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [isAddStudentModalOpen, setIsAddStudentModalOpen] = useState(false);
   const [newStudentName, setNewStudentName] = useState("");
   const [newStudentParentId, setNewStudentParentId] = useState("");
   const [newStudentTeacherId, setNewStudentTeacherId] = useState("");
   const [newStudentClassId, setNewStudentClassId] = useState("");
   const [addParentOpen, setAddParentOpen] = useState(false);
+  const [newClassName, setNewClassName] = useState("");
+  const [newClassLevel, setNewClassLevel] = useState("");
+  const [classLoading, setClassLoading] = useState(false);
+  const [classError, setClassError] = useState("");
+  const [classSuccess, setClassSuccess] = useState("");
+  const [editingClassId, setEditingClassId] = useState<string | null>(null);
+  const [editingClassName, setEditingClassName] = useState("");
+  const [editingClassLevel, setEditingClassLevel] = useState("");
+  const [isClassesModalOpen, setIsClassesModalOpen] = useState(false);
   
   // Filter states
   const [searchTerm, setSearchTerm] = useState("");
@@ -140,6 +150,15 @@ export default function AdminPage() {
     fetchData();
   }, [isDev, parseError]);
 
+  const classStudentCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    students.forEach((student) => {
+      if (!student.class_id) return;
+      counts.set(student.class_id, (counts.get(student.class_id) || 0) + 1);
+    });
+    return counts;
+  }, [students]);
+
   const handleAddStudent = async () => {
     if (!newStudentName.trim()) return;
     setLoading(true);
@@ -164,7 +183,6 @@ export default function AdminPage() {
         setNewStudentParentId("");
         setNewStudentTeacherId("");
         setNewStudentClassId("");
-        setShowAddForm(false);
         setSuccess("Student added successfully!");
         setTimeout(() => setSuccess(""), 3000);
       } else {
@@ -176,6 +194,139 @@ export default function AdminPage() {
     }
     setLoading(false);
   };
+
+  const handleAddClass = async () => {
+    const name = newClassName.trim();
+    if (!name) return;
+    setClassLoading(true);
+    setClassError("");
+    setClassSuccess("");
+
+    try {
+      const response = await fetch('/api/admin/classes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, level: newClassLevel || null })
+      });
+
+      if (response.ok) {
+        const newClass = await response.json();
+        setClasses(prev => [...prev, newClass].sort((a, b) => a.name.localeCompare(b.name)));
+        setNewClassName("");
+        setNewClassLevel("");
+        setClassSuccess("Class added successfully!");
+        setTimeout(() => setClassSuccess(""), 3000);
+      } else {
+        const err = await parseError(response);
+        setClassError("Failed to add class: " + err);
+      }
+    } catch {
+      setClassError("Failed to add class: Network error");
+    }
+
+    setClassLoading(false);
+  };
+
+  const handleStartEditClass = (classItem: Class) => {
+    setEditingClassId(classItem.id);
+    setEditingClassName(classItem.name);
+    setEditingClassLevel(classItem.level ?? "");
+    setClassError("");
+    setClassSuccess("");
+  };
+
+  const handleCancelEditClass = () => {
+    setEditingClassId(null);
+    setEditingClassName("");
+    setEditingClassLevel("");
+  };
+
+  const handleSaveClass = async (classId: string) => {
+    const name = editingClassName.trim();
+    if (!name) return;
+    setClassLoading(true);
+    setClassError("");
+    setClassSuccess("");
+
+    try {
+      const response = await fetch('/api/admin/classes', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: classId, name, level: editingClassLevel || null })
+      });
+
+      if (response.ok) {
+        const updatedClass = await response.json();
+        setClasses(prev =>
+          prev
+            .map(c => (c.id === classId ? updatedClass : c))
+            .sort((a, b) => a.name.localeCompare(b.name))
+        );
+        setEditingClassId(null);
+        setEditingClassName("");
+        setEditingClassLevel("");
+        setClassSuccess("Class updated successfully!");
+        setTimeout(() => setClassSuccess(""), 3000);
+      } else {
+        const err = await parseError(response);
+        setClassError("Failed to update class: " + err);
+      }
+    } catch {
+      setClassError("Failed to update class: Network error");
+    }
+
+    setClassLoading(false);
+  };
+
+  const handleDeleteClass = async (classItem: Class) => {
+    const confirmed = window.confirm(
+      `Delete class "${classItem.name}"? Students in this class will become unassigned.`
+    );
+    if (!confirmed) return;
+
+    setClassLoading(true);
+    setClassError("");
+    setClassSuccess("");
+
+    try {
+      const response = await fetch(`/api/admin/classes?id=${classItem.id}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        setClasses(prev => prev.filter(c => c.id !== classItem.id));
+        setStudents(prev =>
+          prev.map(student =>
+            student.class_id === classItem.id
+              ? { ...student, class_id: null }
+              : student
+          )
+        );
+        if (newStudentClassId === classItem.id) setNewStudentClassId("");
+        if (filterClass === classItem.id) setFilterClass("");
+        if (editStudentForm.class_id === classItem.id) {
+          setEditStudentForm(prev => ({ ...prev, class_id: "" }));
+        }
+        if (editingClassId === classItem.id) handleCancelEditClass();
+        setClassSuccess("Class deleted successfully!");
+        setTimeout(() => setClassSuccess(""), 3000);
+      } else {
+        const err = await parseError(response);
+        setClassError("Failed to delete class: " + err);
+      }
+    } catch {
+      setClassError("Failed to delete class: Network error");
+    }
+
+    setClassLoading(false);
+  };
+
+  const classLevels = [
+    "Lower Primary",
+    "Upper Primary",
+    "Lower Secondary",
+    "Upper Secondary"
+  ];
 
   const handleEditStudent = (student: Student) => {
     setEditStudentId(student.id);
@@ -346,137 +497,24 @@ export default function AdminPage() {
           </Card>
         </div>
 
-      {/* Add Student Section */}
-      <Card className="p-4 mb-6">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold text-gray-900">Add Student</h2>
-          <button
-            onClick={() => setShowAddForm(!showAddForm)}
-            className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
-          >
-            {showAddForm ? 'Cancel' : 'Add Student'}
-          </button>
-        </div>
-
-        {showAddForm && (
-          <div className="space-y-4 border-t pt-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Student Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="Enter student name"
-                  className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
-                  value={newStudentName}
-                  onChange={e => setNewStudentName(e.target.value)}
-                  required
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Parent (Optional)
-                </label>
-                <Popover open={addParentOpen} onOpenChange={setAddParentOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      role="combobox"
-                      aria-expanded={addParentOpen}
-                      className="w-full justify-between"
-                   >
-                      {newStudentParentId
-                        ? `${parentById.get(newStudentParentId)?.name || ""} (${parentById.get(newStudentParentId)?.email || ""})`
-                        : "Select parent (optional)"}
-                      <ChevronsUpDown className="opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-[420px] p-0">
-                    <Command>
-                      <CommandInput placeholder="Search parent..." className="h-9" />
-                      <CommandList>
-                        <CommandEmpty>No parent found.</CommandEmpty>
-                        <CommandGroup>
-                          <CommandItem
-                            value="none"
-                            onSelect={() => {
-                              setNewStudentParentId("");
-                              setAddParentOpen(false);
-                            }}
-                          >
-                            No parent assigned
-                            <Check className={cn("ml-auto", newStudentParentId === "" ? "opacity-100" : "opacity-0")} />
-                          </CommandItem>
-                          {parents.map(p => (
-                            <CommandItem
-                              key={p.id}
-                              value={p.name + " " + p.email}
-                              onSelect={() => {
-                                setNewStudentParentId(p.id);
-                                setAddParentOpen(false);
-                              }}
-                            >
-                              {p.name} ({p.email})
-                              <Check className={cn("ml-auto", newStudentParentId === p.id ? "opacity-100" : "opacity-0")} />
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Teacher (Optional)
-                </label>
-                <select
-                  className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
-                  value={newStudentTeacherId}
-                  onChange={e => setNewStudentTeacherId(e.target.value)}
-                >
-                  <option value="">Select teacher (optional)</option>
-                  {teachers.map(t => (
-                    <option key={t.id} value={t.id}>{t.name} ({t.email})</option>
-                  ))}
-                </select>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Class (Optional)
-                </label>
-                <select
-                  className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
-                  value={newStudentClassId}
-                  onChange={e => setNewStudentClassId(e.target.value)}
-                >
-                  <option value="">Select class (optional)</option>
-                  {classes.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            
-            {error && <p className="text-red-500 text-sm">{error}</p>}
-            {success && <p className="text-green-500 text-sm">{success}</p>}
-            
-            <div className="flex gap-2">
-              <button
-                onClick={handleAddStudent}
-                disabled={!newStudentName.trim() || loading}
-                className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {loading ? 'Adding...' : 'Add Student'}
-              </button>
-            </div>
-          </div>
-        )}
-      </Card>
+      <div className="flex flex-col sm:flex-row gap-3 mb-6">
+        <button
+          type="button"
+          onClick={() => setIsClassesModalOpen(true)}
+          className="inline-flex items-center justify-center gap-2 rounded-full border border-gray-200 bg-white px-5 py-3 text-sm font-semibold text-gray-800 shadow-md transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+        >
+          <Settings className="h-4 w-4 text-gray-700" />
+          Manage Classes
+        </button>
+        <button
+          type="button"
+          onClick={() => setIsAddStudentModalOpen(true)}
+          className="inline-flex items-center justify-center gap-2 rounded-full bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+        >
+          <Plus className="h-4 w-4 text-white" />
+          Add Student
+        </button>
+      </div>
 
       {/* Students List Section */}
       <Card className="p-4">
@@ -710,6 +748,311 @@ export default function AdminPage() {
           </table>
         </div>
       </Card>
+      {isClassesModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-5xl max-h-[85vh] overflow-hidden">
+            <div className="flex items-start justify-between border-b border-gray-100 p-6">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">Classes</h2>
+                <p className="text-sm text-gray-500">{classes.length} total</p>
+              </div>
+              <button
+                onClick={() => setIsClassesModalOpen(false)}
+                className="text-gray-400 hover:text-gray-600 p-1"
+                aria-label="Close classes modal"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-6 space-y-4 overflow-y-auto max-h-[calc(85vh-96px)]">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Class Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Enter class name"
+                    className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                    value={newClassName}
+                    onChange={e => setNewClassName(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Level (Optional)
+                  </label>
+                  <select
+                    className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                    value={newClassLevel}
+                    onChange={e => setNewClassLevel(e.target.value)}
+                  >
+                    <option value="">Select level</option>
+                    {classLevels.map(level => (
+                      <option key={level} value={level}>{level}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-end">
+                  <button
+                    onClick={handleAddClass}
+                    disabled={!newClassName.trim() || classLoading}
+                    className="w-full bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {classLoading ? 'Saving...' : 'Add Class'}
+                  </button>
+                </div>
+              </div>
+
+              {classError && <p className="text-red-500 text-sm">{classError}</p>}
+              {classSuccess && <p className="text-green-500 text-sm">{classSuccess}</p>}
+
+              <div className="overflow-x-auto border rounded-lg">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Class Name
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Level
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Students
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {classes.map((classItem) => {
+                      const isEditing = editingClassId === classItem.id;
+                      const studentCount = classStudentCounts.get(classItem.id) || 0;
+                      return (
+                      <tr key={classItem.id}>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                              value={editingClassName}
+                              onChange={e => setEditingClassName(e.target.value)}
+                            />
+                          ) : (
+                            classItem.name
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-700">
+                          {isEditing ? (
+                            <select
+                              className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                              value={editingClassLevel}
+                              onChange={e => setEditingClassLevel(e.target.value)}
+                            >
+                              <option value="">Select level</option>
+                              {classLevels.map(level => (
+                                <option key={level} value={level}>{level}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            classItem.level || "—"
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-700">
+                          {studentCount}
+                        </td>
+                          <td className="px-4 py-3 text-sm text-gray-700">
+                            {isEditing ? (
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => handleSaveClass(classItem.id)}
+                                  disabled={!editingClassName.trim() || classLoading}
+                                  className="bg-blue-600 text-white px-3 py-1 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  onClick={handleCancelEditClass}
+                                  className="bg-gray-200 text-gray-700 px-3 py-1 rounded-md hover:bg-gray-300 transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => handleStartEditClass(classItem)}
+                                  className="bg-blue-100 text-blue-700 px-3 py-1 rounded-md hover:bg-blue-200 transition-colors"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteClass(classItem)}
+                                  disabled={classLoading}
+                                  className="bg-red-100 text-red-700 px-3 py-1 rounded-md hover:bg-red-200 disabled:opacity-50 transition-colors"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {classes.length === 0 && (
+                      <tr>
+                        <td className="px-4 py-3 text-sm text-gray-500" colSpan={4}>
+                          No classes found.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {isAddStudentModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[85vh] overflow-hidden">
+            <div className="flex items-start justify-between border-b border-gray-100 p-6">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">Add Student</h2>
+                <p className="text-sm text-gray-500">Create a new student record</p>
+              </div>
+              <button
+                onClick={() => setIsAddStudentModalOpen(false)}
+                className="text-gray-400 hover:text-gray-600 p-1"
+                aria-label="Close add student modal"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-6 space-y-4 overflow-y-auto max-h-[calc(85vh-96px)]">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Student Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Enter student name"
+                    className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                    value={newStudentName}
+                    onChange={e => setNewStudentName(e.target.value)}
+                    required
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Parent (Optional)
+                  </label>
+                  <Popover open={addParentOpen} onOpenChange={setAddParentOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={addParentOpen}
+                        className="w-full justify-between"
+                     >
+                        {newStudentParentId
+                          ? `${parentById.get(newStudentParentId)?.name || ""} (${parentById.get(newStudentParentId)?.email || ""})`
+                          : "Select parent (optional)"}
+                        <ChevronsUpDown className="opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[420px] p-0">
+                      <Command>
+                        <CommandInput placeholder="Search parent..." className="h-9" />
+                        <CommandList>
+                          <CommandEmpty>No parent found.</CommandEmpty>
+                          <CommandGroup>
+                            <CommandItem
+                              value="none"
+                              onSelect={() => {
+                                setNewStudentParentId("");
+                                setAddParentOpen(false);
+                              }}
+                            >
+                              No parent assigned
+                              <Check className={cn("ml-auto", newStudentParentId === "" ? "opacity-100" : "opacity-0")} />
+                            </CommandItem>
+                            {parents.map(p => (
+                              <CommandItem
+                                key={p.id}
+                                value={p.name + " " + p.email}
+                                onSelect={() => {
+                                  setNewStudentParentId(p.id);
+                                  setAddParentOpen(false);
+                                }}
+                              >
+                                {p.name} ({p.email})
+                                <Check className={cn("ml-auto", newStudentParentId === p.id ? "opacity-100" : "opacity-0")} />
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Teacher (Optional)
+                  </label>
+                  <select
+                    className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                    value={newStudentTeacherId}
+                    onChange={e => setNewStudentTeacherId(e.target.value)}
+                  >
+                    <option value="">Select teacher (optional)</option>
+                    {teachers.map(t => (
+                      <option key={t.id} value={t.id}>{t.name} ({t.email})</option>
+                    ))}
+                  </select>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Class (Optional)
+                  </label>
+                  <select
+                    className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                    value={newStudentClassId}
+                    onChange={e => setNewStudentClassId(e.target.value)}
+                  >
+                    <option value="">Select class (optional)</option>
+                    {classes.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              
+              {error && <p className="text-red-500 text-sm">{error}</p>}
+              {success && <p className="text-green-500 text-sm">{success}</p>}
+              
+              <div className="flex gap-2">
+                <button
+                  onClick={handleAddStudent}
+                  disabled={!newStudentName.trim() || loading}
+                  className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {loading ? 'Adding...' : 'Add Student'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       </div>
     </div>
   );
