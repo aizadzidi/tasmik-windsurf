@@ -84,9 +84,7 @@ export default function ParentPage() {
           assigned_teacher_id,
           class_id,
           memorization_completed,
-          memorization_completed_date,
-          users!assigned_teacher_id (name),
-          classes (name)
+          memorization_completed_date
         `)
         .eq("parent_id", parentId);
 
@@ -96,7 +94,60 @@ export default function ParentPage() {
         return;
       }
 
-      const studentIds = studentsData.map(s => s.id);
+      const studentRows = studentsData as Array<{
+        id: string;
+        name: string;
+        assigned_teacher_id: string | null;
+        class_id: string | null;
+        memorization_completed: boolean | null;
+        memorization_completed_date: string | null;
+      }>;
+
+      const studentIds = studentRows.map((s) => s.id);
+      const teacherIds = [
+        ...new Set(
+          studentRows
+            .map((row) => row.assigned_teacher_id)
+            .filter((id): id is string => Boolean(id))
+        ),
+      ];
+      const classIds = [
+        ...new Set(
+          studentRows
+            .map((row) => row.class_id)
+            .filter((id): id is string => Boolean(id))
+        ),
+      ];
+
+      const teacherNameById = new Map<string, string>();
+      if (teacherIds.length > 0) {
+        const { data: teacherRows, error: teacherError } = await supabase
+          .from("users")
+          .select("id, name")
+          .in("id", teacherIds);
+        if (!teacherError && teacherRows) {
+          teacherRows.forEach((row) => {
+            if (row.id && row.name) {
+              teacherNameById.set(row.id, row.name);
+            }
+          });
+        }
+      }
+
+      const classNameById = new Map<string, string>();
+      if (classIds.length > 0) {
+        const { data: classRows, error: classError } = await supabase
+          .from("classes")
+          .select("id, name")
+          .in("id", classIds);
+        if (!classError && classRows) {
+          classRows.forEach((row) => {
+            if (row.id && row.name) {
+              classNameById.set(row.id, row.name);
+            }
+          });
+        }
+      }
       
       if (viewMode === 'juz_tests') {
         // For juz tests, we need different data structure
@@ -127,7 +178,13 @@ export default function ParentPage() {
         setReports([]); // No regular reports for juz tests view
         
         // Process juz test data
-        const childrenProgressData = studentsData.map(student => {
+        const childrenProgressData = studentRows.map((student) => {
+          const className = student.class_id
+            ? classNameById.get(student.class_id) || null
+            : null;
+          const teacherName = student.assigned_teacher_id
+            ? teacherNameById.get(student.assigned_teacher_id) || null
+            : null;
           // Find highest memorized juz for this student
           const studentMemorization = memorizationResult.data?.filter(r => r.student_id === student.id) || [];
           const highestMemorizedJuz = studentMemorization.length > 0 
@@ -149,8 +206,8 @@ export default function ParentPage() {
           return {
             id: student.id,
             name: student.name,
-            teacher_name: (student.users as { name?: string } | null)?.name || null,
-            class_name: (student.classes as { name?: string } | null)?.name || null,
+            teacher_name: teacherName,
+            class_name: className,
             latest_reading: `Memorized: Juz ${highestMemorizedJuz}`,
             last_read_date: latestTest?.test_date || null,
             days_since_last_read: latestTest?.test_date ? calculateDaysSinceLastRead(latestTest.test_date) : 999,
@@ -202,7 +259,13 @@ export default function ParentPage() {
         }, {} as Record<string, Report[]>);
 
         // Process student progress data
-        const childrenProgressData = studentsData.map(student => {
+        const childrenProgressData = studentRows.map((student) => {
+          const className = student.class_id
+            ? classNameById.get(student.class_id) || null
+            : null;
+          const teacherName = student.assigned_teacher_id
+            ? teacherNameById.get(student.assigned_teacher_id) || null
+            : null;
           const studentReports = reportsByStudent[student.id] || [];
           const latestReport = viewMode === 'murajaah'
             ? studentReports.find((report: Report) => ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(report.type))
@@ -237,8 +300,8 @@ export default function ParentPage() {
           return {
             id: student.id,
             name: student.name,
-            teacher_name: (student.users as { name?: string } | null)?.name || null,
-            class_name: (student.classes as { name?: string } | null)?.name || null,
+            teacher_name: teacherName,
+            class_name: className,
             latest_reading: latestReading,
             last_read_date: latestReport?.date || null,
             days_since_last_read: daysSinceLastRead,

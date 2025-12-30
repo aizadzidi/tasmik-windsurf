@@ -3,6 +3,7 @@
 export interface Student {
   id: string;
   name: string;
+  tenant_id?: string | null;
   memorization_completed?: boolean;
   memorization_completed_date?: string;
 }

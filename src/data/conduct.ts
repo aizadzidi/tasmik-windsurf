@@ -18,10 +18,45 @@ export type ConductSummary = ConductScores & {
 const toNum = (x: unknown) => (x == null ? null : Number(x));
 
 export async function rpcGetConductSummary(examId: string, studentId: string): Promise<ConductSummary | null> {
-  const { data, error } = await supabase.rpc('get_conduct_summary', { p_exam_id: examId, p_student_id: studentId });
-  if (error) throw error;
-  if (!data || !data[0]) return null;
-  const row = data[0];
+  const primaryParams = { p_exam_id: examId, p_student_id: studentId };
+  const legacyParams = { exam_id: examId, student_id: studentId };
+
+  const primary = await supabase.rpc('get_conduct_summary', primaryParams);
+  if (primary.error) {
+    console.error('get_conduct_summary error', {
+      message: primary.error.message,
+      code: (primary.error as { code?: string }).code,
+      details: (primary.error as { details?: string }).details,
+      hint: (primary.error as { hint?: string }).hint,
+      params: primaryParams,
+    });
+    const fallback = await supabase.rpc('get_conduct_summary', legacyParams);
+    if (fallback.error) {
+      console.error('get_conduct_summary legacy error', {
+        message: fallback.error.message,
+        code: (fallback.error as { code?: string }).code,
+        details: (fallback.error as { details?: string }).details,
+        hint: (fallback.error as { hint?: string }).hint,
+        params: legacyParams,
+      });
+      throw new Error(fallback.error.message || primary.error.message || 'Failed to load conduct summary');
+    }
+    if (!Array.isArray(fallback.data) || !fallback.data[0]) return null;
+    const row = fallback.data[0];
+    return {
+      source: row.source,
+      subjects_count: Number(row.subjects_count ?? 0),
+      override_id: row.override_id ?? null,
+      discipline: toNum(row.discipline),
+      effort: toNum(row.effort),
+      participation: toNum(row.participation),
+      motivational_level: toNum(row.motivational_level),
+      character_score: toNum(row.character_score),
+      leadership: toNum(row.leadership),
+    };
+  }
+  if (!Array.isArray(primary.data) || !primary.data[0]) return null;
+  const row = primary.data[0];
   return {
     source: row.source,
     subjects_count: Number(row.subjects_count ?? 0),

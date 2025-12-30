@@ -7,6 +7,7 @@ interface QuickReportModalProps {
   student: {
     id: string;
     name: string;
+    tenant_id?: string | null;
   };
   reportType: "Tasmi" | "Murajaah";
   onClose: () => void;
@@ -158,12 +159,31 @@ export default function QuickReportModal({
         surahLabel = form.surah;
       }
 
-      const row = { ...baseRow, surah: surahLabel };
+      const row = {
+        ...baseRow,
+        surah: surahLabel,
+        ...(student.tenant_id ? { tenant_id: student.tenant_id } : {})
+      };
 
-      const { error: insertError } = await supabase.from("reports").insert(row);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) {
+        setError("Session expired. Please sign in again.");
+        return;
+      }
 
-      if (insertError) {
-        setError(insertError.message);
+      const res = await fetch("/api/teacher/reports", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`
+        },
+        body: JSON.stringify(row)
+      });
+
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        setError(payload?.error || "Failed to create report");
       } else {
         onSuccess();
         onClose();

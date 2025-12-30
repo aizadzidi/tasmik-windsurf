@@ -74,9 +74,10 @@ export default function LoginPage() {
           // Fallback: If user exists in Auth but not in users table, create a default user as parent
           // This ensures login works for users created outside the sign-up flow
           const emailPrefix = email.split("@")[0];
-          const { error: insertError } = await supabase.from("users").insert([
-            { id: userId, name: emailPrefix, email, role: "parent" },
-          ]);
+          const { error: insertError } = await supabase.from("users").upsert(
+            [{ id: userId, name: emailPrefix, email, role: "parent" }],
+            { onConflict: "id", ignoreDuplicates: true }
+          );
           console.log('Fallback user creation result:', { insertError });
           if (insertError) {
             setError("Login failed: Could not create user profile. Please contact admin.");
@@ -236,4 +237,3 @@ export default function LoginPage() {
     </main>
   );
 }
-

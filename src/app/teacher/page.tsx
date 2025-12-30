@@ -203,7 +203,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
     async function fetchStudents() {
       const { data, error } = await supabase
         .from("students")
-        .select("id, name, memorization_completed, memorization_completed_date")
+        .select("id, name, tenant_id, memorization_completed, memorization_completed_date")
         .eq("assigned_teacher_id", userId);
       if (!error && data) setStudents(data);
     }
@@ -328,9 +328,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
           assigned_teacher_id,
           class_id,
           memorization_completed,
-          memorization_completed_date,
-          users!assigned_teacher_id (name),
-          classes (name)
+          memorization_completed_date
         `)
         .eq("assigned_teacher_id", userId);
 
@@ -339,8 +337,39 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
         return;
       }
 
+      const studentRows = studentsData as Array<{
+        id: string;
+        name: string;
+        assigned_teacher_id: string | null;
+        class_id: string | null;
+        memorization_completed: boolean | null;
+        memorization_completed_date: string | null;
+      }>;
+
+      const classIds = [
+        ...new Set(
+          studentRows
+            .map((row) => row.class_id)
+            .filter((id): id is string => Boolean(id))
+        ),
+      ];
+      const classNameById = new Map<string, string>();
+      if (classIds.length > 0) {
+        const { data: classRows, error: classError } = await supabase
+          .from("classes")
+          .select("id, name")
+          .in("id", classIds);
+        if (!classError && classRows) {
+          classRows.forEach((row) => {
+            if (row.id && row.name) {
+              classNameById.set(row.id, row.name);
+            }
+          });
+        }
+      }
+
       // Optimize: Batch fetch reports for all students instead of individual queries
-      const allStudentIds = studentsData.map(s => s.id);
+      const allStudentIds = studentRows.map((s) => s.id);
       
       // Fetch all reports for these students in one query
       // RLS policies will ensure teacher only sees reports for assigned students
@@ -367,7 +396,11 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
         return acc;
       }, {});
 
-      const studentProgressPromises = studentsData.map(async (student) => {
+      const studentProgressPromises = studentRows.map(async (student) => {
+        const className = student.class_id
+          ? classNameById.get(student.class_id) || null
+          : null;
+        const teacherDisplayName = teacherName || null;
         if (viewMode === 'juz_tests') {
           // For Juz Tests view, get memorization progress and test progress
           const [memorizationResult, latestByDateResult, highestTestedResult] = await Promise.all([
@@ -420,8 +453,8 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
           return {
             id: student.id,
             name: student.name,
-            teacher_name: (student.users as { name?: string } | null)?.name || null,
-            class_name: (student.classes as { name?: string } | null)?.name || null,
+            teacher_name: teacherDisplayName,
+            class_name: className,
             latest_reading: `Memorized: Juz ${highestMemorizedJuz}`,
             last_read_date: latestTest?.test_date || null,
             days_since_last_read: gap,
@@ -475,8 +508,8 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
           return {
             id: student.id,
             name: student.name,
-            teacher_name: (student.users as { name?: string } | null)?.name || null,
-            class_name: (student.classes as { name?: string } | null)?.name || null,
+            teacher_name: teacherDisplayName,
+            class_name: className,
             latest_reading: latestReading,
             last_read_date: latestReport?.date || null,
             days_since_last_read: daysSinceLastRead,
@@ -494,7 +527,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
     } finally {
       setMonitorLoading(false);
     }
-  }, [userId, viewMode]);
+  }, [userId, viewMode, teacherName]);
 
   useEffect(() => {
     if (userId) {
@@ -577,17 +610,38 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
   // Edit report function
   const editReport = async (updated: Report) => {
     if (!updated.id) return;
-    await supabase.from("reports").update({
-      type: updated.type,
-      surah: updated.surah,
-      juzuk: updated.juzuk,
-      ayat_from: updated.ayat_from,
-      ayat_to: updated.ayat_to,
-      page_from: updated.page_from,
-      page_to: updated.page_to,
-      grade: updated.grade,
-      date: updated.date,
-    }).eq("id", updated.id);
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) {
+      console.error("Missing session token for report update");
+      return;
+    }
+
+    const res = await fetch("/api/teacher/reports", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`
+      },
+      body: JSON.stringify({
+        id: updated.id,
+        type: updated.type,
+        surah: updated.surah,
+        juzuk: updated.juzuk,
+        ayat_from: updated.ayat_from,
+        ayat_to: updated.ayat_to,
+        page_from: updated.page_from,
+        page_to: updated.page_to,
+        grade: updated.grade,
+        date: updated.date
+      })
+    });
+
+    if (!res.ok) {
+      const payload = await res.json().catch(() => null);
+      console.error("Failed to update report", payload?.error || res.statusText);
+      return;
+    }
     setShowEditModal(false);
     setEditingReport(null);
     

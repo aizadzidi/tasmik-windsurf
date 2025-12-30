@@ -87,17 +87,32 @@ export default function FullRecordsModal({
 
   const handleDelete = async (reportId: string) => {
     try {
-      const { error } = await supabase
-        .from("reports")
-        .delete()
-        .eq("id", reportId);
-      
-      if (!error) {
-        setReports(reports.filter(r => r.id !== reportId));
-        onRefresh(); // Refresh the main view
-        setShowDeleteConfirm(false);
-        setDeletingReport(null);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) {
+        console.error("Missing session token for delete");
+        return;
       }
+
+      const res = await fetch("/api/teacher/reports", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`
+        },
+        body: JSON.stringify({ id: reportId })
+      });
+
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        console.error("Failed to delete report", payload?.error || res.statusText);
+        return;
+      }
+
+      setReports(reports.filter(r => r.id !== reportId));
+      onRefresh(); // Refresh the main view
+      setShowDeleteConfirm(false);
+      setDeletingReport(null);
     } catch (err) {
       console.error("Failed to delete report:", err);
     }

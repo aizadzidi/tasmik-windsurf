@@ -253,27 +253,38 @@ function TeacherLessonPageContent() {
     })();
   }, []);
 
+  const getAccessToken = React.useCallback(async () => {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) throw new Error("Session expired");
+    return accessToken;
+  }, []);
+
   const fetchMetadata = React.useCallback(async () => {
+    if (!userId) return;
     setLoadingMeta(true);
     setLoadingTeachers(true);
     try {
-      const [
-        { data: classData, error: classError },
-        { data: subjectData, error: subjectError },
-        { data: teacherData, error: teacherError },
-      ] = await Promise.all([
-        supabase.from("classes").select("id, name").order("name"),
-        supabase.from("subjects").select("id, name").order("name"),
-        supabase.from("users").select("id, name, email").eq("role", "teacher").order("name"),
-      ]);
-      if (classError) throw classError;
-      if (subjectError) throw subjectError;
-      if (teacherError) throw teacherError;
+      const accessToken = await getAccessToken();
 
-      const sortedClasses = (classData ?? []).map((cls) => ({ id: String(cls.id), name: cls.name })) ?? [];
-      const sortedSubjects = (subjectData ?? []).map((subj) => ({ id: String(subj.id), name: subj.name })) ?? [];
+      const res = await fetch("/api/teacher/lesson-metadata", {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(payload?.error || "Failed to load metadata");
+      }
+
+      const sortedClasses = (payload?.classes ?? []).map((cls: ClassItem) => ({
+        id: String(cls.id),
+        name: cls.name
+      }));
+      const sortedSubjects = (payload?.subjects ?? []).map((subj: SubjectItem) => ({
+        id: String(subj.id),
+        name: subj.name
+      }));
       const sortedTeachers =
-        (teacherData ?? []).map((teacher) => ({
+        (payload?.teachers ?? []).map((teacher: TeacherItem) => ({
           id: String(teacher.id),
           name: teacher.name ?? null,
           email: teacher.email ?? null,
@@ -304,7 +315,7 @@ function TeacherLessonPageContent() {
       setLoadingMeta(false);
       setLoadingTeachers(false);
     }
-  }, []);
+  }, [getAccessToken, userId]);
 
   type LessonTopicRow = {
     id: string;
@@ -489,8 +500,10 @@ function TeacherLessonPageContent() {
   );
 
   React.useEffect(() => {
-    fetchMetadata();
-  }, [fetchMetadata]);
+    if (userId) {
+      fetchMetadata();
+    }
+  }, [userId, fetchMetadata]);
 
   React.useEffect(() => {
     fetchTopics({ classId: trackerClassId, subjectId: trackerSubjectId, target: "tracker" });
@@ -579,25 +592,37 @@ function TeacherLessonPageContent() {
     async (params: { topicId: string; subtopicIndex: number; taughtOn: string | null; remark: string | null }) => {
       const { topicId, subtopicIndex, taughtOn, remark } = params;
       if (!userId) return null;
-      const { data, error } = await supabase
-        .from("lesson_subtopic_progress")
-        .upsert(
-          {
-            topic_id: topicId,
-            subtopic_index: subtopicIndex,
-            teacher_id: userId,
-            academic_year: academicYear,
-            taught_on: taughtOn,
-            remark,
-          },
-          { onConflict: "topic_id,subtopic_index,teacher_id,academic_year" }
-        )
-        .select("id, subtopic_index, taught_on, remark")
-        .single();
-      if (error) throw error;
-      return data;
+      const accessToken = await getAccessToken();
+      const res = await fetch("/api/teacher/lesson-subtopic-progress", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`
+        },
+        body: JSON.stringify({
+          topic_id: topicId,
+          subtopic_index: subtopicIndex,
+          taught_on: taughtOn,
+          remark,
+          academic_year: academicYear,
+        }),
+      });
+      const resClone = res.clone();
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        const rawText = payload ? "" : await resClone.text().catch(() => "");
+        const message = payload?.error || rawText || res.statusText || "Failed to save subtopic progress";
+        console.error("Failed to save subtopic progress", {
+          status: res.status,
+          statusText: res.statusText,
+          payload,
+          rawText,
+        });
+        throw new Error(message);
+      }
+      return payload?.data ?? null;
     },
-    [academicYear, userId]
+    [academicYear, getAccessToken, userId]
   );
 
   const applySubtopicProgressUpdate = React.useCallback(
@@ -691,14 +716,23 @@ function TeacherLessonPageContent() {
     setActionMessage(null);
     try {
       if (!checked) {
-        const { error } = await supabase
-          .from("lesson_subtopic_progress")
-          .delete()
-          .eq("topic_id", topic.id)
-          .eq("subtopic_index", subtopicIndex)
-          .eq("teacher_id", userId)
-          .eq("academic_year", academicYear);
-        if (error) throw error;
+        const accessToken = await getAccessToken();
+        const res = await fetch("/api/teacher/lesson-subtopic-progress", {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`
+          },
+          body: JSON.stringify({
+            topic_id: topic.id,
+            subtopic_index: subtopicIndex,
+            academic_year: academicYear,
+          }),
+        });
+        if (!res.ok) {
+          const payload = await res.json().catch(() => null);
+          throw new Error(payload?.error || "Failed to remove subtopic progress");
+        }
         setTrackerTopics((prev) =>
           prev.map((row) =>
             row.id === topic.id

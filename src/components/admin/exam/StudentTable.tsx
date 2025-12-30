@@ -374,8 +374,7 @@ export default function StudentTable({ data, onRowClick, loading, selectedSubjec
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.3, delay: index * 0.05 }}
                 onClick={() => onRowClick(row.original)}
-                whileHover={{ backgroundColor: "rgb(248 250 252)" }}
-                className={`cursor-pointer border-b border-gray-100 transition-all duration-200 ease-out hover:shadow-sm ${
+                className={`cursor-pointer border-b border-gray-100 transition-all duration-200 ease-out hover:bg-slate-50 hover:shadow-sm ${
                   index % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'
                 }`}
               >
