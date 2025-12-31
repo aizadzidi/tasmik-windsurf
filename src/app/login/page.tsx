@@ -11,6 +11,7 @@ import { Alert } from "@/components/ui/Alert";
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [schoolSlug, setSchoolSlug] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [isSignUp, setIsSignUp] = useState(false);
@@ -149,6 +150,20 @@ export default function LoginPage() {
                   required
                   className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all"
                 />
+              </div>
+            )}
+            {!isSignUp && (
+              <div>
+                <Input
+                  type="text"
+                  placeholder="School slug (e.g., alkhayr)"
+                  value={schoolSlug}
+                  onChange={e => setSchoolSlug(e.target.value)}
+                  className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all"
+                />
+                <p className="mt-2 text-xs text-gray-600">
+                  Use your school slug to route you to the correct login domain.
+                </p>
               </div>
             )}
             <div>

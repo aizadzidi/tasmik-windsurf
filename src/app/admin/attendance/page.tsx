@@ -326,18 +326,15 @@ export default function AdminAttendancePage() {
   }, [filteredSummaries]);
 
   return (
-    <div className="min-h-screen bg-[#f6f7fb]">
+    <div className="min-h-screen bg-[#f6f7fb] text-slate-900">
       <AdminNavbar />
-      <main className="mx-auto max-w-7xl px-6 pb-16 pt-10 space-y-6">
-        <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+      <main className="mx-auto max-w-7xl px-6 pb-14 pt-8 space-y-5">
+        <header className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">Attendance</p>
-            <h1 className="mt-1 text-[26px] font-semibold tracking-tight text-slate-900 leading-tight">
-              Class attendance
+            <h1 className="mt-1 text-[24px] font-semibold tracking-tight text-slate-900 leading-tight">
+              Attendance overview
             </h1>
-            <p className="mt-1 text-sm text-slate-500 max-w-2xl">
-              Monitor coverage, drill down to students, and set school breaks so teachers skip “attendance required”.
-            </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <Button
@@ -347,7 +344,7 @@ export default function AdminAttendancePage() {
                 setShowBreakModal(true);
               }}
             >
-              Set school breaks
+              Add school breaks
             </Button>
           </div>
         </header>
@@ -358,16 +355,15 @@ export default function AdminAttendancePage() {
           </div>
         )}
 
-        <section className="space-y-4">
-          <Card className="rounded-3xl border border-slate-200 shadow-[0_14px_36px_rgba(15,23,42,0.06)]">
+        <section className="space-y-3">
+          <Card className="rounded-3xl border border-slate-200 shadow-sm">
             <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="space-y-1">
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Analytics</p>
-                <CardTitle className="text-xl text-slate-900">Class attendance trends</CardTitle>
+                <CardTitle className="text-xl text-slate-900">Attendance trends</CardTitle>
                 <p className="text-sm text-slate-500">
                   {currentRangeMeta.label} ending {humanDate(analyticsDateRange.end)}
                 </p>
-                <p className="text-xs text-slate-400">Synced from teacher submissions</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/80 px-3.5 py-1.5 text-[13px] text-slate-600 transition-all duration-150 focus-within:ring-2 focus-within:ring-slate-900/10">
@@ -396,7 +392,7 @@ export default function AdminAttendancePage() {
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="space-y-6">
+            <CardContent className="space-y-5">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 flex items-start gap-3">
                   <div className="h-10 w-10 rounded-lg bg-slate-900 text-white flex items-center justify-center text-sm font-semibold">
@@ -407,7 +403,7 @@ export default function AdminAttendancePage() {
                     <p className="text-[15px] font-semibold text-slate-900 leading-tight">
                       {overallStats.present} of {overallStats.total} present
                     </p>
-                    <p className="text-xs text-slate-500">Daily coverage</p>
+                    
                   </div>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 flex items-start gap-3">
@@ -416,10 +412,7 @@ export default function AdminAttendancePage() {
                   </div>
                   <div>
                     <p className="text-[12px] uppercase tracking-[0.18em] text-slate-500">Classes</p>
-                    <p className="text-[15px] font-semibold text-slate-900 leading-tight">
-                      Active classes tracked
-                    </p>
-                    <p className="text-xs text-slate-500">{humanDate(analyticsDateRange.end)}</p>
+                    <p className="text-[15px] font-semibold text-slate-900 leading-tight">Active classes</p>
                   </div>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 flex items-start gap-3">
@@ -431,7 +424,7 @@ export default function AdminAttendancePage() {
                     <p className="text-[15px] font-semibold text-slate-900 leading-tight">
                       {humanDate(analyticsDateRange.start)} – {humanDate(analyticsDateRange.end)}
                     </p>
-                    <p className="text-xs text-slate-500">Compared across classes</p>
+                    
                   </div>
                 </div>
               </div>
@@ -441,13 +434,13 @@ export default function AdminAttendancePage() {
             </CardContent>
           </Card>
 
-          <Card className="rounded-3xl border border-slate-200 shadow-[0_14px_36px_rgba(15,23,42,0.06)]">
+          <Card className="rounded-3xl border border-slate-200 shadow-sm">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-lg text-slate-900">
                 <LineChart className="h-5 w-5 text-slate-500" />
-                Breaks & holidays
+                Breaks
               </CardTitle>
-              <p className="text-sm text-slate-500">Configured: {configuredCount}</p>
+              <p className="text-sm text-slate-500">{configuredCount} configured</p>
             </CardHeader>
             <CardContent className="space-y-4">
               {holidayError && (
@@ -457,15 +450,13 @@ export default function AdminAttendancePage() {
               )}
               {!holidays.length && !loadingHolidays && (
                 <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-6 text-center">
-                  <p className="text-sm font-semibold text-slate-900">No holidays configured yet.</p>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Add a break to disable attendance submissions for those dates.
-                  </p>
+                  <p className="text-sm font-semibold text-slate-900">No breaks yet.</p>
+                  <p className="mt-1 text-sm text-slate-500">Add dates to pause attendance.</p>
                 </div>
               )}
               {loadingHolidays && (
                 <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-600">
-                  Loading latest holiday calendar…
+                  Loading breaks…
                 </div>
               )}
               <div className="space-y-2">
@@ -484,7 +475,9 @@ export default function AdminAttendancePage() {
                       >
                         {holiday.category}
                       </span>
-                      <span className="text-xs text-slate-500">{humanDate(holiday.start_date)} – {humanDate(holiday.end_date)}</span>
+                      <span className="text-xs text-slate-500">
+                        {humanDate(holiday.start_date)} – {humanDate(holiday.end_date)}
+                      </span>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <Button
@@ -514,22 +507,20 @@ export default function AdminAttendancePage() {
               <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-700 flex items-start gap-3">
                 <Plane className="h-4 w-4 mt-0.5" />
                 <div>
-                  <p className="font-semibold text-amber-800">How it works</p>
-                  <p>
-                    Teachers see “Attendance not required” and submission is disabled for any date inside these ranges.
-                  </p>
+                  <p className="font-semibold text-amber-800">Attendance paused</p>
+                  <p>Dates in this range are skipped.</p>
                 </div>
               </div>
             </CardContent>
           </Card>
         </section>
 
-        <Card className="rounded-3xl border border-slate-200 bg-white shadow-[0_14px_36px_rgba(15,23,42,0.06)]">
-          <CardHeader className="space-y-4 sticky top-4 bg-white/90 backdrop-blur z-10">
+        <Card className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <CardHeader className="space-y-3 sticky top-4 bg-white/90 backdrop-blur z-10">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Student summary</p>
-                <CardTitle className="text-2xl text-slate-900">Attendance overview</CardTitle>
+                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">Students</p>
+                <CardTitle className="text-xl text-slate-900">Student attendance</CardTitle>
               </div>
               <div className="inline-flex flex-wrap items-center gap-1 rounded-full bg-slate-100 p-1">
                 {SUMMARY_RANGE_OPTIONS.map((option) => (
@@ -547,9 +538,9 @@ export default function AdminAttendancePage() {
                 ))}
               </div>
             </div>
-            <div className="flex w-full flex-col gap-3 sm:flex-row">
+            <div className="flex w-full flex-col gap-2 sm:flex-row">
               <Input
-                placeholder="Search by name or class"
+                placeholder="Search student or class"
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
                 className="w-full sm:w-64"
@@ -569,7 +560,7 @@ export default function AdminAttendancePage() {
             </div>
           </CardHeader>
           <CardContent className="overflow-x-auto">
-            <div className="flex flex-wrap gap-3 px-4 pb-3 text-sm text-slate-700">
+            <div className="flex flex-wrap gap-2 px-4 pb-3 text-sm text-slate-700">
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                 <span className="font-semibold text-slate-900">{summaryAggregates.totalStudents}</span> students
               </div>
@@ -599,7 +590,7 @@ export default function AdminAttendancePage() {
                   <div>
                     <p className="font-semibold text-slate-900">{summary.name}</p>
                     <p className="text-xs text-slate-500">
-                      {summary.presentDays} / {summary.totalDays || 1} days tracked
+                      {summary.presentDays} / {summary.totalDays || 1} days
                     </p>
                   </div>
                   <div>
@@ -622,7 +613,7 @@ export default function AdminAttendancePage() {
                 </div>
               ))}
               {!filteredSummaries.length && (
-                <p className="px-4 py-10 text-center text-sm text-slate-500">No students match your search.</p>
+                <p className="px-4 py-10 text-center text-sm text-slate-500">No matches.</p>
               )}
             </div>
           </CardContent>
@@ -631,12 +622,12 @@ export default function AdminAttendancePage() {
 
       {showBreakModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
-          <div className="relative w-full max-w-2xl rounded-3xl bg-white shadow-2xl">
+          <div className="relative w-full max-w-2xl rounded-[28px] bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
               <div className="flex items-center gap-2">
                 <CalendarRange className="h-5 w-5 text-slate-500" />
-                <h2 className="text-lg font-semibold text-slate-900">
-                  {form.id ? "Edit holiday / break" : "Add holiday or break"}
+                <h2 className="text-lg text-slate-900">
+                  {form.id ? "Edit break" : "Add break"}
                 </h2>
               </div>
               <button
@@ -652,7 +643,7 @@ export default function AdminAttendancePage() {
             </div>
             <form className="space-y-4 px-6 py-6" onSubmit={handleHolidaySubmit}>
               {holidayError && (
-                <div className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                <div className="rounded-2xl border border-rose-200/70 bg-rose-50/80 px-4 py-3 text-sm text-rose-700">
                   {holidayError}
                 </div>
               )}
@@ -661,27 +652,27 @@ export default function AdminAttendancePage() {
                   <div className="grid gap-3">
                     <label className="text-sm font-semibold text-slate-800">Name</label>
                     <Input
-                      placeholder="e.g. Hari Raya break"
+                      placeholder="e.g. Hari Raya"
                       value={form.title}
                       onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))}
                       required
                     />
                   </div>
                   <div className="grid gap-3">
-                    <label className="text-sm font-semibold text-slate-800">Description (optional)</label>
+                    <label className="text-sm font-semibold text-slate-800">Notes</label>
                     <textarea
                       value={form.description}
                       onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
                       rows={3}
                       className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-inner focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                      placeholder="Notes for teachers (e.g. No attendance, weekend included)"
+                      placeholder="Optional"
                     />
                   </div>
                 </div>
                 <div className="space-y-4">
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="grid gap-2">
-                      <label className="text-sm font-semibold text-slate-800">Starts</label>
+                      <label className="text-sm font-semibold text-slate-800">Start</label>
                       <Input
                         type="date"
                         value={form.start_date}
@@ -690,7 +681,7 @@ export default function AdminAttendancePage() {
                       />
                     </div>
                     <div className="grid gap-2">
-                      <label className="text-sm font-semibold text-slate-800">Ends</label>
+                      <label className="text-sm font-semibold text-slate-800">End</label>
                       <Input
                         type="date"
                         value={form.end_date}
@@ -717,7 +708,7 @@ export default function AdminAttendancePage() {
                       disabled={savingHoliday}
                       className="rounded-full bg-slate-900 text-white hover:bg-slate-800"
                     >
-                      {savingHoliday ? "Saving..." : form.id ? "Update dates" : "Add date range"}
+                      {savingHoliday ? "Saving..." : form.id ? "Update" : "Add break"}
                     </Button>
                     {form.id && (
                       <Button
