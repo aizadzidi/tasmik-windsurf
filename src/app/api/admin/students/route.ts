@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
+import { resolveTenantIdFromRequest } from '@/lib/tenantProvisioning';
 
 const adminErrorDetails = (error: unknown, fallback: string) => {
   const message = error instanceof Error ? error.message : fallback;
@@ -7,16 +8,32 @@ const adminErrorDetails = (error: unknown, fallback: string) => {
   return { message, status };
 };
 
+const resolveTenantIdOrThrow = async (request: NextRequest) =>
+  adminOperationSimple(async (client) => {
+    const tenantId = await resolveTenantIdFromRequest(request, client);
+    if (tenantId) return tenantId;
+
+    const { data, error } = await client.from('tenants').select('id').limit(2);
+    if (error) throw error;
+    if (!data || data.length !== 1) {
+      throw new Error('Tenant context missing');
+    }
+
+    return data[0].id;
+  });
+
 // GET - Fetch students (admin only) - optionally filter by ID
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
+    const tenantId = await resolveTenantIdOrThrow(request);
 
     const data = await adminOperationSimple(async (client) => {
       let query = client
         .from('students')
-        .select('*');
+        .select('*')
+        .eq('tenant_id', tenantId);
       
       if (id) {
         query = query.eq('id', id);
@@ -43,6 +60,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { name, parent_id, assigned_teacher_id, class_id } = body;
+    const tenantId = await resolveTenantIdOrThrow(request);
 
     if (!name) {
       return NextResponse.json(
@@ -56,6 +74,7 @@ export async function POST(request: NextRequest) {
         .from('students')
         .insert([{
           name,
+          tenant_id: tenantId,
           parent_id,
           assigned_teacher_id: assigned_teacher_id || null,
           class_id: class_id || null
@@ -80,6 +99,7 @@ export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();
     const { id, name, parent_id, assigned_teacher_id, class_id } = body;
+    const tenantId = await resolveTenantIdOrThrow(request);
 
     if (!id) {
       return NextResponse.json(
@@ -98,6 +118,7 @@ export async function PUT(request: NextRequest) {
           class_id
         })
         .eq('id', id)
+        .eq('tenant_id', tenantId)
         .select()
         .single();
       
@@ -118,6 +139,7 @@ export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
+    const tenantId = await resolveTenantIdOrThrow(request);
 
     if (!id) {
       return NextResponse.json(
@@ -130,7 +152,8 @@ export async function DELETE(request: NextRequest) {
       const { error } = await client
         .from('students')
         .delete()
-        .eq('id', id);
+        .eq('id', id)
+        .eq('tenant_id', tenantId);
       
       if (error) throw error;
     });

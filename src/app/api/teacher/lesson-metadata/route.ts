@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { ensureUserProfile } from "@/lib/tenantProvisioning";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -32,11 +33,18 @@ export async function GET(request: NextRequest) {
       .select("tenant_id, role")
       .eq("user_id", user.id)
       .maybeSingle();
-    if (profileError || !profile?.tenant_id) {
+    if (profileError) {
       return NextResponse.json({ error: "Missing profile" }, { status: 403 });
     }
 
-    const tenantId = profile.tenant_id;
+    const ensuredProfile = profile?.tenant_id
+      ? profile
+      : await ensureUserProfile({ request, userId: user.id, supabaseAdmin });
+    if (!ensuredProfile?.tenant_id) {
+      return NextResponse.json({ error: "Missing profile" }, { status: 403 });
+    }
+
+    const tenantId = ensuredProfile.tenant_id;
 
     const [classesRes, subjectsRes, teacherProfilesRes] = await Promise.all([
       supabaseAdmin.from("classes").select("id, name").eq("tenant_id", tenantId).order("name"),

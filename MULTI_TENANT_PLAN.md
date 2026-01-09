@@ -8,6 +8,28 @@
 Membolehkan banyak sekolah berkongsi aplikasi yang sama, tetapi data, tetapan,
 dan pembayaran diasingkan sepenuhnya per sekolah (tenant).
 
+## Current State (Supabase MCP Audit)
+- Tables tanpa `tenant_id`: `exam_excluded_students`, `online_courses`, `online_course_enrollments`.
+  - `tenants` + `payment_providers` memang global (expected), tetapi policy masih guna `users.role`.
+  - `users` legacy tiada `tenant_id` (masih digunakan oleh banyak policy).
+- `tenant_id` wujud tetapi **nullable** + **tiada default** pada hampir semua core tables
+  (risiko insert baru tanpa tenant).
+- RLS **enabled** tetapi `FORCE ROW LEVEL SECURITY` = **false** pada semua tables.
+- Unique global masih wujud:
+  - `classes.name` dan `subjects.name` masih unique global (perlu tenant-scoped).
+- RLS policy campur aduk:
+  - Banyak policy masih rujuk `users.role` atau `auth.users.raw_user_meta_data` (legacy).
+  - `exam_excluded_students` ada policy `authenticated_can_read` dengan `auth.uid() IS NOT NULL`
+    (boleh leak cross-tenant kerana tiada tenant guard).
+  - `online_courses` ada `online_courses_read_auth` dengan `qual = true` (global read).
+- Views `SECURITY DEFINER` masih aktif:
+  - `due_fee_months`, `parent_outstanding_summary`, `parent_child_outstanding`, `paid_line_items`
+  (RLS bypass risk).
+- Security lints aktif:
+  - Banyak function tidak set `search_path` (mutable search path).
+  - Leaked password protection disabled.
+  - Postgres patch pending (upgrade recommended).
+
 ## Prinsip Asas (Non-negotiable)
 - Isolasi data per tenant (tiada kebocoran data antara sekolah).
 - Defense-in-depth: RLS + constraints + audit + least privilege.
@@ -45,6 +67,8 @@ dan pembayaran diasingkan sepenuhnya per sekolah (tenant).
 - Semak semua policy RLS yang belum ada `tenant_guard`.
 - Semak semua API yang guna service role tanpa auth check.
 - Senarai policy `to public` yang perlu diketatkan.
+- Semak views `SECURITY DEFINER` dan ganti dengan RPC atau view biasa tenant-scoped.
+- Semak function tanpa `search_path` dan tambahkan setting.
 
 ### Fasa 1: Schema + Backfill (Done/Existing)
 - `tenants`, `tenant_domains`, `user_profiles`.
@@ -57,6 +81,8 @@ dan pembayaran diasingkan sepenuhnya per sekolah (tenant).
 - Default `tenant_id` guna helper `current_tenant_id()`.
 - Tambah check untuk tenant status aktif.
 - Backfill in batches, guna constraint NOT VALID dulu, kemudian validate.
+- Wajibkan `tenant_id` untuk `exam_excluded_students` dan `online_course_enrollments`
+  (atau pastikan ia memang global dan ada kompensasi policy yang jelas).
 
 ### Fasa 3: Tenant Consistency
 - Composite FK atau trigger untuk:
@@ -65,6 +91,7 @@ dan pembayaran diasingkan sepenuhnya per sekolah (tenant).
   - Semua join tables (exam_subjects, exam_classes, dll).
 - Pastikan semua insert/update pakai tenant_id yang betul.
 - FK tambah sebagai NOT VALID, validate selepas data bersih.
+- `exam_excluded_students` perlu tenant consistency (`exam_id`, `student_id`, `class_id`).
 
 ### Fasa 4: RLS Hardening
 - `tenant_guard_*` restrictive untuk semua table dengan `tenant_id`.
@@ -73,12 +100,14 @@ dan pembayaran diasingkan sepenuhnya per sekolah (tenant).
 - `users` hanya boleh dibaca oleh tenant yang sama.
 - Update semua views supaya tenant-safe atau convert ke RPC.
 - `tenants` dan `tenant_domains` hanya diurus platform admin.
+- Pastikan semua policy `qual = true` diganti dengan tenant-scoped check.
 
 ### Fasa 5: RPC Hardening
 - Semua RPC SECURITY DEFINER mesti:
   - check tenant membership
   - filter by tenant_id
 - Jika tak perlu definer, tukar ke SECURITY INVOKER.
+- Semua function SECURITY DEFINER mesti set `search_path`.
 
 ### Fasa 6: App & API Changes
 - Middleware: resolve host -> tenant_id.
@@ -126,6 +155,18 @@ dan pembayaran diasingkan sepenuhnya per sekolah (tenant).
 - Feature flag untuk multi-tenant routes.
 - Clear rollback steps untuk setiap fasa.
 
+## Migration Script Order (Current)
+- `2025-10-12_mt_01_add_tenant_id_exam_excluded_students.sql`
+- `2025-10-12_mt_02_add_missing_tenant_guards.sql`
+- `2025-10-12_mt_03_backfill_tenant_id_and_defaults.sql`
+- `2025-10-12_mt_04_enforce_tenant_id_not_null.sql`
+- `2025-10-12_mt_05_tenant_scoped_uniques.sql`
+- `2025-10-12_mt_06_add_tenant_consistency_constraints.sql`
+- `2025-10-12_mt_06b_validate_tenant_consistency_constraints.sql`
+- `2025-10-12_mt_07_drop_legacy_admin_policies.sql`
+- `2025-10-12_mt_08_force_rls.sql`
+- Rollback helper: `2025-10-12_mt_rollback.sql` (best-effort; full rollback = restore backup).
+
 ## Testing & Verification
 - Ujian RLS: cross-tenant SELECT/INSERT/UPDATE mesti fail.
 - Ujian RPC: pastikan tenant scope ketat.
@@ -142,6 +183,7 @@ dan pembayaran diasingkan sepenuhnya per sekolah (tenant).
 
 ## Checklist Siap
 - [ ] Semua jadual ada `tenant_id` + index + NOT NULL.
+- [ ] `tenant_id` ada default `current_tenant_id()` atau trigger deterministic.
 - [ ] Semua unique constraints tenant-scoped.
 - [ ] Semua RLS tenant_guard restrictive + FORCE RLS.
 - [ ] Semua RPC tenant-scoped atau invoker.
@@ -149,6 +191,8 @@ dan pembayaran diasingkan sepenuhnya per sekolah (tenant).
 - [ ] Onboarding tenant + domain verified berjalan.
 - [ ] Payment gateway per tenant berfungsi.
 - [ ] Audit log per tenant tersedia.
+- [ ] Security definer views dibuang/ganti RPC.
+- [ ] Function search_path fixed + leaked password protection enabled.
 
 ## Future Upgrade (Optional)
 - Multi-tenant membership (`tenant_memberships`) bila perlu.

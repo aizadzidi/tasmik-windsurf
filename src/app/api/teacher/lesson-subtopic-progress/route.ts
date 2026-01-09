@@ -46,15 +46,16 @@ async function getTopicForTeacher(topicId: string, userId: string) {
     return { topic: null, reason: "not_found" as const };
   }
 
-  const { data: studentRow, error: studentError } = await supabaseAdmin
-    .from("students")
-    .select("id")
-    .eq("class_id", topic.class_id)
-    .eq("assigned_teacher_id", userId)
-    .limit(1)
+  const { data: profile, error: profileError } = await supabaseAdmin
+    .from("user_profiles")
+    .select("tenant_id, role")
+    .eq("user_id", userId)
     .maybeSingle();
-  if (studentError) throw studentError;
-  if (!studentRow) {
+  if (profileError) throw profileError;
+  if (!profile?.tenant_id || profile.tenant_id !== topic.tenant_id) {
+    return { topic: null, reason: "forbidden" as const };
+  }
+  if (profile.role !== "teacher" && profile.role !== "school_admin") {
     return { topic: null, reason: "forbidden" as const };
   }
 

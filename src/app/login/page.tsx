@@ -18,6 +18,21 @@ export default function LoginPage() {
   const [name, setName] = useState("");
   const router = useRouter();
 
+  async function ensureProfile(accessToken: string) {
+    try {
+      const res = await fetch("/api/auth/ensure-profile", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        console.warn("Ensure profile failed", payload?.error || res.statusText);
+      }
+    } catch (err) {
+      console.warn("Ensure profile failed", err);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -47,6 +62,12 @@ export default function LoginPage() {
           setLoading(false);
           return;
         }
+      }
+      const accessToken =
+        data.session?.access_token ||
+        (await supabase.auth.getSession()).data.session?.access_token;
+      if (accessToken) {
+        await ensureProfile(accessToken);
       }
       // Redirect to parent dashboard
       router.push("/parent");
@@ -85,12 +106,24 @@ export default function LoginPage() {
             setLoading(false);
             return;
           }
+          const fallbackAccessToken =
+            data.session?.access_token ||
+            (await supabase.auth.getSession()).data.session?.access_token;
+          if (fallbackAccessToken) {
+            await ensureProfile(fallbackAccessToken);
+          }
           console.log('Redirecting to /parent after fallback user creation');
           router.push("/parent");
           setLoading(false);
           return;
         }
         console.log('User found in users table:', userData);
+        const accessToken =
+          data.session?.access_token ||
+          (await supabase.auth.getSession()).data.session?.access_token;
+        if (accessToken) {
+          await ensureProfile(accessToken);
+        }
         // Redirect based on role
         if (userData.role === "admin") { console.log('Redirecting to /admin'); router.push("/admin"); }
         else if (userData.role === "teacher") { console.log('Redirecting to /teacher'); router.push("/teacher"); }

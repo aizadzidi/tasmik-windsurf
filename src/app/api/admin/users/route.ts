@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
+import { ensureUserProfile } from '@/lib/tenantProvisioning';
 
 // GET - Fetch users by role (admin only)
 export async function GET(request: NextRequest) {
@@ -63,6 +64,14 @@ export async function PUT(request: NextRequest) {
         .single();
       
       if (error) throw error;
+      const profile = await ensureUserProfile({
+        request,
+        userId: id,
+        supabaseAdmin: client,
+      });
+      if (!profile?.tenant_id) {
+        console.warn('Admin role update: missing tenant profile', { userId: id });
+      }
       return data;
     });
     

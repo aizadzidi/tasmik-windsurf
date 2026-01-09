@@ -1,0 +1,37 @@
+-- Forces RLS on tenant-scoped tables.
+
+alter table public.attendance_records force row level security;
+alter table public.child_fee_assignments force row level security;
+alter table public.class_subjects force row level security;
+alter table public.classes force row level security;
+alter table public.conduct_criterias force row level security;
+alter table public.conduct_entries force row level security;
+alter table public.conduct_scores force row level security;
+alter table public.conduct_scores_old_20250923 force row level security;
+alter table public.exam_class_subjects force row level security;
+alter table public.exam_classes force row level security;
+alter table public.exam_excluded_students force row level security;
+alter table public.exam_results force row level security;
+alter table public.exam_subjects force row level security;
+alter table public.exams force row level security;
+alter table public.grading_systems force row level security;
+alter table public.juz_test_notifications force row level security;
+alter table public.juz_tests force row level security;
+alter table public.lesson_class_subject_year force row level security;
+alter table public.lesson_subtopic_progress force row level security;
+alter table public.lesson_topics force row level security;
+alter table public.parent_balance_adjustments force row level security;
+alter table public.payment_events force row level security;
+alter table public.payment_fee_catalog force row level security;
+alter table public.payment_line_items force row level security;
+alter table public.payments force row level security;
+alter table public.reports force row level security;
+alter table public.school_holiday_classes force row level security;
+alter table public.school_holidays force row level security;
+alter table public.students force row level security;
+alter table public.subject_opt_outs force row level security;
+alter table public.subjects force row level security;
+alter table public.tenant_domains force row level security;
+alter table public.tenant_payment_accounts force row level security;
+alter table public.tenant_payment_settings force row level security;
+alter table public.test_sessions force row level security;
