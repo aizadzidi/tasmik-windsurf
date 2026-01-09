@@ -61,8 +61,11 @@ export async function PUT(request: NextRequest) {
         userId: id,
         supabaseAdmin: client,
       });
-      if (!profile?.tenant_id) {
-        throw new Error('Missing profile');
+      if (!profile) {
+        throw new Error(`Missing user profile for userId=${id}`);
+      }
+      if (!profile.tenant_id) {
+        throw new Error(`User profile missing tenant_id for userId=${id}`);
       }
 
       const { data, error } = await client

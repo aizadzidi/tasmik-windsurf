@@ -1,6 +1,4 @@
--- Forces RLS on tenant-scoped tables.
--- Ensure this runs after policies exist for each table.
-
+-- Down migration (rollback): remove forced RLS.
 begin;
 
 do $$
@@ -43,31 +41,16 @@ declare
     'test_sessions'
   ];
   tbl text;
-  has_policies boolean;
 begin
   foreach tbl in array tables loop
     if not exists (
       select 1 from pg_tables where schemaname = 'public' and tablename = tbl
     ) then
-      raise exception 'Missing table: %', tbl;
-    end if;
-
-    select exists (
-      select 1 from pg_policies
-      where schemaname = 'public'
-        and tablename = tbl
-    ) into has_policies;
-
-    if tbl = 'conduct_scores_old_20250923' and not has_policies then
-      raise notice 'Skipping archived table without policies: %', tbl;
+      raise notice 'Skipping missing table during rollback: %', tbl;
       continue;
     end if;
 
-    if not has_policies then
-      raise exception 'Missing RLS policies for table: %', tbl;
-    end if;
-
-    execute format('alter table public.%I force row level security', tbl);
+    execute format('alter table public.%I no force row level security', tbl);
   end loop;
 end;
 $$;
