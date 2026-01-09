@@ -1,37 +1,134 @@
 -- Forces RLS on tenant-scoped tables.
+-- Ensure this runs after policies exist for each table.
 
-alter table public.attendance_records force row level security;
-alter table public.child_fee_assignments force row level security;
-alter table public.class_subjects force row level security;
-alter table public.classes force row level security;
-alter table public.conduct_criterias force row level security;
-alter table public.conduct_entries force row level security;
-alter table public.conduct_scores force row level security;
-alter table public.conduct_scores_old_20250923 force row level security;
-alter table public.exam_class_subjects force row level security;
-alter table public.exam_classes force row level security;
-alter table public.exam_excluded_students force row level security;
-alter table public.exam_results force row level security;
-alter table public.exam_subjects force row level security;
-alter table public.exams force row level security;
-alter table public.grading_systems force row level security;
-alter table public.juz_test_notifications force row level security;
-alter table public.juz_tests force row level security;
-alter table public.lesson_class_subject_year force row level security;
-alter table public.lesson_subtopic_progress force row level security;
-alter table public.lesson_topics force row level security;
-alter table public.parent_balance_adjustments force row level security;
-alter table public.payment_events force row level security;
-alter table public.payment_fee_catalog force row level security;
-alter table public.payment_line_items force row level security;
-alter table public.payments force row level security;
-alter table public.reports force row level security;
-alter table public.school_holiday_classes force row level security;
-alter table public.school_holidays force row level security;
-alter table public.students force row level security;
-alter table public.subject_opt_outs force row level security;
-alter table public.subjects force row level security;
-alter table public.tenant_domains force row level security;
-alter table public.tenant_payment_accounts force row level security;
-alter table public.tenant_payment_settings force row level security;
-alter table public.test_sessions force row level security;
+begin;
+
+do $$
+declare
+  tables text[] := array[
+    'attendance_records',
+    'child_fee_assignments',
+    'class_subjects',
+    'classes',
+    'conduct_criterias',
+    'conduct_entries',
+    'conduct_scores',
+    'conduct_scores_old_20250923',
+    'exam_class_subjects',
+    'exam_classes',
+    'exam_excluded_students',
+    'exam_results',
+    'exam_subjects',
+    'exams',
+    'grading_systems',
+    'juz_test_notifications',
+    'juz_tests',
+    'lesson_class_subject_year',
+    'lesson_subtopic_progress',
+    'lesson_topics',
+    'parent_balance_adjustments',
+    'payment_events',
+    'payment_fee_catalog',
+    'payment_line_items',
+    'payments',
+    'reports',
+    'school_holiday_classes',
+    'school_holidays',
+    'students',
+    'subject_opt_outs',
+    'subjects',
+    'tenant_domains',
+    'tenant_payment_accounts',
+    'tenant_payment_settings',
+    'test_sessions'
+  ];
+  tbl text;
+  has_policies boolean;
+begin
+  foreach tbl in array tables loop
+    if not exists (
+      select 1 from pg_tables where schemaname = 'public' and tablename = tbl
+    ) then
+      raise exception 'Missing table: %', tbl;
+    end if;
+
+    select exists (
+      select 1 from pg_policies
+      where schemaname = 'public'
+        and tablename = tbl
+    ) into has_policies;
+
+    if tbl = 'conduct_scores_old_20250923' and not has_policies then
+      raise notice 'Skipping archived table without policies: %', tbl;
+      continue;
+    end if;
+
+    if not has_policies then
+      raise exception 'Missing RLS policies for table: %', tbl;
+    end if;
+
+    execute format('alter table public.%I force row level security', tbl);
+  end loop;
+end;
+$$;
+
+commit;
+
+-- Down migration (rollback): remove forced RLS.
+begin;
+
+do $$
+declare
+  tables text[] := array[
+    'attendance_records',
+    'child_fee_assignments',
+    'class_subjects',
+    'classes',
+    'conduct_criterias',
+    'conduct_entries',
+    'conduct_scores',
+    'conduct_scores_old_20250923',
+    'exam_class_subjects',
+    'exam_classes',
+    'exam_excluded_students',
+    'exam_results',
+    'exam_subjects',
+    'exams',
+    'grading_systems',
+    'juz_test_notifications',
+    'juz_tests',
+    'lesson_class_subject_year',
+    'lesson_subtopic_progress',
+    'lesson_topics',
+    'parent_balance_adjustments',
+    'payment_events',
+    'payment_fee_catalog',
+    'payment_line_items',
+    'payments',
+    'reports',
+    'school_holiday_classes',
+    'school_holidays',
+    'students',
+    'subject_opt_outs',
+    'subjects',
+    'tenant_domains',
+    'tenant_payment_accounts',
+    'tenant_payment_settings',
+    'test_sessions'
+  ];
+  tbl text;
+begin
+  foreach tbl in array tables loop
+    if not exists (
+      select 1 from pg_tables where schemaname = 'public' and tablename = tbl
+    ) then
+      raise notice 'Skipping missing table during rollback: %', tbl;
+      continue;
+    end if;
+
+    execute format('alter table public.%I no force row level security', tbl);
+  end loop;
+end;
+$$;
+
+commit;

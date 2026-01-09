@@ -36,10 +36,10 @@ function formatError(error: unknown) {
   return { message: "Unexpected error" };
 }
 
-async function getTopicForTeacher(topicId: string, userId: string) {
+async function getTopicForTeacher(topicId: string, userId: string, academicYear: number) {
   const { data: topic, error: topicError } = await supabaseAdmin
     .from("lesson_topics")
-    .select("id, class_id, tenant_id")
+    .select("id, class_id, subject_id, tenant_id")
     .eq("id", topicId)
     .single();
   if (topicError || !topic) {
@@ -59,7 +59,22 @@ async function getTopicForTeacher(topicId: string, userId: string) {
     return { topic: null, reason: "forbidden" as const };
   }
 
-  return { topic, reason: null };
+  const { data: teacherAssignment, error: assignmentError } = await supabaseAdmin
+    .from("lesson_class_subject_year")
+    .select("subject_teacher_id")
+    .eq("class_id", topic.class_id)
+    .eq("subject_id", topic.subject_id)
+    .eq("academic_year", academicYear)
+    .maybeSingle();
+  if (assignmentError) throw assignmentError;
+
+  return {
+    topic,
+    subjectTeacherId: teacherAssignment?.subject_teacher_id
+      ? String(teacherAssignment.subject_teacher_id)
+      : null,
+    reason: null,
+  };
 }
 
 export async function POST(request: NextRequest) {
@@ -82,11 +97,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "academic_year is required" }, { status: 400 });
     }
 
-    const access = await getTopicForTeacher(topicId, user.id);
+    const access = await getTopicForTeacher(topicId, user.id, academicYear);
     if (!access.topic) {
       return NextResponse.json(
         { error: access.reason === "not_found" ? "Topic not found" : "Not allowed" },
         { status: access.reason === "not_found" ? 404 : 403 }
+      );
+    }
+    if (!access.subjectTeacherId) {
+      return NextResponse.json(
+        { error: "Subject teacher is not set for this class and subject." },
+        { status: 403 }
+      );
+    }
+    if (access.subjectTeacherId !== user.id) {
+      return NextResponse.json(
+        { error: "Only the subject teacher can update this progress." },
+        { status: 403 }
       );
     }
 
@@ -102,7 +129,7 @@ export async function POST(request: NextRequest) {
 
     const { data, error } = await supabaseAdmin
       .from("lesson_subtopic_progress")
-      .upsert(row, { onConflict: "topic_id,subtopic_index,teacher_id,academic_year" })
+      .upsert(row, { onConflict: "topic_id,subtopic_index,academic_year" })
       .select("id, subtopic_index, taught_on, remark")
       .single();
     if (error) throw error;
@@ -143,11 +170,23 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: "academic_year is required" }, { status: 400 });
     }
 
-    const access = await getTopicForTeacher(topicId, user.id);
+    const access = await getTopicForTeacher(topicId, user.id, academicYear);
     if (!access.topic) {
       return NextResponse.json(
         { error: access.reason === "not_found" ? "Topic not found" : "Not allowed" },
         { status: access.reason === "not_found" ? 404 : 403 }
+      );
+    }
+    if (!access.subjectTeacherId) {
+      return NextResponse.json(
+        { error: "Subject teacher is not set for this class and subject." },
+        { status: 403 }
+      );
+    }
+    if (access.subjectTeacherId !== user.id) {
+      return NextResponse.json(
+        { error: "Only the subject teacher can update this progress." },
+        { status: 403 }
       );
     }
 
@@ -156,7 +195,6 @@ export async function DELETE(request: NextRequest) {
       .delete()
       .eq("topic_id", topicId)
       .eq("subtopic_index", subtopicIndex)
-      .eq("teacher_id", user.id)
       .eq("academic_year", academicYear);
     if (error) throw error;
 

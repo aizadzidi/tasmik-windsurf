@@ -225,6 +225,262 @@ begin
 end;
 $$;
 
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename = 'exam_classes'
+      and policyname = 'tenant_admin_manage_exam_classes'
+  ) then
+    create policy tenant_admin_manage_exam_classes
+      on public.exam_classes
+      for all
+      to authenticated
+      using (
+        is_school_admin()
+        and exists (
+          select 1 from public.user_profiles up
+          where up.user_id = auth.uid()
+            and up.tenant_id = exam_classes.tenant_id
+        )
+      )
+      with check (
+        is_school_admin()
+        and exists (
+          select 1 from public.user_profiles up
+          where up.user_id = auth.uid()
+            and up.tenant_id = exam_classes.tenant_id
+        )
+      );
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename = 'exam_subjects'
+      and policyname = 'tenant_admin_manage_exam_subjects'
+  ) then
+    create policy tenant_admin_manage_exam_subjects
+      on public.exam_subjects
+      for all
+      to authenticated
+      using (
+        is_school_admin()
+        and exists (
+          select 1 from public.user_profiles up
+          where up.user_id = auth.uid()
+            and up.tenant_id = exam_subjects.tenant_id
+        )
+      )
+      with check (
+        is_school_admin()
+        and exists (
+          select 1 from public.user_profiles up
+          where up.user_id = auth.uid()
+            and up.tenant_id = exam_subjects.tenant_id
+        )
+      );
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename = 'exams'
+      and policyname = 'tenant_admin_manage_exams'
+  ) then
+    create policy tenant_admin_manage_exams
+      on public.exams
+      for all
+      to authenticated
+      using (
+        is_school_admin()
+        and exists (
+          select 1 from public.user_profiles up
+          where up.user_id = auth.uid()
+            and up.tenant_id = exams.tenant_id
+        )
+      )
+      with check (
+        is_school_admin()
+        and exists (
+          select 1 from public.user_profiles up
+          where up.user_id = auth.uid()
+            and up.tenant_id = exams.tenant_id
+        )
+      );
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename = 'exam_results'
+      and policyname = 'tenant_admin_manage_exam_results'
+  ) then
+    create policy tenant_admin_manage_exam_results
+      on public.exam_results
+      for all
+      to authenticated
+      using (
+        is_school_admin()
+        and exists (
+          select 1 from public.user_profiles up
+          where up.user_id = auth.uid()
+            and up.tenant_id = exam_results.tenant_id
+        )
+      )
+      with check (
+        is_school_admin()
+        and exists (
+          select 1 from public.user_profiles up
+          where up.user_id = auth.uid()
+            and up.tenant_id = exam_results.tenant_id
+        )
+      );
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename = 'payment_events'
+      and policyname = 'tenant_admin_manage_payment_events'
+  ) then
+    create policy tenant_admin_manage_payment_events
+      on public.payment_events
+      for all
+      to authenticated
+      using (
+        is_school_admin()
+        and exists (
+          select 1 from public.user_profiles up
+          where up.user_id = auth.uid()
+            and up.tenant_id = payment_events.tenant_id
+        )
+      )
+      with check (
+        is_school_admin()
+        and exists (
+          select 1 from public.user_profiles up
+          where up.user_id = auth.uid()
+            and up.tenant_id = payment_events.tenant_id
+        )
+      );
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename = 'payment_fee_catalog'
+      and policyname = 'tenant_admin_manage_payment_fee_catalog'
+  ) then
+    create policy tenant_admin_manage_payment_fee_catalog
+      on public.payment_fee_catalog
+      for all
+      to authenticated
+      using (
+        is_school_admin()
+        and exists (
+          select 1 from public.user_profiles up
+          where up.user_id = auth.uid()
+            and up.tenant_id = payment_fee_catalog.tenant_id
+        )
+      )
+      with check (
+        is_school_admin()
+        and exists (
+          select 1 from public.user_profiles up
+          where up.user_id = auth.uid()
+            and up.tenant_id = payment_fee_catalog.tenant_id
+        )
+      );
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename = 'payment_line_items'
+      and policyname = 'tenant_admin_manage_payment_line_items'
+  ) then
+    create policy tenant_admin_manage_payment_line_items
+      on public.payment_line_items
+      for all
+      to authenticated
+      using (
+        is_school_admin()
+        and exists (
+          select 1 from public.user_profiles up
+          where up.user_id = auth.uid()
+            and up.tenant_id = payment_line_items.tenant_id
+        )
+      )
+      with check (
+        is_school_admin()
+        and exists (
+          select 1 from public.user_profiles up
+          where up.user_id = auth.uid()
+            and up.tenant_id = payment_line_items.tenant_id
+        )
+      );
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename = 'payments'
+      and policyname = 'tenant_admin_manage_payments'
+  ) then
+    create policy tenant_admin_manage_payments
+      on public.payments
+      for all
+      to authenticated
+      using (
+        is_school_admin()
+        and exists (
+          select 1 from public.user_profiles up
+          where up.user_id = auth.uid()
+            and up.tenant_id = payments.tenant_id
+        )
+      )
+      with check (
+        is_school_admin()
+        and exists (
+          select 1 from public.user_profiles up
+          where up.user_id = auth.uid()
+            and up.tenant_id = payments.tenant_id
+        )
+      );
+  end if;
+end;
+$$;
+
 -- Drop legacy policies that rely on users.role or auth.user meta.
 drop policy if exists "Allow admin to manage conduct criteria" on public.conduct_criterias;
 

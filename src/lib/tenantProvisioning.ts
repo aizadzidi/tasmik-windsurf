@@ -46,11 +46,19 @@ export async function ensureUserProfile(params: {
   const tenantId = await resolveTenantIdFromRequest(request, supabaseAdmin);
   if (!tenantId) return null;
 
-  const { data: userRow } = await supabaseAdmin
+  const { data: userRow, error: userError } = await supabaseAdmin
     .from("users")
     .select("name, role")
     .eq("id", userId)
     .maybeSingle<UserRow>();
+  if (userError) {
+    console.error("Failed to load user row for profile provisioning", userError);
+    throw new Error("Failed to load user profile");
+  }
+  if (!userRow) {
+    console.error("User row missing for profile provisioning", { userId });
+    throw new Error("User profile not found");
+  }
 
   const { data, error } = await supabaseAdmin
     .from("user_profiles")
@@ -58,8 +66,8 @@ export async function ensureUserProfile(params: {
       {
         user_id: userId,
         tenant_id: tenantId,
-        role: mapUserRoleToProfile(userRow?.role),
-        display_name: userRow?.name ?? null,
+        role: mapUserRoleToProfile(userRow.role),
+        display_name: userRow.name,
       },
       { onConflict: "user_id" }
     )

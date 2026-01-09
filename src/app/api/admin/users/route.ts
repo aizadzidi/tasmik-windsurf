@@ -56,22 +56,37 @@ export async function PUT(request: NextRequest) {
     }
 
     const data = await adminOperationSimple(async (client) => {
-      const { data, error } = await client
-        .from('users')
-        .update({ role })
-        .eq('id', id)
-        .select()
-        .single();
-      
-      if (error) throw error;
       const profile = await ensureUserProfile({
         request,
         userId: id,
         supabaseAdmin: client,
       });
       if (!profile?.tenant_id) {
-        console.warn('Admin role update: missing tenant profile', { userId: id });
+        throw new Error('Missing profile');
       }
+
+      const { data, error } = await client
+        .from('users')
+        .update({ role })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      try {
+        const refreshedProfile = await ensureUserProfile({
+          request,
+          userId: id,
+          supabaseAdmin: client,
+        });
+        if (!refreshedProfile?.tenant_id) {
+          console.warn('Admin role update: missing tenant profile', { userId: id });
+        }
+      } catch (profileError) {
+        console.warn('Admin role update: failed to refresh profile', profileError);
+      }
+
       return data;
     });
     

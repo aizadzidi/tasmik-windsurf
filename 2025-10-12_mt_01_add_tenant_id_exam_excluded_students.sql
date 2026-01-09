@@ -33,6 +33,19 @@ begin
     and ees.tenant_id is null;
 end $$;
 
+-- Ensure backfill completed before enforcing NOT NULL.
+do $$
+begin
+  if exists (
+    select 1 from public.exam_excluded_students where tenant_id is null
+  ) then
+    raise exception 'exam_excluded_students.tenant_id still contains NULLs';
+  end if;
+end $$;
+
+alter table public.exam_excluded_students
+  alter column tenant_id set not null;
+
 -- Drop legacy policies.
 drop policy if exists admin_can_manage_exam_excluded_students
   on public.exam_excluded_students;

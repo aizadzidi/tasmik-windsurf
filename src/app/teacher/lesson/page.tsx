@@ -164,6 +164,7 @@ function TeacherLessonPageContent() {
   const [trackerTopics, setTrackerTopics] = React.useState<TopicWithProgress[]>([]);
   const [openTopicIds, setOpenTopicIds] = React.useState<Set<string>>(new Set());
   const [trackerTeacherName, setTrackerTeacherName] = React.useState("");
+  const [trackerTeacherId, setTrackerTeacherId] = React.useState<string | null>(null);
 
   // Management selections
   const [manageClassId, setManageClassId] = React.useState("");
@@ -171,6 +172,7 @@ function TeacherLessonPageContent() {
   const [manageTopics, setManageTopics] = React.useState<TopicWithProgress[]>([]);
   const [draggingSubtopicIndex, setDraggingSubtopicIndex] = React.useState<number | null>(null);
   const [manageTeacherName, setManageTeacherName] = React.useState("");
+  const [manageTeacherId, setManageTeacherId] = React.useState<string | null>(null);
 
   const [loadingMeta, setLoadingMeta] = React.useState(true);
   const [loadingTopics, setLoadingTopics] = React.useState(false);
@@ -241,6 +243,7 @@ function TeacherLessonPageContent() {
   const progressPercent = totalSubtopics
     ? Math.round((completedSubtopics / totalSubtopics) * 100)
     : 0;
+  const canEditTracker = Boolean(userId && trackerTeacherId && userId === trackerTeacherId);
 
   React.useEffect(() => {
     (async () => {
@@ -332,7 +335,6 @@ function TeacherLessonPageContent() {
     subtopic_index: number;
     taught_on: string | null;
     remark: string | null;
-    teacher_id: string | null;
   };
 
   const mapTopicsWithProgress = React.useCallback(
@@ -342,12 +344,21 @@ function TeacherLessonPageContent() {
       (subtopicProgressRows ?? []).forEach((row) => {
         const key = String(row.topic_id);
         const list = subtopicProgressMap.get(key) ?? [];
-        list.push({
+        const nextEntry = {
           id: row.id ? String(row.id) : null,
           subtopic_index: row.subtopic_index,
           taught_on: row.taught_on ?? null,
           remark: row.remark ?? null,
-        });
+        };
+        const existingIndex = list.findIndex((item) => item.subtopic_index === row.subtopic_index);
+        if (existingIndex >= 0) {
+          const existing = list[existingIndex];
+          const existingTime = existing.taught_on ? new Date(existing.taught_on).getTime() : 0;
+          const nextTime = nextEntry.taught_on ? new Date(nextEntry.taught_on).getTime() : 0;
+          list[existingIndex] = nextTime >= existingTime ? nextEntry : existing;
+        } else {
+          list.push(nextEntry);
+        }
         subtopicProgressMap.set(key, list);
       });
 
@@ -393,9 +404,8 @@ function TeacherLessonPageContent() {
         if (topicIds.length > 0 && userId) {
           const { data: fetchedSubtopicProgress, error: subtopicProgressError } = await supabase
             .from("lesson_subtopic_progress")
-            .select("id, topic_id, subtopic_index, taught_on, remark, teacher_id")
+            .select("id, topic_id, subtopic_index, taught_on, remark")
             .in("topic_id", topicIds)
-            .eq("teacher_id", userId)
             .eq("academic_year", academicYear);
           if (subtopicProgressError) {
             console.warn("Failed to fetch subtopic progress", subtopicProgressError);
@@ -428,27 +438,43 @@ function TeacherLessonPageContent() {
     async (params: { classId: string; subjectId: string; target: "tracker" | "manage" }) => {
       const { classId, subjectId, target } = params;
       if (!classId || !subjectId) {
-        if (target === "tracker") setTrackerTeacherName("");
-        else setManageTeacherName("");
+        if (target === "tracker") {
+          setTrackerTeacherName("");
+          setTrackerTeacherId(null);
+        } else {
+          setManageTeacherName("");
+          setManageTeacherId(null);
+        }
         return;
       }
       setLoadingTeacherName(true);
       try {
         const { data, error } = await supabase
           .from("lesson_class_subject_year")
-          .select("subject_teacher_name")
+          .select("subject_teacher_id, subject_teacher_name")
           .eq("class_id", classId)
           .eq("subject_id", subjectId)
           .eq("academic_year", academicYear)
           .maybeSingle();
         if (error) throw error;
         const name = data?.subject_teacher_name ? String(data.subject_teacher_name) : "";
-        if (target === "tracker") setTrackerTeacherName(name);
-        else setManageTeacherName(name);
+        const teacherId = data?.subject_teacher_id ? String(data.subject_teacher_id) : null;
+        if (target === "tracker") {
+          setTrackerTeacherName(name);
+          setTrackerTeacherId(teacherId);
+        } else {
+          setManageTeacherName(name);
+          setManageTeacherId(teacherId);
+        }
       } catch (error) {
         console.warn("Failed to fetch teacher name", error);
-        if (target === "tracker") setTrackerTeacherName("");
-        else setManageTeacherName("");
+        if (target === "tracker") {
+          setTrackerTeacherName("");
+          setTrackerTeacherId(null);
+        } else {
+          setManageTeacherName("");
+          setManageTeacherId(null);
+        }
       } finally {
         setLoadingTeacherName(false);
       }
@@ -461,6 +487,11 @@ function TeacherLessonPageContent() {
       const { classId, subjectId, target } = params;
       if (!classId || !subjectId || !userId) return;
       const name = (target === "tracker" ? trackerTeacherName : manageTeacherName).trim();
+      const teacherId = target === "tracker" ? trackerTeacherId : manageTeacherId;
+      if (name && !teacherId) {
+        setInlineError("Please select a teacher from the list.");
+        return;
+      }
       setSavingTeacherName(true);
       setInlineError(null);
       setActionMessage(null);
@@ -471,6 +502,7 @@ function TeacherLessonPageContent() {
             subject_id: subjectId,
             academic_year: academicYear,
             subject_teacher_name: name || null,
+            subject_teacher_id: name ? teacherId : null,
             created_by: userId,
           },
           { onConflict: "class_id,subject_id,academic_year" }
@@ -478,11 +510,14 @@ function TeacherLessonPageContent() {
         if (error) throw error;
         if (target === "manage") {
           setManageTeacherName(name);
+          setManageTeacherId(name ? teacherId ?? null : null);
           if (classId === trackerClassId && subjectId === trackerSubjectId) {
             setTrackerTeacherName(name);
+            setTrackerTeacherId(name ? teacherId ?? null : null);
           }
         } else {
           setTrackerTeacherName(name);
+          setTrackerTeacherId(name ? teacherId ?? null : null);
         }
         const message = "Teacher name saved.";
         setActionMessage(message);
@@ -496,7 +531,16 @@ function TeacherLessonPageContent() {
         setSavingTeacherName(false);
       }
     },
-    [academicYear, manageTeacherName, trackerClassId, trackerSubjectId, trackerTeacherName, userId]
+    [
+      academicYear,
+      manageTeacherId,
+      manageTeacherName,
+      trackerClassId,
+      trackerSubjectId,
+      trackerTeacherId,
+      trackerTeacherName,
+      userId,
+    ]
   );
 
   React.useEffect(() => {
@@ -567,6 +611,10 @@ function TeacherLessonPageContent() {
       taughtOn: string | null;
       remark: string | null;
     }) => {
+      if (!canEditTracker) {
+        setInlineError("Only the subject teacher can edit progress for this subject.");
+        return;
+      }
       setRemarkModalTarget({
         topicId: params.topicId,
         subtopicIndex: params.subtopicIndex,
@@ -577,7 +625,7 @@ function TeacherLessonPageContent() {
       setRemarkModalDate(toDateInput(params.taughtOn) || todayLocal());
       setRemarkModalError(null);
     },
-    []
+    [canEditTracker]
   );
 
   const closeRemarkModal = React.useCallback(() => {
@@ -652,6 +700,10 @@ function TeacherLessonPageContent() {
   const markSubtopicTaughtWithRemark = React.useCallback(
     async (topic: TopicWithProgress, subtopicIndex: number, remark: string) => {
       if (!userId) return;
+      if (!canEditTracker) {
+        setInlineError("Only the subject teacher can edit progress for this subject.");
+        return;
+      }
       const trimmedRemark = remark.trim();
       if (!trimmedRemark) return;
       setSavingTopicId(topic.id);
@@ -677,12 +729,16 @@ function TeacherLessonPageContent() {
         setSavingTopicId(null);
       }
     },
-    [applySubtopicProgressUpdate, upsertSubtopicProgress, userId]
+    [applySubtopicProgressUpdate, canEditTracker, upsertSubtopicProgress, userId]
   );
 
   const saveSubtopicRemark = React.useCallback(
     async (topicId: string, subtopicIndex: number, taughtOn: string, remark: string) => {
       if (!userId) return;
+      if (!canEditTracker) {
+        setInlineError("Only the subject teacher can edit progress for this subject.");
+        return;
+      }
       const trimmedRemark = remark.trim();
       if (!trimmedRemark) return;
       setSavingTopicId(topicId);
@@ -707,11 +763,15 @@ function TeacherLessonPageContent() {
         setSavingTopicId(null);
       }
     },
-    [applySubtopicProgressUpdate, upsertSubtopicProgress, userId]
+    [applySubtopicProgressUpdate, canEditTracker, upsertSubtopicProgress, userId]
   );
 
   const handleSubtopicToggle = async (topic: TopicWithProgress, subtopicIndex: number, checked: boolean) => {
     if (!userId) return;
+    if (!canEditTracker) {
+      setInlineError("Only the subject teacher can edit progress for this subject.");
+      return;
+    }
     setSavingTopicId(topic.id);
     setActionMessage(null);
     try {
@@ -751,6 +811,10 @@ function TeacherLessonPageContent() {
 
   const handleRemarkModalSave = React.useCallback(async () => {
     if (!remarkModalTarget || !userId) return;
+    if (!canEditTracker) {
+      setInlineError("Only the subject teacher can edit progress for this subject.");
+      return;
+    }
     const trimmedRemark = normalizePresetRemark(remarkModalText);
     if (!trimmedRemark) {
       setRemarkModalError("Remark is required.");
@@ -788,6 +852,7 @@ function TeacherLessonPageContent() {
     }
   }, [
     applySubtopicProgressUpdate,
+    canEditTracker,
     closeRemarkModal,
     remarkModalDate,
     remarkModalTarget,
@@ -917,7 +982,7 @@ function TeacherLessonPageContent() {
             </Button>
             <Button
               className="rounded-full bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black"
-              disabled={remarkModalSaving || !remarkModalText.trim()}
+              disabled={remarkModalSaving || !canEditTracker || !remarkModalText.trim()}
               onClick={() => void handleRemarkModalSave()}
             >
               {remarkModalSaving ? (
@@ -944,7 +1009,7 @@ function TeacherLessonPageContent() {
                 value={remarkModalDate}
                 min="2020-01-01"
                 max="2100-12-31"
-                disabled={remarkModalSaving}
+                disabled={remarkModalSaving || !canEditTracker}
                 onChange={(e) => setRemarkModalDate(e.target.value)}
                 className="h-6 border-none bg-transparent p-0 text-sm font-medium text-current focus:outline-none focus:ring-0"
               />
@@ -961,7 +1026,7 @@ function TeacherLessonPageContent() {
                   <button
                     key={preset}
                     type="button"
-                    disabled={remarkModalSaving}
+                    disabled={remarkModalSaving || !canEditTracker}
                     onClick={() => {
                       setRemarkModalText((prev) => {
                         const trimmed = prev.trim();
@@ -987,7 +1052,7 @@ function TeacherLessonPageContent() {
                 if (e.target.value.trim()) setRemarkModalError(null);
               }}
               rows={4}
-              disabled={remarkModalSaving}
+              disabled={remarkModalSaving || !canEditTracker}
               placeholder="Write a short, specific note…"
               className="w-full resize-none rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-300 focus:outline-none focus:ring-4 focus:ring-gray-100 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50 dark:focus:border-slate-600 dark:focus:ring-slate-800"
             />
@@ -998,7 +1063,7 @@ function TeacherLessonPageContent() {
                   <button
                     key={preset}
                     type="button"
-                    disabled={remarkModalSaving}
+                    disabled={remarkModalSaving || !canEditTracker}
                     onClick={() => {
                       setRemarkModalText((prev) => {
                         const trimmed = prev.trim();
@@ -1135,6 +1200,11 @@ function TeacherLessonPageContent() {
                   <p className="truncate text-sm font-semibold text-gray-900">
                     {loadingTeacherName ? "Loading…" : trackerTeacherName.trim() ? trackerTeacherName : "Not set"}
                   </p>
+                  {!canEditTracker ? (
+                    <p className="text-xs text-gray-500">
+                      Only the assigned subject teacher can edit progress. Update it in the Manage tab.
+                    </p>
+                  ) : null}
                 </div>
               </div>
 
@@ -1225,7 +1295,7 @@ function TeacherLessonPageContent() {
 	                                  type="checkbox"
 	                                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-500 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:border-slate-600 dark:bg-slate-900"
 	                                  checked={leafComplete}
-	                                  disabled={isSaving}
+	                                  disabled={isSaving || !canEditTracker}
 	                                  onChange={(e) => {
 	                                    if (e.target.checked) {
 	                                      toggleRemarkExpanded(leafKey, false);
@@ -1257,7 +1327,7 @@ function TeacherLessonPageContent() {
 		                                      <button
 		                                        type="button"
 		                                        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 disabled:opacity-60 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-100"
-		                                        disabled={isSaving}
+		                                        disabled={isSaving || !canEditTracker}
 		                                        onClick={() =>
 		                                          openRemarkModal({
 		                                            topicId: topic.id,
@@ -1278,6 +1348,7 @@ function TeacherLessonPageContent() {
 	                                    <div className="mt-2 rounded-xl border border-gray-200 bg-white/70 p-3 dark:border-slate-700 dark:bg-slate-900/40">
 	                                      <textarea
 	                                        value={leafRemarkDraft}
+	                                        disabled={!canEditTracker}
 	                                        onChange={(e) => {
 	                                          const nextValue = e.target.value;
 	                                          setRemarkDrafts((prev) => ({ ...prev, [leafKey]: nextValue }));
@@ -1300,7 +1371,7 @@ function TeacherLessonPageContent() {
 	                                        {leafComplete ? (
 	                                          <Button
 	                                            className="rounded-full bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-black"
-	                                            disabled={isSaving || !leafRemarkDraft.trim()}
+	                                            disabled={isSaving || !canEditTracker || !leafRemarkDraft.trim()}
 	                                            onClick={() => {
 	                                              const taughtOn = leafProgressEntry?.taught_on ?? null;
 	                                              if (!taughtOn) return;
@@ -1315,7 +1386,7 @@ function TeacherLessonPageContent() {
 	                                        ) : (
 	                                          <Button
 	                                            className="rounded-full bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-black"
-	                                            disabled={isSaving || !leafRemarkDraft.trim()}
+	                                            disabled={isSaving || !canEditTracker || !leafRemarkDraft.trim()}
 	                                            onClick={() => {
 	                                              const remark = leafRemarkDraft.trim();
 	                                              if (!remark) {
@@ -1347,7 +1418,7 @@ function TeacherLessonPageContent() {
 	                                  <button
 	                                    type="button"
 	                                    className="inline-flex items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 disabled:opacity-60 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-100 dark:hover:bg-blue-500/15"
-	                                    disabled={isSaving}
+	                                    disabled={isSaving || !canEditTracker}
 	                                    onClick={() =>
 	                                      openRemarkModal({
 	                                        topicId: topic.id,
@@ -1443,7 +1514,7 @@ function TeacherLessonPageContent() {
 	                                              type="checkbox"
 	                                              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-500 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:border-slate-600 dark:bg-slate-900"
 	                                              checked={subComplete}
-	                                              disabled={isSaving}
+	                                              disabled={isSaving || !canEditTracker}
 	                                              onChange={(e) => {
 	                                                if (e.target.checked) {
 	                                                  toggleRemarkExpanded(remarkKey, false);
@@ -1481,7 +1552,7 @@ function TeacherLessonPageContent() {
 		                                                  <button
 		                                                    type="button"
 		                                                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 disabled:opacity-60 dark:text-slate-500 dark:hover:bg-slate-700 dark:hover:text-slate-100"
-		                                                    disabled={isSaving}
+		                                                    disabled={isSaving || !canEditTracker}
 		                                                    onClick={() =>
 		                                                      openRemarkModal({
 		                                                        topicId: topic.id,
@@ -1502,6 +1573,7 @@ function TeacherLessonPageContent() {
 	                                                <div className="mt-2 rounded-xl border border-gray-200 bg-white/70 p-3 dark:border-slate-700 dark:bg-slate-900/40">
 	                                                  <textarea
 	                                                    value={remarkDraft}
+	                                                    disabled={!canEditTracker}
 	                                                    onChange={(e) => {
 	                                                      const nextValue = e.target.value;
 	                                                      setRemarkDrafts((prev) => ({ ...prev, [remarkKey]: nextValue }));
@@ -1524,7 +1596,7 @@ function TeacherLessonPageContent() {
 	                                                    {subComplete ? (
 	                                                      <Button
 	                                                        className="rounded-full bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-black"
-	                                                        disabled={isSaving || !remarkDraft.trim()}
+	                                                        disabled={isSaving || !canEditTracker || !remarkDraft.trim()}
 	                                                        onClick={() => {
 	                                                          const taughtOnRaw = progressEntry?.taught_on ?? null;
 	                                                          if (!taughtOnRaw) return;
@@ -1539,7 +1611,7 @@ function TeacherLessonPageContent() {
 	                                                    ) : (
 	                                                      <Button
 	                                                        className="rounded-full bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-black"
-	                                                        disabled={isSaving || !remarkDraft.trim()}
+	                                                        disabled={isSaving || !canEditTracker || !remarkDraft.trim()}
 	                                                        onClick={() => {
 	                                                          const remark = remarkDraft.trim();
 	                                                          if (!remark) {
@@ -1571,7 +1643,7 @@ function TeacherLessonPageContent() {
 	                                              <button
 	                                                type="button"
 	                                                className="inline-flex items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 disabled:opacity-60 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-100 dark:hover:bg-blue-500/15"
-	                                                disabled={isSaving}
+	                                                disabled={isSaving || !canEditTracker}
 	                                                onClick={() =>
 	                                                  openRemarkModal({
 	                                                    topicId: topic.id,
@@ -1690,33 +1762,18 @@ function TeacherLessonPageContent() {
                           onValueChange={setTeacherComboboxQuery}
                         />
                         <CommandList id="teacher-combobox-list">
-                          <CommandEmpty>
-                            {teacherComboboxQuery.trim() ? (
-                              <button
-                                type="button"
-                                className="w-full px-2 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50"
-                                onClick={() => {
-                                  setManageTeacherName(teacherComboboxQuery.trim());
-                                  setTeacherComboboxOpen(false);
-                                  setTeacherComboboxQuery("");
-                                }}
-                              >
-                                Use “{teacherComboboxQuery.trim()}”
-                              </button>
-                            ) : (
-                              "No teachers found."
-                            )}
-                          </CommandEmpty>
+                          <CommandEmpty>No teachers found.</CommandEmpty>
                           <CommandGroup heading="Teachers">
                             {teachers.map((teacher) => {
                               const label = teacher.name || teacher.email || "Unnamed teacher";
-                              const selected = label === manageTeacherName;
+                              const selected = teacher.id === manageTeacherId;
                               return (
                                 <CommandItem
                                   key={teacher.id}
                                   value={`${label} ${teacher.email ?? ""}`.trim()}
                                   onSelect={() => {
                                     setManageTeacherName(label);
+                                    setManageTeacherId(teacher.id);
                                     setTeacherComboboxOpen(false);
                                     setTeacherComboboxQuery("");
                                   }}
@@ -1735,7 +1792,10 @@ function TeacherLessonPageContent() {
                     <button
                       type="button"
                       className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-gray-500 hover:text-gray-900"
-                      onClick={() => setManageTeacherName("")}
+                      onClick={() => {
+                        setManageTeacherName("");
+                        setManageTeacherId(null);
+                      }}
                       disabled={savingTeacherName}
                     >
                       <X className="h-3.5 w-3.5" />

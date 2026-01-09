@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AdminNavbar from "@/components/admin/AdminNavbar";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
@@ -21,12 +21,18 @@ export default function AdminUsersPage() {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+  const updateControllers = useRef<Map<string, AbortController>>(new Map());
+  const updateRequestIds = useRef<Map<string, number>>(new Map());
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
     setError("");
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
     try {
-      const res = await fetch("/api/admin/users");
+      const res = await fetch("/api/admin/users", {
+        signal: controller.signal,
+      });
       if (!res.ok) {
         const payload = await res.json().catch(() => null);
         throw new Error(payload?.error || "Failed to load users");
@@ -34,9 +40,14 @@ export default function AdminUsersPage() {
       const data = await res.json();
       setUsers(Array.isArray(data) ? data : []);
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        setError("Request timed out");
+        return;
+      }
       const message = err instanceof Error ? err.message : "Failed to load users";
       setError(message);
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   }, []);
@@ -55,6 +66,15 @@ export default function AdminUsersPage() {
   }, [query, users]);
 
   const updateRole = async (userId: string, role: UserRow["role"]) => {
+    const existingController = updateControllers.current.get(userId);
+    if (existingController) {
+      existingController.abort();
+    }
+    const controller = new AbortController();
+    updateControllers.current.set(userId, controller);
+    const nextRequestId = (updateRequestIds.current.get(userId) ?? 0) + 1;
+    updateRequestIds.current.set(userId, nextRequestId);
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
     setSavingId(userId);
     setError("");
     try {
@@ -62,19 +82,32 @@ export default function AdminUsersPage() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: userId, role }),
+        signal: controller.signal,
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => null);
         throw new Error(payload?.error || "Failed to update role");
       }
+      if (updateRequestIds.current.get(userId) !== nextRequestId) return;
       setUsers((prev) =>
         prev.map((user) => (user.id === userId ? { ...user, role } : user))
       );
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        if (updateRequestIds.current.get(userId) === nextRequestId) {
+          setError("Request timed out");
+        }
+        return;
+      }
+      if (updateRequestIds.current.get(userId) !== nextRequestId) return;
       const message = err instanceof Error ? err.message : "Failed to update role";
       setError(message);
     } finally {
-      setSavingId(null);
+      clearTimeout(timeoutId);
+      if (updateRequestIds.current.get(userId) === nextRequestId) {
+        updateControllers.current.delete(userId);
+        setSavingId(null);
+      }
     }
   };
 
@@ -96,6 +129,7 @@ export default function AdminUsersPage() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search by name or email"
+                aria-label="Search users by name or email"
                 className="md:max-w-sm"
               />
               <Button
@@ -141,6 +175,7 @@ export default function AdminUsersPage() {
                           onChange={(e) =>
                             updateRole(user.id, e.target.value as UserRow["role"])
                           }
+                          aria-label={`Role for ${user.name || user.email || "user"}`}
                           className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
                           disabled={savingId === user.id}
                         >

@@ -69,6 +69,10 @@ dan pembayaran diasingkan sepenuhnya per sekolah (tenant).
 - Senarai policy `to public` yang perlu diketatkan.
 - Semak views `SECURITY DEFINER` dan ganti dengan RPC atau view biasa tenant-scoped.
 - Semak function tanpa `search_path` dan tambahkan setting.
+- Keputusan scoping mesti dibuat di sini untuk `exam_excluded_students` dan
+  `online_course_enrollments`:
+  - `exam_excluded_students`: tenant-scoped.
+  - `online_course_enrollments`: tenant-scoped.
 
 ### Fasa 1: Schema + Backfill (Done/Existing)
 - `tenants`, `tenant_domains`, `user_profiles`.
@@ -81,8 +85,8 @@ dan pembayaran diasingkan sepenuhnya per sekolah (tenant).
 - Default `tenant_id` guna helper `current_tenant_id()`.
 - Tambah check untuk tenant status aktif.
 - Backfill in batches, guna constraint NOT VALID dulu, kemudian validate.
-- Wajibkan `tenant_id` untuk `exam_excluded_students` dan `online_course_enrollments`
-  (atau pastikan ia memang global dan ada kompensasi policy yang jelas).
+- Wajibkan `tenant_id` untuk `exam_excluded_students` dan
+  `online_course_enrollments` (keputusan tenant-scoped dibuat di Fasa 0).
 
 ### Fasa 3: Tenant Consistency
 - Composite FK atau trigger untuk:

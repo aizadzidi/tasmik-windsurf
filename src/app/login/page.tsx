@@ -19,17 +19,26 @@ export default function LoginPage() {
   const router = useRouter();
 
   async function ensureProfile(accessToken: string) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
       const res = await fetch("/api/auth/ensure-profile", {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
+        signal: controller.signal,
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => null);
         console.warn("Ensure profile failed", payload?.error || res.statusText);
       }
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        console.warn("Ensure profile timed out");
+        return;
+      }
       console.warn("Ensure profile failed", err);
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 

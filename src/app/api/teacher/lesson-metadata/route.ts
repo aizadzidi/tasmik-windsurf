@@ -34,7 +34,10 @@ export async function GET(request: NextRequest) {
       .eq("user_id", user.id)
       .maybeSingle();
     if (profileError) {
-      return NextResponse.json({ error: "Missing profile" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Failed to load profile", detail: profileError.message },
+        { status: 500 }
+      );
     }
 
     const ensuredProfile = profile?.tenant_id
