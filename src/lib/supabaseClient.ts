@@ -7,7 +7,8 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     autoRefreshToken: true,
     persistSession: true,
-    detectSessionInUrl: true,
+    // We manually handle auth redirects (e.g. reset-password) to avoid double exchanges.
+    detectSessionInUrl: false,
     flowType: 'pkce'
   }
 });
@@ -20,7 +21,17 @@ supabase.auth.onAuthStateChange((event, session) => {
     // Clear any cached data when user is signed out due to invalid token
     console.log('User signed out - clearing session');
     if (typeof window !== 'undefined') {
-      window.location.href = '/login';
+      const publicRoutes = new Set([
+        '/',
+        '/login',
+        '/signup',
+        '/forgot-password',
+        '/reset-password',
+      ]);
+      const path = window.location.pathname;
+      if (!publicRoutes.has(path)) {
+        window.location.href = '/login';
+      }
     }
   }
 });

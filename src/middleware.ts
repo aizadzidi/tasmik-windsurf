@@ -9,9 +9,10 @@ export function middleware(request: NextRequest) {
   const hasTokenHash = searchParams.has('token_hash')
   const hasAccessToken = searchParams.has('access_token')
   const authType = searchParams.get('type')
+  const isRecovery = authType === 'recovery'
 
   // If we have auth parameters and we're not already on reset-password
-  if ((hasAuthCode || hasTokenHash || hasAccessToken || authType === 'recovery') && pathname !== '/reset-password') {
+  if (isRecovery && (hasAuthCode || hasTokenHash || hasAccessToken) && pathname !== '/reset-password') {
     console.log('Middleware: Detected auth redirect, redirecting to reset-password')
     console.log('Auth params found:', { hasAuthCode, hasTokenHash, hasAccessToken, authType })
     

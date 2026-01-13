@@ -3,7 +3,7 @@ import { useState } from "react";
 // import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
-import { supabase } from "@/lib/supabaseClient";
+import { supabaseRecovery } from "@/lib/supabaseRecoveryClient";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Alert } from "@/components/ui/Alert";
@@ -23,7 +23,7 @@ export default function ForgotPasswordPage() {
     setMessage("");
 
     try {
-      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+      const { error: resetError } = await supabaseRecovery.auth.resetPasswordForEmail(email, {
         redirectTo: `${window.location.origin}/reset-password`,
       });
 

@@ -18,9 +18,53 @@ function ResetPasswordForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const buildErrorMessage = (opts: {
+    error?: string | null;
+    errorCode?: string | null;
+    errorDescription?: string | null;
+  }) => {
+    const { error, errorCode, errorDescription } = opts;
+    if (errorCode === "otp_expired") {
+      return "Reset link expired or already used. Please request a new one.";
+    }
+    if (errorCode === "access_denied" || error === "access_denied") {
+      return errorDescription || "Access denied. Please request a new reset link.";
+    }
+    if (errorDescription) {
+      return errorDescription;
+    }
+    return "Invalid or expired reset link. Please request a new password reset.";
+  };
+
   useEffect(() => {
     const handlePasswordReset = async () => {
       console.log('Reset password page: Starting auth flow detection')
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const errorParam = searchParams.get("error") || hashParams.get("error");
+      const errorCode =
+        searchParams.get("error_code") || hashParams.get("error_code");
+      const errorDescription =
+        searchParams.get("error_description") ||
+        hashParams.get("error_description");
+
+      if (errorParam || errorCode || errorDescription) {
+        if (process.env.NODE_ENV !== "production") {
+          console.log("Reset password page: Error params detected", {
+            errorParam,
+            errorCode,
+            errorDescription,
+            url: window.location.href,
+          });
+        }
+        setError(
+          buildErrorMessage({
+            error: errorParam,
+            errorCode,
+            errorDescription,
+          })
+        );
+        return;
+      }
       
       // First check if we have a session already
       const { data: { session } } = await supabase.auth.getSession();
@@ -78,10 +122,16 @@ function ResetPasswordForm() {
       }
 
       // Check for URL hash parameters (traditional Supabase auth)
-      const hashParams = new URLSearchParams(window.location.hash.substring(1));
       const accessToken = hashParams.get('access_token');
       const refreshToken = hashParams.get('refresh_token');
       const hashType = hashParams.get('type');
+
+      if (process.env.NODE_ENV !== "production") {
+        console.log("Reset password page: URL params snapshot", {
+          searchParams: Object.fromEntries(searchParams.entries()),
+          hashParams: Object.fromEntries(hashParams.entries()),
+        });
+      }
 
       // Check for search parameters as additional fallback
       const accessTokenSearch = searchParams.get('access_token');

@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
@@ -17,6 +17,26 @@ export default function LoginPage() {
   const [isSignUp, setIsSignUp] = useState(false);
   const [name, setName] = useState("");
   const router = useRouter();
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const searchParams = new URLSearchParams(window.location.search);
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const authType = searchParams.get("type") || hashParams.get("type");
+    const hasRecoveryTokens =
+      searchParams.has("code") ||
+      searchParams.has("token_hash") ||
+      searchParams.has("access_token") ||
+      hashParams.has("access_token") ||
+      hashParams.has("refresh_token");
+
+    if (authType === "recovery" && hasRecoveryTokens) {
+      const resetUrl = new URL("/reset-password", window.location.origin);
+      resetUrl.search = window.location.search;
+      resetUrl.hash = window.location.hash;
+      window.location.replace(resetUrl.toString());
+    }
+  }, []);
 
   async function ensureProfile(accessToken: string) {
     const controller = new AbortController();
