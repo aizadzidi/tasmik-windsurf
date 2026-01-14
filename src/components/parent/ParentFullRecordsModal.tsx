@@ -64,16 +64,38 @@ export default function ParentFullRecordsModal({
   const [juzTests, setJuzTests] = useState<JuzTestRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const initialLoadRef = useRef(true);
+  const murajaahTabTouchedRef = useRef(false);
+  const [murajaahTab, setMurajaahTab] = useState<'new' | 'old'>('new');
+
+  const normalizeType = (type: string | null | undefined) => (type ?? '').trim().toLowerCase();
+  const newMurajaahReports = useMemo(() => (
+    reports.filter(r => normalizeType(r.type) === 'new murajaah')
+  ), [reports]);
+  const oldMurajaahReports = useMemo(() => (
+    reports.filter(r => {
+      const normalized = normalizeType(r.type);
+      return normalized === 'murajaah' || normalized === 'old murajaah';
+    })
+  ), [reports]);
+
+  useEffect(() => {
+    if (viewMode !== 'murajaah') return;
+    if (murajaahTabTouchedRef.current) return;
+    if (murajaahTab === 'new' && newMurajaahReports.length === 0 && oldMurajaahReports.length > 0) {
+      setMurajaahTab('old');
+      murajaahTabTouchedRef.current = true;
+    }
+  }, [viewMode, murajaahTab, newMurajaahReports.length, oldMurajaahReports.length]);
 
   // Memoize filtered reports to avoid unnecessary re-renders
   const filteredReports = useMemo(() => {
     if (viewMode === 'tasmik') {
       return reports.filter(r => r.type === 'Tasmi');
     } else if (viewMode === 'murajaah') {
-      return reports.filter(r => ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type));
+      return murajaahTab === 'new' ? newMurajaahReports : oldMurajaahReports;
     }
     return reports;
-  }, [reports, viewMode]);
+  }, [reports, viewMode, murajaahTab, newMurajaahReports, oldMurajaahReports]);
 
   const fetchStudentReports = useCallback(async () => {
     if (initialLoadRef.current) {
@@ -225,10 +247,11 @@ export default function ParentFullRecordsModal({
 
   if (!student) return null;
 
+  const murajaahTitle = murajaahTab === 'new' ? 'New Murajaah' : 'Old Murajaah';
   const getViewModeTitle = () => {
     switch (viewMode) {
       case 'tasmik': return 'Tasmik Records';
-      case 'murajaah': return 'Murajaah Records';
+      case 'murajaah': return `${murajaahTitle} Records`;
       case 'juz_tests': return 'Juz Test Records';
       default: return 'All Records';
     }
@@ -258,6 +281,39 @@ export default function ParentFullRecordsModal({
 
         {/* Content */}
         <div className="overflow-y-auto overscroll-contain max-h-[calc(90vh-120px)]">
+          {viewMode === 'murajaah' && !loading && (
+            <div className="px-6 pt-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="inline-flex rounded-full bg-gray-100 p-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    murajaahTabTouchedRef.current = true;
+                    setMurajaahTab('new');
+                  }}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                    murajaahTab === 'new' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-700 hover:text-emerald-800'
+                  }`}
+                >
+                  New <span className="ml-1 text-[10px] opacity-80">({newMurajaahReports.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    murajaahTabTouchedRef.current = true;
+                    setMurajaahTab('old');
+                  }}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                    murajaahTab === 'old' ? 'bg-amber-600 text-white shadow-sm' : 'text-amber-700 hover:text-amber-800'
+                  }`}
+                >
+                    Old <span className="ml-1 text-[10px] opacity-80">({oldMurajaahReports.length})</span>
+                  </button>
+                </div>
+                <div className="text-xs text-gray-500">Separate old vs new murajaah records</div>
+              </div>
+            </div>
+          )}
           {loading ? (
             <div className="p-6">
               <div className="animate-pulse space-y-4">
@@ -342,7 +398,7 @@ export default function ParentFullRecordsModal({
                 </svg>
               </div>
               <h3 className="text-lg font-medium text-gray-600 mb-2">No Records Found</h3>
-              <p className="text-gray-500">No {viewMode} records available for {student.name}</p>
+              <p className="text-gray-500">No {viewMode === 'murajaah' ? murajaahTitle : viewMode} records available for {student.name}</p>
             </div>
           ) : (
             <div className="p-6">

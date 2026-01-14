@@ -5,9 +5,11 @@ import { getJuzFromPage, getPageRangeFromJuz } from "@/lib/quranMapping";
 
 interface MurajaahCircleChartProps {
   reports: Report[];
+  label?: string;
+  accentColor?: string;
 }
 
-export function MurajaahCircleChart({ reports }: MurajaahCircleChartProps) {
+export function MurajaahCircleChart({ reports, label = "Murajaah", accentColor = "#3b82f6" }: MurajaahCircleChartProps) {
   // Determine target boundary from latest Tasmi progress (use latest max page_to only)
   const tasmiReports = reports.filter(r => r.type === 'Tasmi');
   const maxTasmiPageTo = Math.max(
@@ -118,7 +120,7 @@ export function MurajaahCircleChart({ reports }: MurajaahCircleChartProps) {
             cy={size / 2}
             r={radius}
             fill="transparent"
-            stroke="#3b82f6"
+            stroke={accentColor}
             strokeWidth={strokeWidth}
             strokeLinecap="round"
             strokeDasharray={strokeDasharray}
@@ -135,10 +137,10 @@ export function MurajaahCircleChart({ reports }: MurajaahCircleChartProps) {
             {currentCycleProgress.toFixed(1)}%
           </div>
           <div className="text-sm text-gray-600">
-            Current Murajaah
+            {label}
           </div>
           {completedCycles > 0 && (
-            <div className="text-xs text-blue-600 font-medium mt-1">
+            <div className="text-xs font-medium mt-1" style={{ color: accentColor }}>
               {completedCycles} Complete
             </div>
           )}

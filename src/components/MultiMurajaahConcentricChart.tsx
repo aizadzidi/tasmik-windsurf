@@ -7,10 +7,27 @@ interface MultiMurajaahConcentricChartProps {
   students: { id: string; name: string }[];
   reports: Report[];
   size?: number;
+  variant?: 'all' | 'old' | 'new';
+  title?: string;
+  subtitle?: string;
 }
 
-export function MultiMurajaahConcentricChart({ students, reports, size = 260 }: MultiMurajaahConcentricChartProps) {
+export function MultiMurajaahConcentricChart({
+  students,
+  reports,
+  size = 260,
+  variant = 'all',
+  title,
+  subtitle
+}: MultiMurajaahConcentricChartProps) {
   const totalPagesToReview = 604;
+  const murajaahTypes = variant === 'new'
+    ? ["New Murajaah"]
+    : variant === 'old'
+      ? ["Murajaah", "Old Murajaah"]
+      : ["Murajaah", "Old Murajaah", "New Murajaah"];
+  const titleText = title ?? (variant === 'new' ? 'New Murajaah' : variant === 'old' ? 'Old Murajaah' : 'Murajaah Progress');
+  const subtitleText = subtitle ?? 'One ring per child';
 
   const palette = [
     "#ef4444",
@@ -27,7 +44,7 @@ export function MultiMurajaahConcentricChart({ students, reports, size = 260 }: 
 
   const perStudentProgress = useMemo(() => {
     return students.map((s) => {
-      const murajaahReports = reports.filter(r => r.student_id === s.id && ["Murajaah", "Old Murajaah", "New Murajaah"].includes(r.type));
+      const murajaahReports = reports.filter(r => r.student_id === s.id && murajaahTypes.includes(r.type));
       const tasmiReports = reports.filter(r => r.student_id === s.id && r.type === 'Tasmi');
       const maxTasmiPageTo = Math.max(
         ...tasmiReports.map(r => (r.page_to !== null && !isNaN(r.page_to) ? r.page_to : 0)),
@@ -65,7 +82,7 @@ export function MultiMurajaahConcentricChart({ students, reports, size = 260 }: 
       const completedCycles = reviewCounts.length > 0 ? Math.min(...reviewCounts) : 0;
       return { student: s, progress: currentCycleProgress, completedCycles };
     });
-  }, [students, reports]);
+  }, [students, reports, variant]);
 
   const strokeWidth = 12;
   const gap = 6;
@@ -112,8 +129,8 @@ export function MultiMurajaahConcentricChart({ students, reports, size = 260 }: 
           })}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-          <div className="text-sm font-semibold text-gray-700">Murajaah Progress</div>
-          <div className="text-xs text-gray-500">One ring per child</div>
+          <div className="text-sm font-semibold text-gray-700">{titleText}</div>
+          <div className="text-xs text-gray-500">{subtitleText}</div>
         </div>
       </div>
       <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-1 w-full">
@@ -133,5 +150,3 @@ export function MultiMurajaahConcentricChart({ students, reports, size = 260 }: 
     </div>
   );
 }
-
-

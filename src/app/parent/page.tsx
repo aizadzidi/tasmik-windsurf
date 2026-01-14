@@ -598,10 +598,26 @@ export default function ParentPage() {
                 <h3 className="text-lg font-semibold text-gray-800 mb-4">Children Progress Overview</h3>
                 {filteredChildren.length > 0 && (
                   selectedStudentIds.length === 0 && viewMode === 'murajaah' ? (
-                    <MultiMurajaahConcentricChart
-                      students={filteredChildren.map(c => ({ id: c.id, name: c.name }))}
-                      reports={reports.filter(r => filteredChildren.some(c => c.id === r.student_id))}
-                    />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="rounded-xl border border-amber-100 bg-amber-50/60 p-3">
+                        <div className="text-xs font-semibold text-amber-700 uppercase tracking-wide">Old Murajaah</div>
+                        <MultiMurajaahConcentricChart
+                          students={filteredChildren.map(c => ({ id: c.id, name: c.name }))}
+                          reports={reports.filter(r => filteredChildren.some(c => c.id === r.student_id))}
+                          variant="old"
+                          title="Old Murajaah"
+                        />
+                      </div>
+                      <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
+                        <div className="text-xs font-semibold text-emerald-700 uppercase tracking-wide">New Murajaah</div>
+                        <MultiMurajaahConcentricChart
+                          students={filteredChildren.map(c => ({ id: c.id, name: c.name }))}
+                          reports={reports.filter(r => filteredChildren.some(c => c.id === r.student_id))}
+                          variant="new"
+                          title="New Murajaah"
+                        />
+                      </div>
+                    </div>
                   ) : (
                     <div className="space-y-4">
                       {(() => {

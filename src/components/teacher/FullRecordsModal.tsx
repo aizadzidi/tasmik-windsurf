@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { getWeekBoundaries } from "@/lib/gradeUtils";
 import type { ViewMode } from "@/types/teacher";
@@ -43,6 +43,9 @@ export default function FullRecordsModal({
   const [initialLoad, setInitialLoad] = useState(true);
   const [deletingReport, setDeletingReport] = useState<Report | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [movingReportId, setMovingReportId] = useState<string | null>(null);
+  const [murajaahTab, setMurajaahTab] = useState<'new' | 'old'>('new');
+  const murajaahTabTouchedRef = useRef(false);
 
   const fetchStudentReports = useCallback(async () => {
     // Only show loading spinner on initial load, not on view mode changes
@@ -75,15 +78,56 @@ export default function FullRecordsModal({
     fetchStudentReports();
   }, [fetchStudentReports, student.id, userId, viewMode]);
 
+  const normalizeType = (type: string | null | undefined) => (type ?? '').trim().toLowerCase();
+  const getMurajaahMoveConfig = (type: string) => {
+    const normalized = normalizeType(type);
+    if (normalized === 'new murajaah') {
+      return {
+        nextType: 'Old Murajaah',
+        label: 'Move to Old Murajaah',
+        className: 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+      };
+    }
+    if (normalized === 'old murajaah' || normalized === 'murajaah') {
+      return {
+        nextType: 'New Murajaah',
+        label: 'Move to New Murajaah',
+        className: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+      };
+    }
+    return null;
+  };
+  const newMurajaahReports = useMemo(() => (
+    reports.filter(r => normalizeType(r.type) === 'new murajaah')
+  ), [reports]);
+  const oldMurajaahReports = useMemo(() => (
+    reports.filter(r => {
+      const normalized = normalizeType(r.type);
+      return normalized === 'murajaah' || normalized === 'old murajaah';
+    })
+  ), [reports]);
+
+  useEffect(() => {
+    if (viewMode !== 'murajaah') return;
+    if (murajaahTabTouchedRef.current) return;
+    if (murajaahTab === 'new' && newMurajaahReports.length === 0 && oldMurajaahReports.length > 0) {
+      setMurajaahTab('old');
+      murajaahTabTouchedRef.current = true;
+    }
+  }, [viewMode, murajaahTab, newMurajaahReports.length, oldMurajaahReports.length]);
+
   // Memoize filtered reports to avoid unnecessary re-renders
   const filteredReports = useMemo(() => {
     if (viewMode === 'tasmik') {
       return reports.filter(r => r.type === 'Tasmi');
     } else if (viewMode === 'murajaah') {
-      return reports.filter(r => ['Murajaah', 'Old Murajaah', 'New Murajaah'].includes(r.type));
+      return murajaahTab === 'new' ? newMurajaahReports : oldMurajaahReports;
     }
     return reports;
-  }, [reports, viewMode]);
+  }, [reports, viewMode, murajaahTab, newMurajaahReports, oldMurajaahReports]);
+
+  const murajaahTitle = murajaahTab === 'new' ? 'New Murajaah' : 'Old Murajaah';
+  const headerTitle = viewMode === 'tasmik' ? 'Tasmi' : viewMode === 'murajaah' ? murajaahTitle : 'All';
 
   const handleDelete = async (reportId: string) => {
     try {
@@ -128,13 +172,62 @@ export default function FullRecordsModal({
     onClose(); // Close this modal when opening edit modal
   };
 
+  const handleMoveMurajaah = async (report: Report, nextType: string) => {
+    try {
+      setMovingReportId(report.id);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) {
+        console.error("Missing session token for report update");
+        return;
+      }
+
+      const res = await fetch("/api/teacher/reports", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`
+        },
+        body: JSON.stringify({
+          id: report.id,
+          type: nextType,
+          surah: report.surah,
+          juzuk: report.juzuk,
+          ayat_from: report.ayat_from,
+          ayat_to: report.ayat_to,
+          page_from: report.page_from,
+          page_to: report.page_to,
+          grade: report.grade,
+          date: report.date
+        })
+      });
+
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        console.error("Failed to update report", payload?.error || res.statusText);
+        return;
+      }
+
+      const payload = await res.json().catch(() => null);
+      const updated = payload?.data;
+      setReports((prev) => prev.map((item) => (
+        item.id === report.id ? { ...item, type: updated?.type ?? nextType } : item
+      )));
+      onRefresh();
+    } catch (err) {
+      console.error("Failed to move murajaah report:", err);
+    } finally {
+      setMovingReportId(null);
+    }
+  };
+
   return (
     <>
       <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50 p-4">
         <div className="bg-white/95 backdrop-blur-xl border border-white/40 rounded-2xl shadow-2xl p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-hidden">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-lg font-bold text-gray-900">
-              {viewMode === 'tasmik' ? 'Tasmi' : viewMode === 'murajaah' ? 'Murajaah' : 'All'} Records for {student.name}
+              {headerTitle} Records for {student.name}
             </h3>
             <button 
               onClick={onClose}
@@ -145,6 +238,38 @@ export default function FullRecordsModal({
               </svg>
             </button>
           </div>
+
+          {viewMode === 'murajaah' && (
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="inline-flex rounded-full bg-gray-100 p-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    murajaahTabTouchedRef.current = true;
+                    setMurajaahTab('new');
+                  }}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                    murajaahTab === 'new' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-700 hover:text-emerald-800'
+                  }`}
+                >
+                  New <span className="ml-1 text-[10px] opacity-80">({newMurajaahReports.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    murajaahTabTouchedRef.current = true;
+                    setMurajaahTab('old');
+                  }}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                    murajaahTab === 'old' ? 'bg-amber-600 text-white shadow-sm' : 'text-amber-700 hover:text-amber-800'
+                  }`}
+                >
+                  Old <span className="ml-1 text-[10px] opacity-80">({oldMurajaahReports.length})</span>
+                </button>
+              </div>
+              <div className="text-xs text-gray-500">Separate old vs new murajaah records</div>
+            </div>
+          )}
 
           <div className="overflow-y-auto overscroll-contain max-h-[calc(90vh-120px)]">
             {loading ? (
@@ -167,7 +292,7 @@ export default function FullRecordsModal({
               </div>
             ) : filteredReports.length === 0 ? (
               <div className="text-center py-8 text-gray-600">
-                <p>No {viewMode === 'tasmik' ? 'Tasmi' : viewMode === 'murajaah' ? 'Murajaah' : ''} records found for this student.</p>
+                <p>No {viewMode === 'tasmik' ? 'Tasmi' : viewMode === 'murajaah' ? murajaahTitle : ''} records found for this student.</p>
               </div>
             ) : (
               <div className="overflow-hidden rounded-xl border border-gray-200 shadow-lg">
@@ -186,7 +311,18 @@ export default function FullRecordsModal({
                       </tr>
                     </thead>
                     <tbody className="bg-white">
-                      {filteredReports.map((report, index) => (
+                      {filteredReports.map((report, index) => {
+                        const moveConfig = viewMode === 'murajaah'
+                          ? getMurajaahMoveConfig(report.type)
+                          : viewMode === 'tasmik'
+                            ? {
+                                nextType: 'Murajaah',
+                                label: 'Move to Murajaah',
+                                className: 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+                              }
+                            : null;
+                        const isMoving = movingReportId === report.id;
+                        return (
                         <tr key={report.id} className={`transition-colors hover:bg-gray-50 ${index % 2 === 0 ? 'bg-white' : 'bg-gray-25'}`}>
                           <td className="px-4 py-3 text-gray-700 border-b border-gray-100">
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
@@ -230,6 +366,19 @@ export default function FullRecordsModal({
                           </td>
                           <td className="px-4 py-3 text-center border-b border-gray-100">
                             <div className="flex items-center justify-center gap-2">
+                              {moveConfig && (
+                                <button
+                                  onClick={() => handleMoveMurajaah(report, moveConfig.nextType)}
+                                  className={`inline-flex items-center justify-center w-8 h-8 rounded-full transition-colors ${moveConfig.className} ${isMoving ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                  title={moveConfig.label}
+                                  aria-label={moveConfig.label}
+                                  disabled={isMoving}
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 7h12m0 0l-3-3m3 3l-3 3M17 17H5m0 0l3-3m-3 3l3 3" />
+                                  </svg>
+                                </button>
+                              )}
                               <button
                                 onClick={() => handleEdit(report)}
                                 className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-blue-100 text-blue-600 hover:bg-blue-200 transition-colors"
@@ -251,7 +400,8 @@ export default function FullRecordsModal({
                             </div>
                           </td>
                         </tr>
-                      ))}
+                      );
+                      })}
                     </tbody>
                   </table>
                 </div>

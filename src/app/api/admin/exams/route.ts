@@ -230,7 +230,7 @@ export async function GET(request: Request) {
             const ecs = await adminOperationSimple(async (client) => {
               const { data, error } = await client
                 .from('exam_class_subjects')
-                .select('subjects(id, name)')
+                .select('subjects!exam_class_subjects_subject_id_fkey(id, name)')
                 .eq('exam_id', examId)
                 .eq('class_id', classId);
               if (error) throw error;
@@ -251,7 +251,7 @@ export async function GET(request: Request) {
           const data = await adminOperationSimple(async (client) => {
             const { data, error } = await client
               .from('exam_subjects')
-              .select('subjects(id, name)')
+              .select('subjects!exam_subjects_subject_id_fkey(id, name)')
               .eq('exam_id', examId);
             if (error) throw error;
             const rows = (data ?? []) as ExamSubjectRow[];
@@ -285,7 +285,7 @@ export async function GET(request: Request) {
             mark,
             final_score,
             grade,
-            subjects!inner(name),
+            subjects!exam_results_subject_id_fkey!inner(name),
             exam_id
           `
           )
@@ -300,7 +300,7 @@ export async function GET(request: Request) {
               mark,
               final_score,
               grade,
-              subjects(name),
+              subjects!exam_results_subject_id_fkey(name),
               exam_id
             `
             );

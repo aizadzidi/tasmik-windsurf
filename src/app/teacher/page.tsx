@@ -30,7 +30,7 @@ const SURAHS = [
   "Al-Fatihah", "Al-Baqarah", "Aali Imran", "An-Nisa'", "Al-Ma'idah", "Al-An'am", "Al-A'raf", "Al-Anfal", "At-Tawbah", "Yunus", "Hud", "Yusuf", "Ar-Ra'd", "Ibrahim", "Al-Hijr", "An-Nahl", "Al-Isra'", "Al-Kahf", "Maryam", "Ta-Ha", "Al-Anbiya'", "Al-Hajj", "Al-Mu'minun", "An-Nur", "Al-Furqan", "Ash-Shu'ara'", "An-Naml", "Al-Qasas", "Al-Ankabut", "Ar-Rum", "Luqman", "As-Sajda", "Al-Ahzab", "Saba'", "Fatir", "Ya-Sin", "As-Saffat", "Sad", "Az-Zumar", "Ghafir", "Fussilat", "Ash-Shura", "Az-Zukhruf", "Ad-Dukhan", "Al-Jathiyah", "Al-Ahqaf", "Muhammad", "Al-Fath", "Al-Hujurat", "Qaf", "Adh-Dhariyat", "At-Tur", "An-Najm", "Al-Qamar", "Ar-Rahman", "Al-Waqi'ah", "Al-Hadid", "Al-Mujadila", "Al-Hashr", "Al-Mumtahanah", "As-Saff", "Al-Jumu'ah", "Al-Munafiqun", "At-Taghabun", "At-Talaq", "At-Tahrim", "Al-Mulk", "Al-Qalam", "Al-Haqqah", "Al-Ma'arij", "Nuh", "Al-Jinn", "Al-Muzzammil", "Al-Muddathir", "Al-Qiyamah", "Al-Insan", "Al-Mursalat", "An-Naba'", "An-Nazi'at", "Abasa", "At-Takwir", "Al-Infitar", "Al-Mutaffifin", "Al-Inshiqaq", "Al-Buruj", "At-Tariq", "Al-A'la", "Al-Ghashiyah", "Al-Fajr", "Al-Balad", "Ash-Shams", "Al-Layl", "Ad-Duhaa", "Ash-Sharh", "At-Tin", "Al-Alaq", "Al-Qadr", "Al-Bayyinah", "Az-Zalzalah", "Al-Adiyat", "Al-Qari'ah", "At-Takathur", "Al-Asr", "Al-Humazah", "Al-Fil", "Quraysh", "Al-Ma'un", "Al-Kawthar", "Al-Kafirun", "An-Nasr", "Al-Masad", "Al-Ikhlas", "Al-Falaq", "An-Nas"
 ];
 
-const REPORT_TYPES = ["Tasmi", "Murajaah"];
+const REPORT_TYPES = ["Tasmi", "Old Murajaah", "New Murajaah", "Murajaah"];
 const GRADES = ["mumtaz", "jayyid jiddan", "jayyid"];
 
 type ActiveSession = {
@@ -119,7 +119,7 @@ export default function TeacherPage() {
   const [showQuickModal, setShowQuickModal] = useState(false);
   const [quickModalData, setQuickModalData] = useState<{
     student: Student;
-    reportType: "Tasmi" | "Murajaah";
+    reportType: "Tasmi" | "Murajaah" | "Old Murajaah" | "New Murajaah";
     suggestions?: SmartSuggestion;
   } | null>(null);
 
@@ -227,7 +227,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
   }, [userId]);
 
   // Smart suggestions for next progression
-  const getSmartSuggestions = useCallback((studentId: string, reportType: "Tasmi" | "Murajaah"): SmartSuggestion => {
+  const getSmartSuggestions = useCallback((studentId: string, reportType: "Tasmi" | "Murajaah" | "Old Murajaah" | "New Murajaah"): SmartSuggestion => {
     const studentReports = reports.filter(r => r.student_id === studentId);
     
     if (reportType === "Tasmi") {
@@ -264,9 +264,27 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
         pageTo: null
       };
     } else {
-      // Murajaah - suggest continuing from latest murajaah or tasmi
+      if (reportType === "New Murajaah") {
+        const latestTasmi = studentReports
+          .filter(r => r.type === "Tasmi")
+          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+
+        if (latestTasmi) {
+          const anchorPage = latestTasmi.page_to ?? latestTasmi.page_from ?? null;
+          return {
+            surah: latestTasmi.surah,
+            juzuk: latestTasmi.juzuk || 1,
+            ayatFrom: latestTasmi.ayat_from,
+            ayatTo: latestTasmi.ayat_to,
+            pageFrom: anchorPage,
+            pageTo: anchorPage
+          };
+        }
+      }
+
+      // Old Murajaah - suggest continuing from latest old murajaah or tasmi
       const latestMurajaah = studentReports
-        .filter(r => r.type === "Murajaah" || r.type === "Old Murajaah" || r.type === "New Murajaah")
+        .filter(r => r.type === "Murajaah" || r.type === "Old Murajaah")
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
       
       if (latestMurajaah) {
@@ -589,7 +607,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
   }, [filteredMonitorStudents, viewMode]);
 
   // Handle quick report (memoized to prevent re-renders)
-  const handleQuickReport = useCallback((student: Student, reportType: "Tasmi" | "Murajaah") => {
+  const handleQuickReport = useCallback((student: Student, reportType: "Tasmi" | "Murajaah" | "Old Murajaah" | "New Murajaah") => {
     const suggestions = getSmartSuggestions(student.id, reportType);
     setQuickModalData({ student, reportType, suggestions });
     setShowQuickModal(true);
@@ -1148,12 +1166,24 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
                                         </button>
                                       )}
                                       {viewMode === 'murajaah' && studentData && (
-                                        <button
-                                          onClick={() => handleQuickReport(studentData, "Murajaah")}
-                                          className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1 rounded-lg text-xs font-medium transition-colors"
-                                        >
-                                          Add Murajaah
-                                        </button>
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <button
+                                            onClick={() => handleQuickReport(studentData, "New Murajaah")}
+                                            className="bg-emerald-100 hover:bg-emerald-200 text-emerald-700 px-3 py-1 rounded-lg text-xs font-medium transition-colors"
+                                            title="Add New Murajaah"
+                                            aria-label="Add New Murajaah"
+                                          >
+                                            New
+                                          </button>
+                                          <button
+                                            onClick={() => handleQuickReport(studentData, "Old Murajaah")}
+                                            className="bg-amber-100 hover:bg-amber-200 text-amber-700 px-3 py-1 rounded-lg text-xs font-medium transition-colors"
+                                            title="Add Old Murajaah"
+                                            aria-label="Add Old Murajaah"
+                                          >
+                                            Old
+                                          </button>
+                                        </div>
                                       )}
                                       <button
                                         onClick={() => {
@@ -1208,6 +1238,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
             onSuccess={refreshData}
             userId={userId}
             suggestions={quickModalData.suggestions}
+            tasmiReports={reports}
           />
         )}
 

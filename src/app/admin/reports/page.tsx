@@ -101,7 +101,7 @@ export default function AdminReportsPage() {
   const [showQuickModal, setShowQuickModal] = useState(false);
   const [quickModalData, setQuickModalData] = useState<{
     student: { id: string; name: string };
-    reportType: "Tasmi" | "Murajaah";
+    reportType: "Tasmi" | "Murajaah" | "Old Murajaah" | "New Murajaah";
     suggestions?: {
       surah: string;
       juzuk: number;
@@ -244,7 +244,7 @@ export default function AdminReportsPage() {
     setShowJuzTestHistory(true);
   };
 
-  const handleOpenQuickModal = (student: { id: string; name: string }, reportType: "Tasmi" | "Murajaah") => {
+  const handleOpenQuickModal = (student: { id: string; name: string }, reportType: "Tasmi" | "Murajaah" | "Old Murajaah" | "New Murajaah") => {
     setQuickModalData({
       student,
       reportType,
@@ -609,22 +609,45 @@ export default function AdminReportsPage() {
                                 </span>
                               </td>
                               <td className="py-3 px-4">
-                                <div className="flex space-x-2">
+                                <div className="flex flex-wrap gap-2">
                                   <button 
                                     onClick={() => handleOpenViewRecordsModal({ id: student.id, name: student.name })}
                                     className="text-blue-600 hover:text-blue-800 text-sm font-medium"
                                   >
                                     View
                                   </button>
-                                  <button 
-                                    onClick={() => handleOpenQuickModal(
-                                      { id: student.id, name: student.name }, 
-                                      viewMode === 'tasmik' ? 'Tasmi' : 'Murajaah'
-                                    )}
-                                    className="text-purple-600 hover:text-purple-800 text-sm font-medium"
-                                  >
-                                    Add
-                                  </button>
+                                  {viewMode === 'murajaah' ? (
+                                    <>
+                                      <button 
+                                        onClick={() => handleOpenQuickModal(
+                                          { id: student.id, name: student.name }, 
+                                          'New Murajaah'
+                                        )}
+                                        className="text-emerald-600 hover:text-emerald-800 text-sm font-medium"
+                                      >
+                                        New
+                                      </button>
+                                      <button 
+                                        onClick={() => handleOpenQuickModal(
+                                          { id: student.id, name: student.name }, 
+                                          'Old Murajaah'
+                                        )}
+                                        className="text-amber-600 hover:text-amber-800 text-sm font-medium"
+                                      >
+                                        Old
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <button 
+                                      onClick={() => handleOpenQuickModal(
+                                        { id: student.id, name: student.name }, 
+                                        'Tasmi'
+                                      )}
+                                      className="text-purple-600 hover:text-purple-800 text-sm font-medium"
+                                    >
+                                      Add
+                                    </button>
+                                  )}
                                 </div>
                               </td>
                             </>

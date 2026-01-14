@@ -112,10 +112,35 @@ interface QuranProgressBarProps {
 export function QuranProgressBar({ reports, viewMode = 'tasmik' }: QuranProgressBarProps) {
   // For murajaah mode, show circle chart instead
   if (viewMode === 'murajaah') {
+    const tasmiReports = reports.filter(r => r.type === "Tasmi");
+    const oldMurajaahReports = reports.filter(r => r.type === "Murajaah" || r.type === "Old Murajaah");
+    const newMurajaahReports = reports.filter(r => r.type === "New Murajaah");
     return (
-      <div className="mb-4">
-        <div className="text-sm font-semibold mb-2 text-center">Murajaah Progress</div>
-        <MurajaahCircleChart reports={reports} />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="rounded-xl border border-amber-100 bg-amber-50/60 p-3">
+          <div className="text-xs font-semibold text-amber-700 uppercase tracking-wide">Old Murajaah</div>
+          {oldMurajaahReports.length > 0 ? (
+            <MurajaahCircleChart
+              reports={[...tasmiReports, ...oldMurajaahReports]}
+              label="Old Murajaah"
+              accentColor="#f59e0b"
+            />
+          ) : (
+            <div className="py-8 text-center text-xs text-amber-700">No old murajaah records yet.</div>
+          )}
+        </div>
+        <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
+          <div className="text-xs font-semibold text-emerald-700 uppercase tracking-wide">New Murajaah</div>
+          {newMurajaahReports.length > 0 ? (
+            <MurajaahCircleChart
+              reports={[...tasmiReports, ...newMurajaahReports]}
+              label="New Murajaah"
+              accentColor="#10b981"
+            />
+          ) : (
+            <div className="py-8 text-center text-xs text-emerald-700">No new murajaah records yet.</div>
+          )}
+        </div>
       </div>
     );
   }

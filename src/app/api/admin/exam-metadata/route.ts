@@ -43,16 +43,16 @@ export async function GET() {
         released,
         released_at,
         grading_system_id,
-        exam_classes(
+        exam_classes!exam_classes_exam_id_fkey(
           conduct_weightage,
-          classes(id, name)
+          classes!exam_classes_class_id_fkey(id, name)
         ),
-        exam_subjects(
-          subjects(id, name)
+        exam_subjects!exam_subjects_exam_id_fkey(
+          subjects!exam_subjects_subject_id_fkey(id, name)
         ),
-        exam_class_subjects(
-          classes(id, name),
-          subjects(id, name)
+        exam_class_subjects!exam_class_subjects_exam_id_fkey(
+          classes!exam_class_subjects_class_id_fkey(id, name),
+          subjects!exam_class_subjects_subject_id_fkey(id, name)
         )
       `)
       .order('created_at', { ascending: false });
