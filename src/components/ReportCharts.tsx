@@ -17,6 +17,7 @@ import React from "react";
 import type { Report } from "@/types/teacher";
 import { calculateAverageGrade, getWeekBoundaries, getWeekIdentifier } from "@/lib/gradeUtils";
 import { MurajaahCircleChart } from "@/components/MurajaahCircleChart";
+import { NewMurajaahRangeBar } from "@/components/NewMurajaahRangeBar";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, Filler);
 
@@ -115,6 +116,10 @@ export function QuranProgressBar({ reports, viewMode = 'tasmik' }: QuranProgress
     const tasmiReports = reports.filter(r => r.type === "Tasmi");
     const oldMurajaahReports = reports.filter(r => r.type === "Murajaah" || r.type === "Old Murajaah");
     const newMurajaahReports = reports.filter(r => r.type === "New Murajaah");
+    const maxTasmiPage = Math.max(
+      ...tasmiReports.map(r => (r.page_to !== null && !isNaN(r.page_to) ? r.page_to : 0)),
+      0
+    );
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="rounded-xl border border-amber-100 bg-amber-50/60 p-3">
@@ -132,10 +137,10 @@ export function QuranProgressBar({ reports, viewMode = 'tasmik' }: QuranProgress
         <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
           <div className="text-xs font-semibold text-emerald-700 uppercase tracking-wide">New Murajaah</div>
           {newMurajaahReports.length > 0 ? (
-            <MurajaahCircleChart
-              reports={[...tasmiReports, ...newMurajaahReports]}
-              label="New Murajaah"
+            <NewMurajaahRangeBar
+              reports={newMurajaahReports}
               accentColor="#10b981"
+              maxTasmiPage={maxTasmiPage}
             />
           ) : (
             <div className="py-8 text-center text-xs text-emerald-700">No new murajaah records yet.</div>
