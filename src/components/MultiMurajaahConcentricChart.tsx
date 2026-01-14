@@ -21,11 +21,11 @@ export function MultiMurajaahConcentricChart({
   subtitle
 }: MultiMurajaahConcentricChartProps) {
   const totalPagesToReview = 604;
-  const murajaahTypes = variant === 'new'
-    ? ["New Murajaah"]
-    : variant === 'old'
-      ? ["Murajaah", "Old Murajaah"]
-      : ["Murajaah", "Old Murajaah", "New Murajaah"];
+  const murajaahTypes = useMemo(() => {
+    if (variant === 'new') return ["New Murajaah"];
+    if (variant === 'old') return ["Murajaah", "Old Murajaah"];
+    return ["Murajaah", "Old Murajaah", "New Murajaah"];
+  }, [variant]);
   const titleText = title ?? (variant === 'new' ? 'New Murajaah' : variant === 'old' ? 'Old Murajaah' : 'Murajaah Progress');
   const subtitleText = subtitle ?? 'One ring per child';
 
@@ -82,7 +82,7 @@ export function MultiMurajaahConcentricChart({
       const completedCycles = reviewCounts.length > 0 ? Math.min(...reviewCounts) : 0;
       return { student: s, progress: currentCycleProgress, completedCycles };
     });
-  }, [students, reports, variant]);
+  }, [students, reports, murajaahTypes]);
 
   const strokeWidth = 12;
   const gap = 6;
