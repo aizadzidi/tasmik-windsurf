@@ -3,6 +3,8 @@ import type { NextRequest } from 'next/server'
 
 export function middleware(request: NextRequest) {
   const { searchParams, pathname } = request.nextUrl
+  const hostHeader = request.headers.get('host') ?? ''
+  const hostname = hostHeader.split(':')[0]
 
   // Check if this is an auth-related redirect from Supabase
   const hasAuthCode = searchParams.has('code')
@@ -30,6 +32,22 @@ export function middleware(request: NextRequest) {
     }
     
     return NextResponse.redirect(resetUrl)
+  }
+
+  const isClassDomain = hostname === 'class.akademialkhayr.com'
+  const isLoginRoute = pathname === '/login' || pathname.startsWith('/login/')
+  const isForgotPasswordRoute = pathname === '/forgot-password' || pathname.startsWith('/forgot-password/')
+  const isResetPasswordRoute = pathname === '/reset-password' || pathname.startsWith('/reset-password/')
+  const isSignupRoute = pathname === '/signup' || pathname.startsWith('/signup/')
+
+  if (
+    isClassDomain &&
+    !isLoginRoute &&
+    !isForgotPasswordRoute &&
+    !isResetPasswordRoute &&
+    !isSignupRoute
+  ) {
+    return NextResponse.redirect(new URL('/login', request.url))
   }
 
   return NextResponse.next()
