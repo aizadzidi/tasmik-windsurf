@@ -35,18 +35,7 @@ export function middleware(request: NextRequest) {
   }
 
   const isClassDomain = hostname === 'class.akademialkhayr.com'
-  const isLoginRoute = pathname === '/login' || pathname.startsWith('/login/')
-  const isForgotPasswordRoute = pathname === '/forgot-password' || pathname.startsWith('/forgot-password/')
-  const isResetPasswordRoute = pathname === '/reset-password' || pathname.startsWith('/reset-password/')
-  const isSignupRoute = pathname === '/signup' || pathname.startsWith('/signup/')
-
-  if (
-    isClassDomain &&
-    !isLoginRoute &&
-    !isForgotPasswordRoute &&
-    !isResetPasswordRoute &&
-    !isSignupRoute
-  ) {
+  if (isClassDomain && pathname === '/') {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
