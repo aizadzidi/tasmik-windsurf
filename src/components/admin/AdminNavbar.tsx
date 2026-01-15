@@ -199,7 +199,7 @@ const AdminNavbar = () => {
         transition={{ type: "spring", stiffness: 320, damping: 32 }}
         className="fixed inset-y-3 left-3 z-40 hidden overflow-hidden rounded-3xl bg-white/95 border border-slate-200 shadow-xl backdrop-blur-xl md:flex"
       >
-        <div className="flex h-full w-full flex-col px-5 py-6">
+        <div className="flex h-full w-full min-h-0 flex-col px-5 py-6">
           <div className="flex items-center space-x-3 pb-6 border-b border-slate-200/70">
             <div className="relative flex items-center justify-center rounded-2xl bg-slate-100 p-2 shadow-sm ring-1 ring-slate-200">
               <Image
@@ -242,7 +242,7 @@ const AdminNavbar = () => {
             </button>
           </div>
 
-          <div className="mt-6 space-y-2">
+          <div className="mt-6 flex-1 space-y-2 overflow-y-auto pr-2">
             {navItems.map((item) => {
               const active = isActive(item.href);
               return (
@@ -320,7 +320,7 @@ const AdminNavbar = () => {
             className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm"
             onClick={() => setIsMobileMenuOpen(false)}
           />
-          <div className="relative ml-auto flex h-full w-80 flex-col gap-2 rounded-l-3xl bg-white/95 px-4 py-6 shadow-2xl">
+          <div className="relative ml-auto flex h-full w-80 min-h-0 flex-col gap-2 rounded-l-3xl bg-white/95 px-4 py-6 shadow-2xl">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="rounded-2xl bg-slate-100 p-2 shadow-sm ring-1 ring-slate-200">
@@ -341,7 +341,7 @@ const AdminNavbar = () => {
               </button>
             </div>
 
-            <div className="mt-4 space-y-2">
+            <div className="mt-4 flex-1 space-y-2 overflow-y-auto pr-2">
               {navItems.map((item) => {
                 const active = isActive(item.href);
                 return (

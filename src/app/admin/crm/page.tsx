@@ -176,6 +176,28 @@ const slugifyStageKey = (value: string) =>
     .replace(/^_+|_+$/g, "")
     .slice(0, 32);
 
+const WHATSAPP_DEFAULT_MESSAGE = "Assalamualaikum wbt Tuan/Puan";
+
+const normalizeWhatsappNumber = (value: string) => {
+  const digits = value.replace(/[^\d]/g, "");
+  if (!digits) {
+    return "";
+  }
+  if (digits.startsWith("0")) {
+    return `60${digits.slice(1)}`;
+  }
+  return digits;
+};
+
+const buildWhatsappLink = (value: string) => {
+  const normalized = normalizeWhatsappNumber(value);
+  if (!normalized) {
+    return "";
+  }
+  const text = encodeURIComponent(WHATSAPP_DEFAULT_MESSAGE);
+  return `https://wa.me/${normalized}?text=${text}`;
+};
+
 const toStageConfig = (stage: StageRecord): StageConfig => ({
   id: stage.id,
   key: stage.stage_key,
@@ -373,15 +395,27 @@ const StudentFormFields = ({
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Parent Contact Number
             </label>
-            <input
-              type="text"
-              placeholder="Enter contact number"
-              className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
-              value={form.parent_contact_number}
-              onChange={(e) =>
-                onChange({ parent_contact_number: e.target.value })
-              }
-            />
+            <div className="space-y-2">
+              <input
+                type="text"
+                placeholder="Enter contact number"
+                className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                value={form.parent_contact_number}
+                onChange={(e) =>
+                  onChange({ parent_contact_number: e.target.value })
+                }
+              />
+              {buildWhatsappLink(form.parent_contact_number) && (
+                <a
+                  href={buildWhatsappLink(form.parent_contact_number)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                >
+                  WhatsApp Parent
+                </a>
+              )}
+            </div>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -1260,6 +1294,7 @@ export default function AdminCrmPage() {
                             parentById.get(student.parent_id)?.name;
                           const parentDisplay = parent || student.parent_name;
                           const contact = student.parent_contact_number || "";
+                          const whatsappLink = buildWhatsappLink(contact);
                           const className = student.class_id
                             ? classById.get(student.class_id)?.name
                             : "";
@@ -1304,6 +1339,16 @@ export default function AdminCrmPage() {
                                   </div>
                                 )}
                               </button>
+                              {whatsappLink && (
+                                <a
+                                  href={whatsappLink}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="mt-2 inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                                >
+                                  WhatsApp
+                                </a>
+                              )}
                               <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
                                 {className && (
                                   <span className="rounded-full bg-slate-100 px-2 py-1">
