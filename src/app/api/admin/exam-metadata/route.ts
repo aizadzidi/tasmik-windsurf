@@ -254,6 +254,7 @@ export async function POST(request: Request) {
         const { data: roster, error: rosterErr } = await supabaseAdmin
           .from('students')
           .select('id, class_id')
+          .neq('record_type', 'prospect')
           .in('id', allIds);
         if (rosterErr) throw rosterErr;
         const rosterRows = (roster ?? []) as Array<{ id: string; class_id: string | null }>;
@@ -460,6 +461,7 @@ export async function PUT(request: Request) {
           const { data: roster, error: rosterErr } = await supabaseAdmin
             .from('students')
             .select('id, class_id')
+            .neq('record_type', 'prospect')
             .in('id', allIds);
           if (rosterErr) throw rosterErr;
           const rosterRows = (roster ?? []) as Array<{ id: string; class_id: string | null }>;

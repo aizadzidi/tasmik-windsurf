@@ -314,6 +314,7 @@ export default function ParentPaymentsPage() {
       const { data: childRows, error: childError } = await supabase
         .from("students")
         .select("id, name")
+        .neq("record_type", "prospect")
         .eq("parent_id", parentId)
         .order("name", { ascending: true });
 

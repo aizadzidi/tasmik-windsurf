@@ -155,7 +155,11 @@ export default function ParentExamPage() {
       if (!uid) return;
 
       const { data: kids } = await supabase
-        .from("students").select("id, name, class_id").eq("parent_id", uid).order("name");
+        .from("students")
+        .select("id, name, class_id")
+        .neq("record_type", "prospect")
+        .eq("parent_id", uid)
+        .order("name");
       setChildren(kids || []);
 
       await loadMetadata();

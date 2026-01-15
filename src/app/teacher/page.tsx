@@ -204,6 +204,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
       const { data, error } = await supabase
         .from("students")
         .select("id, name, tenant_id, memorization_completed, memorization_completed_date")
+        .neq("record_type", "prospect")
         .eq("assigned_teacher_id", userId);
       if (!error && data) setStudents(data);
     }
@@ -348,6 +349,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
           memorization_completed,
           memorization_completed_date
         `)
+        .neq("record_type", "prospect")
         .eq("assigned_teacher_id", userId);
 
       if (studentsError || !studentsData) {

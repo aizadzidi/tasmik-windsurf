@@ -201,7 +201,8 @@ export async function GET(request: Request) {
         const result = await adminOperationSimple(async (client) => {
           let q = client
             .from('students')
-            .select('id, name, class_id');
+            .select('id, name, class_id')
+            .neq('record_type', 'prospect');
           if (classId) {
             q = q.eq('class_id', classId);
           } else if (examId && Array.isArray(allowedClassIds)) {

@@ -250,6 +250,7 @@ export default function TeacherAttendancePage() {
       const { data, error } = await supabase
         .from("students")
         .select("id, name, class_id, parent_id")
+        .neq("record_type", "prospect")
         .not("class_id", "is", null)
         .order("name")
         .range(from, from + size - 1);

@@ -54,7 +54,8 @@ export async function GET(request: NextRequest) {
           memorization_completed_date,
           users!assigned_teacher_id(name),
           classes(name)
-        `);
+        `)
+        .neq('record_type', 'prospect');
 
       if (studentsError) throw studentsError;
 

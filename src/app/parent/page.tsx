@@ -86,6 +86,7 @@ export default function ParentPage() {
           memorization_completed,
           memorization_completed_date
         `)
+        .neq("record_type", "prospect")
         .eq("parent_id", parentId);
 
       if (studentsError || !studentsData) {

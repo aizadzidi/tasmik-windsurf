@@ -18,6 +18,16 @@ interface Student {
   class_id: string | null;
   memorization_completed?: boolean;
   memorization_completed_date?: string;
+  record_type?: "student" | "prospect";
+  crm_stage?: string | null;
+  crm_status_reason?: string | null;
+  identification_number?: string | null;
+  address?: string | null;
+  parent_name?: string | null;
+  parent_contact_number?: string | null;
+  parent_occupation?: string | null;
+  household_income?: string | null;
+  interviewer_remark?: string | null;
 }
 
 interface Teacher {
@@ -55,6 +65,13 @@ export default function AdminPage() {
   const [newStudentParentId, setNewStudentParentId] = useState("");
   const [newStudentTeacherId, setNewStudentTeacherId] = useState("");
   const [newStudentClassId, setNewStudentClassId] = useState("");
+  const [newStudentIdentificationNumber, setNewStudentIdentificationNumber] = useState("");
+  const [newStudentAddress, setNewStudentAddress] = useState("");
+  const [newStudentParentName, setNewStudentParentName] = useState("");
+  const [newStudentParentContactNumber, setNewStudentParentContactNumber] = useState("");
+  const [newStudentParentOccupation, setNewStudentParentOccupation] = useState("");
+  const [newStudentHouseholdIncome, setNewStudentHouseholdIncome] = useState("");
+  const [newStudentInterviewerRemark, setNewStudentInterviewerRemark] = useState("");
   const [addParentOpen, setAddParentOpen] = useState(false);
   const [newClassName, setNewClassName] = useState("");
   const [newClassLevel, setNewClassLevel] = useState("");
@@ -151,14 +168,19 @@ export default function AdminPage() {
     fetchData();
   }, [isDev, parseError]);
 
+  const studentRoster = useMemo(
+    () => students.filter(student => student.record_type !== "prospect"),
+    [students]
+  );
+
   const classStudentCounts = useMemo(() => {
     const counts = new Map<string, number>();
-    students.forEach((student) => {
+    studentRoster.forEach((student) => {
       if (!student.class_id) return;
       counts.set(student.class_id, (counts.get(student.class_id) || 0) + 1);
     });
     return counts;
-  }, [students]);
+  }, [studentRoster]);
 
   const handleAddStudent = async () => {
     if (!newStudentName.trim()) return;
@@ -173,7 +195,16 @@ export default function AdminPage() {
           name: newStudentName.trim(),
           parent_id: newStudentParentId || null,
           assigned_teacher_id: newStudentTeacherId || null,
-          class_id: newStudentClassId || null
+          class_id: newStudentClassId || null,
+          record_type: "student",
+          crm_stage: "active",
+          identification_number: newStudentIdentificationNumber.trim() || null,
+          address: newStudentAddress.trim() || null,
+          parent_name: newStudentParentName.trim() || null,
+          parent_contact_number: newStudentParentContactNumber.trim() || null,
+          parent_occupation: newStudentParentOccupation.trim() || null,
+          household_income: newStudentHouseholdIncome.trim() || null,
+          interviewer_remark: newStudentInterviewerRemark.trim() || null
         })
       });
 
@@ -184,6 +215,13 @@ export default function AdminPage() {
         setNewStudentParentId("");
         setNewStudentTeacherId("");
         setNewStudentClassId("");
+        setNewStudentIdentificationNumber("");
+        setNewStudentAddress("");
+        setNewStudentParentName("");
+        setNewStudentParentContactNumber("");
+        setNewStudentParentOccupation("");
+        setNewStudentHouseholdIncome("");
+        setNewStudentInterviewerRemark("");
         setSuccess("Student added successfully!");
         setTimeout(() => setSuccess(""), 3000);
       } else {
@@ -429,7 +467,7 @@ export default function AdminPage() {
     }
   };
 
-  const filteredStudents = useMemo(() => students.filter(s => 
+  const filteredStudents = useMemo(() => studentRoster.filter(s => 
     s.name.toLowerCase().includes(searchTerm.toLowerCase()) &&
     (filterClass === "" || 
      (filterClass === "unassigned" && !s.class_id) || 
@@ -437,7 +475,7 @@ export default function AdminPage() {
     (filterTeacher === "" || 
      (filterTeacher === "unassigned" && !s.assigned_teacher_id) || 
      s.assigned_teacher_id === filterTeacher)
-  ).sort((a, b) => a.name.localeCompare(b.name)), [students, searchTerm, filterClass, filterTeacher]);
+  ).sort((a, b) => a.name.localeCompare(b.name)), [studentRoster, searchTerm, filterClass, filterTeacher]);
 
   // Precompute quick lookups
   const parentById = useMemo(() => new Map(parents.map((p) => [p.id, p])), [parents]);
@@ -474,29 +512,37 @@ export default function AdminPage() {
         {/* Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
           <Card className="p-4">
-            <div className="text-2xl font-bold">{students.length}</div>
+            <div className="text-2xl font-bold">{studentRoster.length}</div>
             <div className="text-sm text-gray-600">Total Students</div>
           </Card>
           <Card className="p-4">
-            <div className="text-2xl font-bold text-green-600">{students.filter(s => s.class_id).length}</div>
+            <div className="text-2xl font-bold text-green-600">
+              {studentRoster.filter(s => s.class_id).length}
+            </div>
             <div className="text-sm text-gray-600">In a Class</div>
           </Card>
           <Card className="p-4">
-            <div className="text-2xl font-bold text-orange-600">{students.filter(s => s.assigned_teacher_id).length}</div>
+            <div className="text-2xl font-bold text-orange-600">
+              {studentRoster.filter(s => s.assigned_teacher_id).length}
+            </div>
             <div className="text-sm text-gray-600">With a Teacher</div>
           </Card>
           <Card className="p-4">
-            <div className="text-2xl font-bold text-purple-600">{students.filter(s => s.memorization_completed).length}</div>
+            <div className="text-2xl font-bold text-purple-600">
+              {studentRoster.filter(s => s.memorization_completed).length}
+            </div>
             <div className="text-sm text-gray-600">Completed Memorization</div>
           </Card>
-          {filteredStudents.length !== students.length ? (
+          {filteredStudents.length !== studentRoster.length ? (
             <Card className="p-4">
               <div className="text-2xl font-bold text-blue-600">{filteredStudents.length}</div>
               <div className="text-sm text-gray-600">Filtered Results</div>
             </Card>
           ) : (
             <Card className="p-4">
-              <div className="text-2xl font-bold text-purple-600">{students.filter(s => !s.memorization_completed).length}</div>
+              <div className="text-2xl font-bold text-purple-600">
+                {studentRoster.filter(s => !s.memorization_completed).length}
+              </div>
               <div className="text-sm text-gray-600">Still Memorizing</div>
             </Card>
           )}
@@ -507,7 +553,7 @@ export default function AdminPage() {
           <Card className="p-6">
             <h3 className="text-lg font-semibold text-gray-800 mb-4">Class Distribution</h3>
             <ClassDistributionChart
-              students={students}
+              students={studentRoster}
               classes={classes}
               onSelectClass={handleClassChartSelect}
             />
@@ -515,7 +561,7 @@ export default function AdminPage() {
           <Card className="p-6">
             <h3 className="text-lg font-semibold text-gray-800 mb-4">Halaqah</h3>
             <TeacherAssignmentChart
-              students={students}
+              students={studentRoster}
               teachers={teachers}
               onSelectTeacher={handleTeacherChartSelect}
             />
@@ -545,9 +591,9 @@ export default function AdminPage() {
       <Card className="p-4" ref={studentListRef}>
         <div className="flex items-baseline justify-between mb-4">
           <h2 className="text-xl font-semibold text-gray-900">Students List</h2>
-          {filteredStudents.length !== students.length && (
+          {filteredStudents.length !== studentRoster.length && (
             <span className="text-sm text-gray-500">
-              {filteredStudents.length} of {students.length} students
+              {filteredStudents.length} of {studentRoster.length} students
             </span>
           )}
         </div>
@@ -1066,6 +1112,96 @@ export default function AdminPage() {
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
+                </div>
+              </div>
+
+              <div className="border-t border-gray-100 pt-4">
+                <h3 className="text-sm font-semibold text-gray-800 mb-2">Additional Details</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Identification Card Number
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Enter ID number"
+                      className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                      value={newStudentIdentificationNumber}
+                      onChange={e => setNewStudentIdentificationNumber(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Parent Name
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Enter parent name"
+                      className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                      value={newStudentParentName}
+                      onChange={e => setNewStudentParentName(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Parent Contact Number
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Enter contact number"
+                      className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                      value={newStudentParentContactNumber}
+                      onChange={e => setNewStudentParentContactNumber(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Parent Occupation
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Enter occupation"
+                      className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                      value={newStudentParentOccupation}
+                      onChange={e => setNewStudentParentOccupation(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Household Income
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. RM 3,000 - RM 5,000"
+                      className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                      value={newStudentHouseholdIncome}
+                      onChange={e => setNewStudentHouseholdIncome(e.target.value)}
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Address
+                    </label>
+                    <textarea
+                      rows={3}
+                      placeholder="Enter address"
+                      className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                      value={newStudentAddress}
+                      onChange={e => setNewStudentAddress(e.target.value)}
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Interviewer Remark
+                    </label>
+                    <textarea
+                      rows={3}
+                      placeholder="Add interviewer remark"
+                      className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+                      value={newStudentInterviewerRemark}
+                      onChange={e => setNewStudentInterviewerRemark(e.target.value)}
+                    />
+                  </div>
                 </div>
               </div>
               

@@ -143,6 +143,7 @@ export default function AdminAttendancePage() {
       const { data, error } = await supabase
         .from("students")
         .select("id, name, class_id, parent_id")
+        .neq("record_type", "prospect")
         .not("class_id", "is", null)
         .order("name", { ascending: true })
         .range(from, from + pageSize - 1);

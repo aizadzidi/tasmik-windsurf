@@ -29,6 +29,7 @@ export async function PUT(request: NextRequest) {
       const { data, error } = await client
         .from('students')
         .select('*')
+        .neq('record_type', 'prospect')
         .order('name');
       
       if (error) throw error;

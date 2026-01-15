@@ -124,6 +124,7 @@ export default function TeacherExamDashboard() {
       const { data, error } = await supabase
         .from('students')
         .select('id, name, class_id')
+        .neq('record_type', 'prospect')
         .order('name', { ascending: true })
         .range(from, from + pageSize - 1);
       if (error) {
@@ -583,7 +584,8 @@ export default function TeacherExamDashboard() {
       // Students in class or all students if "all" is selected
       let studentsQuery = supabase
         .from('students')
-        .select('id, name, class_id');
+        .select('id, name, class_id')
+        .neq('record_type', 'prospect');
     
       if (selectedClassId !== "all") {
         studentsQuery = studentsQuery.eq('class_id', selectedClassId);

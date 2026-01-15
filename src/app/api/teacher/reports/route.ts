@@ -26,6 +26,7 @@ async function getStudentForTeacher(studentId: string, userId: string) {
   const { data, error } = await supabaseAdmin
     .from("students")
     .select("id, assigned_teacher_id, tenant_id")
+    .neq("record_type", "prospect")
     .eq("id", studentId)
     .single();
   if (error || !data) return null;

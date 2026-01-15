@@ -58,6 +58,7 @@ export async function GET(request: Request) {
         const { data: children, error: childLookupError } = await client
           .from('students')
           .select('id, name')
+          .neq('record_type', 'prospect')
           .in('id', childIds);
 
         if (childLookupError) throw childLookupError;
