@@ -92,6 +92,7 @@ export default function TeacherExamDashboard() {
   const [expandedRows, setExpandedRows] = React.useState<number[]>([]);
   const [saving, setSaving] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState<string>("");
+  const [rosterSource, setRosterSource] = React.useState<'snapshot' | 'current'>('current');
   // RPC-backed grade summary per student (filtered to allowed subjects)
   const [gradeSummaryMap, setGradeSummaryMap] = React.useState<Map<string, GradeSummaryRow[]>>(new Map());
   const [gradeSubjectsMap, setGradeSubjectsMap] = React.useState<Map<string, Record<string, string[]>>>(new Map());
@@ -277,8 +278,11 @@ export default function TeacherExamDashboard() {
 
   const selectedClassRoster = React.useMemo(() => {
     if (!selectedClassId || selectedClassId === 'all') return [];
+    if (selectedExamId && studentRows.length > 0) {
+      return studentRows.map((student) => ({ id: student.id, name: student.name }));
+    }
     return classRosterMap.get(selectedClassId) ?? [];
-  }, [classRosterMap, selectedClassId]);
+  }, [classRosterMap, selectedClassId, selectedExamId, studentRows]);
 
   const selectedClassName = React.useMemo(() => {
     if (!selectedClassId || selectedClassId === 'all') return null;
@@ -578,21 +582,67 @@ export default function TeacherExamDashboard() {
   // Load students, marks and current teacher conduct for selections
   React.useEffect(() => {
     // Only fetch roster once exam and class are explicitly selected by user
-    if (!selectedClassId || !selectedExamId) return;
+    if (!selectedClassId || !selectedExamId) {
+      setRosterSource('current');
+      return;
+    }
     
     (async () => {
-      // Students in class or all students if "all" is selected
-      let studentsQuery = supabase
-        .from('students')
-        .select('id, name, class_id')
-        .neq('record_type', 'prospect');
-    
-      if (selectedClassId !== "all") {
-        studentsQuery = studentsQuery.eq('class_id', selectedClassId);
+      let roster: StudentRosterItem[] = [];
+      let useSnapshot = false;
+      let rosterRows: Array<{ student_id: string | null; class_id: string | null }> = [];
+
+      if (selectedExamId) {
+        const { data: rosterData, error: rosterErr } = await supabase
+          .from('exam_roster')
+          .select('student_id, class_id')
+          .eq('exam_id', selectedExamId);
+        if (!rosterErr && Array.isArray(rosterData) && rosterData.length > 0) {
+          useSnapshot = true;
+          rosterRows = rosterData as Array<{ student_id: string | null; class_id: string | null }>;
+        }
       }
-    
-      const { data: studentsData } = await studentsQuery;
-      let roster: StudentRosterItem[] = studentsData || [];
+
+      if (useSnapshot) {
+        let filteredRows = rosterRows;
+        if (selectedClassId !== "all") {
+          filteredRows = rosterRows.filter((row) => String(row?.class_id || '') === String(selectedClassId));
+        }
+        const rosterIds = filteredRows
+          .map((row) => row?.student_id)
+          .filter((id): id is string => typeof id === 'string');
+        const classByStudent = new Map<string, string | null>(
+          filteredRows
+            .filter((row): row is { student_id: string; class_id: string | null } => typeof row.student_id === 'string')
+            .map((row) => [String(row.student_id), row.class_id ? String(row.class_id) : null])
+        );
+        if (rosterIds.length > 0) {
+          const { data: studentsData } = await supabase
+            .from('students')
+            .select('id, name, class_id')
+            .neq('record_type', 'prospect')
+            .in('id', rosterIds);
+          roster = (studentsData || []).map((s) => ({
+            id: s.id,
+            name: s.name,
+            class_id: classByStudent.get(String(s.id)) ?? s.class_id
+          }));
+        }
+      } else {
+        // Students in class or all students if "all" is selected
+        let studentsQuery = supabase
+          .from('students')
+          .select('id, name, class_id')
+          .neq('record_type', 'prospect');
+      
+        if (selectedClassId !== "all") {
+          studentsQuery = studentsQuery.eq('class_id', selectedClassId);
+        }
+      
+        const { data: studentsData } = await studentsQuery;
+        roster = studentsData || [];
+      }
+      setRosterSource(useSnapshot ? 'snapshot' : 'current');
 
       // Prepare containers to fill inside try
       let marksByStudent = new Map<string, { mark: number | null; grade: string | null }>();
@@ -1239,15 +1289,22 @@ export default function TeacherExamDashboard() {
           <CardContent className="flex flex-col gap-4 px-6 py-6">
             {/* Step Progress Indicator */}
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              <div className="flex items-center gap-2">
-                <Info className="h-4 w-4 flex-shrink-0 text-slate-400" />
-                <span>
-                  Step {!selectedExamId ? '1' : (!selectedClassId || selectedClassId === '') ? '2' : !selectedSubjectId ? '3' : '4'} of 4: 
-                  {!selectedExamId && ` Select an ${assessmentType.toLowerCase()}`}
-                  {selectedExamId && (!selectedClassId || selectedClassId === '') && ' Choose a class'}
-                  {selectedExamId && selectedClassId && selectedClassId !== '' && !selectedSubjectId && ' Pick a subject'} 
-                  {selectedExamId && selectedClassId && selectedSubjectId && ' Ready to enter marks!'}
-                </span>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Info className="h-4 w-4 flex-shrink-0 text-slate-400" />
+                  <span>
+                    Step {!selectedExamId ? '1' : (!selectedClassId || selectedClassId === '') ? '2' : !selectedSubjectId ? '3' : '4'} of 4:
+                    {!selectedExamId && ` Select an ${assessmentType.toLowerCase()}`}
+                    {selectedExamId && (!selectedClassId || selectedClassId === '') && ' Choose a class'}
+                    {selectedExamId && selectedClassId && selectedClassId !== '' && !selectedSubjectId && ' Pick a subject'}
+                    {selectedExamId && selectedClassId && selectedSubjectId && ' Ready to enter marks!'}
+                  </span>
+                </div>
+                {selectedExamId && (
+                  <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-500">
+                    Roster: {rosterSource === 'snapshot' ? 'Historical' : 'Current'}
+                  </span>
+                )}
               </div>
             </div>
 

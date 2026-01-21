@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 interface CreateExamData {
   title: string;
@@ -17,6 +17,60 @@ interface CreateExamData {
 
 const isValidUuid = (s: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+
+const upsertExamRosterSnapshot = async ({
+  supabaseAdmin,
+  examId,
+  classIds,
+  clearExisting = false
+}: {
+  supabaseAdmin: SupabaseClient;
+  examId: string;
+  classIds: string[];
+  clearExisting?: boolean;
+}) => {
+  if (!examId || !Array.isArray(classIds) || classIds.length === 0) return;
+  if (clearExisting) {
+    await supabaseAdmin.from('exam_roster').delete().eq('exam_id', examId);
+  }
+  const { data: rosterRows, error: rosterErr } = await supabaseAdmin
+    .from('students')
+    .select('id, class_id')
+    .neq('record_type', 'prospect')
+    .in('class_id', classIds);
+  if (rosterErr) throw rosterErr;
+
+  let excludedSet = new Set<string>();
+  try {
+    const { data: excludedRows, error: excludedErr } = await supabaseAdmin
+      .from('exam_excluded_students')
+      .select('student_id')
+      .eq('exam_id', examId);
+    if (excludedErr) throw excludedErr;
+    excludedSet = new Set(
+      (excludedRows ?? [])
+        .map((row) => (row?.student_id ? String(row.student_id) : null))
+        .filter((id): id is string => Boolean(id))
+    );
+  } catch (err) {
+    console.warn('Exam roster snapshot exclusion fetch failed:', err);
+  }
+
+  const rows = (rosterRows ?? [])
+    .filter((row) => row?.id && row.class_id)
+    .filter((row) => !excludedSet.has(String(row.id)))
+    .map((row) => ({
+      exam_id: examId,
+      student_id: String(row.id),
+      class_id: String(row.class_id)
+    }));
+
+  if (rows.length === 0) return;
+  const { error: upsertErr } = await supabaseAdmin
+    .from('exam_roster')
+    .upsert(rows, { onConflict: 'exam_id,student_id' });
+  if (upsertErr) throw upsertErr;
+};
 
 // GET - Fetch exam metadata (exams, classes, subjects for dropdowns)
 export async function GET() {
@@ -286,6 +340,16 @@ export async function POST(request: Request) {
       // Non-fatal: proceed without blocking exam creation
     }
 
+    try {
+      await upsertExamRosterSnapshot({
+        supabaseAdmin,
+        examId: exam.id,
+        classIds
+      });
+    } catch (rosterError) {
+      console.error('Error creating exam roster snapshot:', rosterError);
+    }
+
     return NextResponse.json({ 
       success: true, 
       examId: exam.id,
@@ -489,6 +553,19 @@ export async function PUT(request: Request) {
       // Non-fatal
     }
 
+    try {
+      if (!exam.released) {
+        await upsertExamRosterSnapshot({
+          supabaseAdmin,
+          examId,
+          classIds,
+          clearExisting: true
+        });
+      }
+    } catch (rosterError) {
+      console.error('Error refreshing exam roster snapshot:', rosterError);
+    }
+
     return NextResponse.json({ 
       success: true, 
       examId: exam.id,
@@ -562,6 +639,7 @@ export async function DELETE(request: Request) {
     // Delete exam and all related records in correct order
     // First delete junction table records
     await Promise.all([
+      supabaseAdmin.from('exam_roster').delete().eq('exam_id', examId),
       supabaseAdmin.from('exam_subjects').delete().eq('exam_id', examId),
       supabaseAdmin.from('exam_classes').delete().eq('exam_id', examId)
     ]);

@@ -44,6 +44,7 @@ interface ExamDataResponse {
   students: StudentData[];
   subjects: string[];
   success: boolean;
+  rosterSource?: 'snapshot' | 'current';
 }
 
 export default function AdminExamPage() {
@@ -53,6 +54,7 @@ export default function AdminExamPage() {
   const [subjects, setSubjects] = useState<string[]>([]);
   const [students, setStudents] = useState<StudentData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [rosterSource, setRosterSource] = useState<'snapshot' | 'current'>('current');
   const [selectedStudent, setSelectedStudent] = useState<StudentData | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -110,6 +112,7 @@ export default function AdminExamPage() {
       if (data.success) {
         // Optionally enforce exclusion on client as a safeguard
         let studentsList = Array.isArray(data.students) ? data.students : [];
+        setRosterSource(data.rosterSource === 'snapshot' ? 'snapshot' : 'current');
         if (selectedExam) {
           try {
             const exclParams = new URLSearchParams({ examId: selectedExam });
@@ -130,10 +133,12 @@ export default function AdminExamPage() {
       } else {
         console.error('Error fetching exam data:', data);
         setStudents([]);
+        setRosterSource('current');
       }
     } catch (error) {
       console.error('Error fetching exam data:', error);
       setStudents([]);
+      setRosterSource('current');
     } finally {
       setLoading(false);
     }
@@ -470,7 +475,12 @@ export default function AdminExamPage() {
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Student Performance Dashboard</h1>
             <p className="text-gray-600 mt-1">
-              {filteredStudents.length} students • {classes.length} classes
+              {selectedExamName ? `${selectedExamName} • ` : ''}{filteredStudents.length} students • {classesForUI.length} classes
+              {selectedExamName && (
+                <span className="ml-2 inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[10px] text-gray-600">
+                  Roster: {rosterSource === 'snapshot' ? 'Historical' : 'Current'}
+                </span>
+              )}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">

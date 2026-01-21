@@ -133,6 +133,12 @@ type ExamHistoryEntry = {
   _date: string | null;
 };
 
+type ExamRosterRow = {
+  student_id: string | null;
+  class_id: string | null;
+  snapshot_at?: string | null;
+};
+
 type QueryResult<T> = {
   data: T;
   error: unknown;
@@ -170,6 +176,37 @@ export async function GET(request: Request) {
       return NextResponse.json({ students: [], subjects: [], success: true });
     }
 
+    let rosterRowsAll: ExamRosterRow[] = [];
+    let rosterRows: ExamRosterRow[] = [];
+    let hasRosterSnapshot = false;
+    const rosterClassByStudentId = new Map<string, string | null>();
+    const rosterClassIds = new Set<string>();
+    if (examId) {
+      rosterRowsAll = await adminOperationSimple(async (client) => {
+        const { data, error } = await client
+          .from('exam_roster')
+          .select('student_id, class_id, snapshot_at')
+          .eq('exam_id', examId);
+        if (error) throw error;
+        return (data ?? []) as ExamRosterRow[];
+      }).catch((err) => {
+        console.warn('Admin fetch exam_roster failed:', err);
+        return [] as ExamRosterRow[];
+      });
+      hasRosterSnapshot = rosterRowsAll.length > 0;
+      rosterRows = rosterRowsAll;
+      if (classId) {
+        rosterRows = rosterRows.filter((row) => String(row?.class_id || '') === String(classId));
+      }
+      rosterRows.forEach((row) => {
+        const sid = row?.student_id ? String(row.student_id) : null;
+        const cid = row?.class_id ? String(row.class_id) : null;
+        if (!sid) return;
+        rosterClassByStudentId.set(sid, cid);
+        if (cid) rosterClassIds.add(cid);
+      });
+    }
+
     // Optimized grouped queries using admin client for critical tables
     // Fetch excluded student IDs (for this exam/class) upfront to filter rosters later
     const excludedIds: string[] = await (async () => {
@@ -199,20 +236,37 @@ export async function GET(request: Request) {
       // Students (admin client to avoid RLS issues)
       (async () => {
         const result = await adminOperationSimple(async (client) => {
-          let q = client
-            .from('students')
-            .select('id, name, class_id')
-            .neq('record_type', 'prospect');
-          if (classId) {
-            q = q.eq('class_id', classId);
-          } else if (examId && Array.isArray(allowedClassIds)) {
-            if (allowedClassIds.length > 0) {
-              q = q.in('class_id', allowedClassIds);
+          let rows: StudentRow[] = [];
+          if (hasRosterSnapshot) {
+            const rosterIds = rosterRows
+              .map((row) => row?.student_id)
+              .filter((id): id is string => typeof id === 'string');
+            if (rosterIds.length === 0) {
+              return { data: [], error: null } as QueryResult<StudentRow[]>;
             }
+            const { data, error } = await client
+              .from('students')
+              .select('id, name, class_id')
+              .neq('record_type', 'prospect')
+              .in('id', rosterIds);
+            if (error) throw error;
+            rows = (data ?? []) as StudentRow[];
+          } else {
+            let q = client
+              .from('students')
+              .select('id, name, class_id')
+              .neq('record_type', 'prospect');
+            if (classId) {
+              q = q.eq('class_id', classId);
+            } else if (examId && Array.isArray(allowedClassIds)) {
+              if (allowedClassIds.length > 0) {
+                q = q.in('class_id', allowedClassIds);
+              }
+            }
+            const { data, error } = await q;
+            if (error) throw error;
+            rows = (data ?? []) as StudentRow[];
           }
-          const { data, error } = await q;
-          if (error) throw error;
-          const rows = (data ?? []) as StudentRow[];
           const excludedSet = new Set(excludedIds);
           const filtered = rows.filter((s) => !excludedSet.has(String(s.id)));
           return { data: filtered, error: null } as QueryResult<StudentRow[]>;
@@ -351,6 +405,21 @@ export async function GET(request: Request) {
 
       // Classes for mapping class_id -> name
       (async () => {
+        if (examId && hasRosterSnapshot) {
+          const rosterIds = Array.from(rosterClassIds);
+          const data = await adminOperationSimple(async (client) => {
+            let q = client.from('classes').select('id, name');
+            if (rosterIds.length > 0) q = q.in('id', rosterIds);
+            const { data, error } = await q;
+            if (error) throw error;
+            const rows = (data ?? []) as ClassRow[];
+            return { data: rows, error: null } as QueryResult<ClassRow[]>;
+          }).catch((err) => {
+            console.error('Admin fetch classes failed:', err);
+            return { data: [] as ClassRow[], error: err } as QueryResult<ClassRow[]>;
+          });
+          return data;
+        }
         if (examId && Array.isArray(allowedClassIds)) {
           const data = await adminOperationSimple(async (client) => {
             let q = client.from('classes').select('id, name');
@@ -783,7 +852,9 @@ export async function GET(request: Request) {
         return s.score;
       });
       const academicAvg = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
-      const cw = (examId ? (conductWeightByClassId.get(String(student.class_id)) || 0) : 0);
+      const rosterClassId = rosterClassByStudentId.get(String(student.id)) ?? null;
+      const effectiveClassId = rosterClassId || (student.class_id ? String(student.class_id) : null);
+      const cw = (examId && effectiveClassId ? (conductWeightByClassId.get(String(effectiveClassId)) || 0) : 0);
       const aw = Math.max(0, 100 - cw);
       const average = Math.round((academicAvg * aw + conductPercent * cw) / 100);
       
@@ -791,13 +862,13 @@ export async function GET(request: Request) {
       const attentionReason = average < 60 ? 'Academic performance below average' : 
                             conduct.participation < 3 ? 'Low participation score needs attention' : undefined;
 
-      const className = student.class_id ? classNameById.get(student.class_id) : undefined;
+      const className = effectiveClassId ? classNameById.get(effectiveClassId) : undefined;
 
       return {
         id: student.id,
         name: student.name,
         class: className || 'Unknown',
-        classId: String(student.class_id || ''),
+        classId: String(effectiveClassId || ''),
         subjects: subjectsData,
         conduct,
         conductPercentages,
@@ -819,7 +890,8 @@ export async function GET(request: Request) {
     return NextResponse.json({
       students: studentExamData,
       subjects: Array.from(subjectsSeen),
-      success: true
+      success: true,
+      rosterSource: hasRosterSnapshot ? 'snapshot' : 'current'
     });
 
   } catch (error: unknown) {
