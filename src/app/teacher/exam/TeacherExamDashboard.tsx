@@ -69,6 +69,7 @@ type StudentRow = {
   name: string;
   mark: string;
   grade: string;
+  classId?: string | null;
   conduct: Record<ConductKey, string>;
   isAbsent?: boolean;
   optedOut?: boolean;
@@ -722,6 +723,39 @@ export default function TeacherExamDashboard() {
         console.error('Failed loading exclusions/results/conduct', err);
       }
 
+      // Prefer server-side conduct summary (uses conduct_entries + conduct_scores) for display
+      try {
+        const session = await supabase.auth.getSession();
+        const token = session.data.session?.access_token;
+        if (token) {
+          const summaryParams = new URLSearchParams({ examId: selectedExamId });
+          if (selectedClassId && selectedClassId !== 'all') {
+            summaryParams.append('classId', selectedClassId);
+          }
+          const res = await fetch(`/api/teacher/exams?${summaryParams.toString()}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const json = await res.json();
+          const list = Array.isArray(json?.students) ? (json.students as StudentData[]) : [];
+          list.forEach((s) => {
+            const pct = s.conductPercentages || null;
+            if (!pct) return;
+            const hasValue = Object.values(pct).some((value) => Number(value) > 0);
+            if (!hasValue) return;
+            conductByStudent.set(String(s.id), {
+              discipline: Number(pct.discipline) || 0,
+              effort: Number(pct.effort) || 0,
+              participation: Number(pct.participation) || 0,
+              motivational_level: Number(pct.motivationalLevel) || 0,
+              character_score: Number(pct.character) || 0,
+              leadership: Number(pct.leadership) || 0,
+            } as Record<ConductKey, number>);
+          });
+        }
+      } catch (err) {
+        console.warn('Failed loading conduct summary from teacher exams API', err);
+      }
+
       // Build rows
       const rows: StudentRow[] = roster.map((s) => {
         const m = marksByStudent.get(String(s.id));
@@ -738,6 +772,7 @@ export default function TeacherExamDashboard() {
           grade: isOptedOut ? 'N/A' : (m?.grade || ''),
           isAbsent: isOptedOut ? false : (m?.grade || '').toUpperCase() === 'TH' && (m?.mark === null || m?.mark === undefined),
           optedOut: isOptedOut,
+          classId: s.class_id ? String(s.class_id) : null,
           conduct: c
             ? (Object.fromEntries(Object.entries(c).map(([k, v]) => [k, v === null || v === undefined ? '' : String(v)])) as Record<ConductKey, string>)
             : emptyConduct,
@@ -1582,29 +1617,57 @@ export default function TeacherExamDashboard() {
                     return (
                       <React.Fragment key={student.id}>
                         <tr className="border-b" onClick={async () => {
-                          const clsName = classes.find(c => c.id === selectedClassId)?.name || '';
+                          const classIdForStudent = student.classId && student.classId !== 'all'
+                            ? String(student.classId)
+                            : selectedClassId;
+                          const clsName = classes.find(c => c.id === classIdForStudent)?.name || '';
+                          const conductValues = {
+                            discipline: parseFloat(student.conduct.discipline) || 0,
+                            effort: parseFloat(student.conduct.effort) || 0,
+                            participation: parseFloat(student.conduct.participation) || 0,
+                            motivationalLevel: parseFloat(student.conduct.motivational_level) || 0,
+                            character: parseFloat(student.conduct.character_score) || 0,
+                            leadership: parseFloat(student.conduct.leadership) || 0,
+                          };
+                          const hasPercentScale = Object.values(conductValues).some((value) => value > 5);
+                          const normalizedConduct = hasPercentScale
+                            ? {
+                                discipline: conductValues.discipline / 20,
+                                effort: conductValues.effort / 20,
+                                participation: conductValues.participation / 20,
+                                motivationalLevel: conductValues.motivationalLevel / 20,
+                                character: conductValues.character / 20,
+                                leadership: conductValues.leadership / 20,
+                              }
+                            : conductValues;
                           // Set basic info immediately
                           setPanelStudent({
                             id: student.id,
                             name: student.name,
                             class: clsName,
+                            classId: classIdForStudent || undefined,
                             subjects: {},
-                            conduct: { discipline: 0, effort: 0, participation: 0, motivationalLevel: 0, character: 0, leadership: 0 },
+                            conduct: normalizedConduct,
+                            conductPercentages: hasPercentScale ? conductValues : undefined,
                             overall: { average: Number.NaN, rank: 0, needsAttention: false },
                           });
                           try {
                             if (selectedExamId) {
                               const params = new URLSearchParams({ examId: selectedExamId });
-                              if (selectedClassId) params.append('classId', selectedClassId);
-                              const res = await fetch(`/api/admin/exams?${params.toString()}`);
+                              if (classIdForStudent && classIdForStudent !== 'all') {
+                                params.append('classId', classIdForStudent);
+                              } else if (selectedClassId) {
+                                params.append('classId', selectedClassId);
+                              }
+                              const session = await supabase.auth.getSession();
+                              const token = session.data.session?.access_token;
+                              const res = await fetch(`/api/teacher/exams?${params.toString()}`, {
+                                headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+                              });
                               const json = await res.json();
-                              const list: Array<{ id: string; overall?: { average?: number; rank?: number; needsAttention?: boolean } }> =
-                                Array.isArray(json.students)
-                                  ? json.students.map((s: Record<string, unknown>) => ({
-                                      id: String(s.id),
-                                      overall: s.overall as { average?: number; rank?: number; needsAttention?: boolean } | undefined,
-                                    }))
-                                  : [];
+                              const list: StudentData[] = Array.isArray(json.students)
+                                ? (json.students as StudentData[])
+                                : [];
                               const me = list.find((s) => String(s.id) === String(student.id));
                               const classAvg = list.length > 0 ? (list.reduce((a: number, s) => a + (Number(s?.overall?.average) || 0), 0) / list.length) : null;
                               if (me) {
@@ -1612,6 +1675,11 @@ export default function TeacherExamDashboard() {
                                   prev
                                     ? {
                                         ...prev,
+                                        class: typeof me.class === "string" ? me.class : prev.class,
+                                        classId: typeof me.classId === "string" ? me.classId : prev.classId,
+                                        subjects: me.subjects ?? prev.subjects,
+                                        conduct: me.conduct ?? prev.conduct,
+                                        conductPercentages: me.conductPercentages ?? prev.conductPercentages,
                                         overall: {
                                           average: typeof me.overall?.average === "number" ? me.overall.average : prev.overall?.average ?? 0,
                                           rank: typeof me.overall?.rank === "number" ? me.overall.rank : prev.overall?.rank ?? 0,
@@ -1825,7 +1893,7 @@ export default function TeacherExamDashboard() {
         student={panelStudent}
         onClose={() => setPanelStudent(null)}
         examId={selectedExamId}
-        classId={selectedClassId}
+        classId={panelStudent?.classId || selectedClassId}
         selectedExamName={exams.find(e => String(e.id) === String(selectedExamId))?.name}
         classOverallAvg={panelClassOverallAvg ?? undefined}
       />

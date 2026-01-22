@@ -6,7 +6,6 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const examId = normalizeId(searchParams.get("examId"));
   const studentId = normalizeId(searchParams.get("studentId"));
-  const classId = normalizeId(searchParams.get("classId"));
 
   if (!examId || !studentId) {
     return NextResponse.json(
@@ -17,15 +16,14 @@ export async function GET(request: NextRequest) {
 
   try {
     const rows = await adminOperationSimple(async (client) => {
-      let query = client
+      const query = client
         .from("exam_results")
-        .select("id, subject_id, mark, final_score, grade, updated_at, subjects(name)")
+        .select("id, subject_id, mark, final_score, grade, updated_at, subjects!exam_results_subject_id_fkey(name)")
         .eq("exam_id", examId)
         .eq("student_id", studentId);
 
-      if (classId) {
-        query = query.eq("class_id", classId);
-      }
+      // exam_results are keyed by exam_id + student_id; class_id can be null or absent
+      // for historical rosters, so avoid filtering by class_id here.
 
       const { data, error } = await query;
       if (error) throw error;

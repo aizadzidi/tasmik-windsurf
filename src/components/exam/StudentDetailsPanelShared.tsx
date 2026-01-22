@@ -82,106 +82,136 @@ export default function StudentDetailsPanelShared({
   const [gradingScale, setGradingScale] = useState<GradingScale | null>(null);
   const lastPrefillStudentIdRef = React.useRef<string | null>(null);
 
+  const prefillSubjectRows = React.useMemo(() => {
+    const subjectEntries = student?.subjects ? Object.entries(student.subjects) : [];
+    if (subjectEntries.length === 0) return [];
+    return subjectEntries.map(([subjectName, info]) => ({
+      subject_id: subjectName,
+      subject_name: subjectName,
+      result_id: null,
+      mark: typeof info?.score === 'number' ? info.score : null,
+      grade: typeof info?.grade === 'string' ? info.grade : null,
+      final_score: typeof info?.score === 'number' ? info.score : null,
+      updated_at: null,
+    }));
+  }, [student]);
+
+  const prefillConductSummary = React.useMemo(() => {
+    if (!student) return null;
+    const subjectCount = Object.keys(student.subjects || {}).length;
+    const percentageSource = student.conductPercentages
+      ? {
+          discipline: student.conductPercentages.discipline,
+          effort: student.conductPercentages.effort,
+          participation: student.conductPercentages.participation,
+          motivationalLevel: student.conductPercentages.motivationalLevel,
+          character: student.conductPercentages.character,
+          leadership: student.conductPercentages.leadership,
+        }
+      : student.conduct
+      ? (() => {
+          const values = Object.values(student.conduct);
+          const scale = values.some((value) => typeof value === "number" && value > 5) ? 1 : 20;
+          return {
+            discipline: student.conduct.discipline * scale,
+            effort: student.conduct.effort * scale,
+            participation: student.conduct.participation * scale,
+            motivationalLevel: student.conduct.motivationalLevel * scale,
+            character: student.conduct.character * scale,
+            leadership: student.conduct.leadership * scale,
+          };
+        })()
+      : null;
+
+    if (!percentageSource) return null;
+    const hasAny = Object.values(percentageSource).some(
+      (value) => typeof value === "number" && Number.isFinite(value)
+    );
+    if (!hasAny) return null;
+
+    return {
+      source: "average",
+      subjects_count: subjectCount,
+      override_id: null,
+      discipline: percentageSource.discipline ?? null,
+      effort: percentageSource.effort ?? null,
+      participation: percentageSource.participation ?? null,
+      motivational_level: percentageSource.motivationalLevel ?? null,
+      character_score: percentageSource.character ?? null,
+      leadership: percentageSource.leadership ?? null,
+    } as ConductSummary;
+  }, [student]);
+
   // Final mark and averages come from RPCs via useWeightedAverages
 
   // Prefill with data coming from parent (admin/teacher tables) so the panel isn't empty while RPCs load
   React.useEffect(() => {
     const nextStudentId = student?.id ?? null;
     const isNewStudent = nextStudentId !== lastPrefillStudentIdRef.current;
-    const subjectEntries = student?.subjects ? Object.entries(student.subjects) : [];
 
-    if (isNewStudent && subjectEntries.length > 0) {
-      const mapped: StudentSubjectRow[] = subjectEntries.map(([subjectName, info]) => ({
-        subject_id: subjectName,
-        subject_name: subjectName,
-        result_id: null,
-        mark: typeof info?.score === 'number' ? info.score : null,
-        grade: typeof info?.grade === 'string' ? info.grade : null,
-        final_score: typeof info?.score === 'number' ? info.score : null,
-        updated_at: null,
-      }));
-      setSubjectRows(mapped);
+    if (isNewStudent && prefillSubjectRows.length > 0) {
+      setSubjectRows(prefillSubjectRows);
     }
 
-    const hasPrefillConduct =
-      !!student?.conduct &&
-      Object.values(student.conduct).some(
-        (value) => typeof value === "number" && Number.isFinite(value) && value > 0
-      );
-
-    if (isNewStudent && hasPrefillConduct && student?.conduct) {
-      setConductSummary({
-        source: 'average',
-        subjects_count: Object.keys(student.subjects || {}).length,
-        override_id: null,
-        discipline: student.conduct.discipline ?? null,
-        effort: student.conduct.effort ?? null,
-        participation: student.conduct.participation ?? null,
-        motivational_level: student.conduct.motivationalLevel ?? null,
-        character_score: student.conduct.character ?? null,
-        leadership: student.conduct.leadership ?? null,
-      });
-    } else if (isNewStudent) {
-      setConductSummary(null);
+    if (isNewStudent) {
+      setConductSummary(prefillConductSummary);
     }
 
     if (isNewStudent) {
       lastPrefillStudentIdRef.current = nextStudentId;
     }
-  }, [student]);
+  }, [student, prefillSubjectRows, prefillConductSummary]);
 
   // Load subject rows for student/exam/class
   React.useEffect(() => {
     let cancelled = false;
-    if (!open || !studentId || !examId || !classId) {
-      setSubjectRows([]);
+    if (!open || !studentId || !examId) {
+      setSubjectRows(prefillSubjectRows.length > 0 ? prefillSubjectRows : []);
       setSubjectsLoading(false);
       return;
     }
+
     setSubjectsLoading(true);
+
     (async () => {
       try {
-        const data = await rpcGetStudentSubjects(supabase, examId, classId, studentId);
+        const data = await rpcGetStudentSubjects(supabase, examId, classId || null, studentId);
         if (cancelled) return;
-        setSubjectRows(data);
+        const hasRpcResults = data.some((row) => {
+          if (row.result_id !== null) return true;
+          const hasMark = row.mark != null || row.final_score != null;
+          const grade = (row.grade ?? "").trim();
+          return hasMark || grade.length > 0;
+        });
+
+        if (hasRpcResults) {
+          setSubjectRows(data);
+          return;
+        }
+        if (prefillSubjectRows.length > 0) {
+          setSubjectRows(prefillSubjectRows);
+          return;
+        }
+        if (modeNormalized !== 'parent') {
+          const params = new URLSearchParams({ examId: String(examId), studentId: String(studentId) });
+          if (classId) params.append('classId', String(classId));
+          const res = await fetch(`/api/teacher/student-subjects?${params.toString()}`);
+          const json = await res.json();
+          const fallbackRows = Array.isArray(json?.rows) ? (json.rows as StudentSubjectRow[]) : [];
+          if (fallbackRows.length > 0) {
+            setSubjectRows(fallbackRows);
+            return;
+          }
+        }
+        if (data.length > 0) {
+          setSubjectRows(data);
+          return;
+        }
+        setSubjectRows([]);
       } catch (error) {
         if (!cancelled) {
           console.error("RPC get_exam_student_subjects failed:", error);
-          setSubjectRows([]);
-        }
-      } finally {
-        if (!cancelled) setSubjectsLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [open, studentId, examId, classId]);
-
-  React.useEffect(() => {
-    setSelectedSubject(null);
-  }, [studentId]);
-
-
-  React.useEffect(() => {
-    if (!student?.id || !examId || !classId) {
-      setSubjectRows([]);
-      setSubjectsLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setSubjectsLoading(true);
-
-    (async () => {
-      try {
-        const data = await rpcGetStudentSubjects(supabase, examId!, classId!, student.id);
-        if (cancelled) return;
-        setSubjectRows(data);
-      } catch (error) {
-        if (!cancelled) {
-          console.error('RPC get_exam_student_subjects failed:', error);
-          setSubjectRows([]);
+          setSubjectRows(prefillSubjectRows.length > 0 ? prefillSubjectRows : []);
         }
       } finally {
         if (!cancelled) {
@@ -193,14 +223,21 @@ export default function StudentDetailsPanelShared({
     return () => {
       cancelled = true;
     };
-  }, [student?.id, examId, classId]);
+  }, [open, studentId, examId, classId, modeNormalized, prefillSubjectRows]);
 
   React.useEffect(() => {
     setSelectedSubject(null);
-  }, [student?.id]);
+  }, [studentId]);
 
   const filledRows = React.useMemo(
-    () => subjectRows.filter((row) => row.result_id !== null),
+    () =>
+      subjectRows.filter((row) => {
+        if (row.result_id !== null) return true;
+        const hasMark = row.mark != null || row.final_score != null;
+        const grade = (row.grade ?? "").trim();
+        const hasGrade = grade.length > 0;
+        return hasMark || hasGrade;
+      }),
     [subjectRows]
   );
 
@@ -255,20 +292,20 @@ export default function StudentDetailsPanelShared({
 
   const refreshConductSummary = React.useCallback(async () => {
     if (!examId || !student?.id) {
-      setConductSummary(null);
+      setConductSummary(prefillConductSummary);
       return;
     }
     setConductSummaryLoading(true);
     try {
       const summary = await rpcGetConductSummary(examId!, student.id);
-      setConductSummary(summary);
+      setConductSummary(summary ?? prefillConductSummary);
     } catch (error) {
       console.error('rpcGetConductSummary failed:', error);
-      setConductSummary(null);
+      setConductSummary(prefillConductSummary);
     } finally {
       setConductSummaryLoading(false);
     }
-  }, [examId, student?.id]);
+  }, [examId, student?.id, prefillConductSummary]);
 
   React.useEffect(() => {
     refreshConductSummary();
