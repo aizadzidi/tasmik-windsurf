@@ -12,6 +12,7 @@ returns table(
 )
 language sql
 security definer
+set search_path = public, pg_catalog
 stable
 as $$
   select
@@ -41,6 +42,7 @@ create or replace function public.get_class_average_weighted(
 returns numeric
 language sql
 security definer
+set search_path = public, pg_catalog
 stable
 as $$
   with per_student_academic as (

@@ -117,6 +117,10 @@ export default function TeacherExamDashboard() {
     setToast({ message, type });
     setTimeout(() => setToast(null), 2200);
   }, []);
+  const isValidClassId = React.useCallback(
+    (id?: string | null) => Boolean(id && id !== "all"),
+    []
+  );
 
   const fetchFullStudentRoster = React.useCallback(async () => {
     const pageSize = 1000;
@@ -1654,9 +1658,9 @@ export default function TeacherExamDashboard() {
                           try {
                             if (selectedExamId) {
                               const params = new URLSearchParams({ examId: selectedExamId });
-                              if (classIdForStudent && classIdForStudent !== 'all') {
+                              if (isValidClassId(classIdForStudent)) {
                                 params.append('classId', classIdForStudent);
-                              } else if (selectedClassId) {
+                              } else if (isValidClassId(selectedClassId)) {
                                 params.append('classId', selectedClassId);
                               }
                               const session = await supabase.auth.getSession();

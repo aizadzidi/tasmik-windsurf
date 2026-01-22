@@ -110,8 +110,25 @@ export default function StudentDetailsPanelShared({
         }
       : student.conduct
       ? (() => {
-          const values = Object.values(student.conduct);
-          const scale = values.some((value) => typeof value === "number" && value > 5) ? 1 : 20;
+          const values = Object.values(student.conduct).filter(
+            (value): value is number => typeof value === "number" && Number.isFinite(value)
+          );
+          const max = values.length > 0 ? Math.max(...values) : 0;
+          const explicitScale = (student as { conductScale?: string | number | boolean })?.conductScale;
+          const explicitIsPercent = (student as { conduct?: { isPercent?: boolean } })?.conduct?.isPercent;
+          // Conduct values are either normalized (0–5) or percent (0–100). Prefer explicit metadata if present.
+          let scale = 20;
+          if (typeof explicitScale === "number" && Number.isFinite(explicitScale)) {
+            scale = explicitScale;
+          } else if (typeof explicitScale === "string") {
+            scale = explicitScale === "percent" ? 1 : 20;
+          } else if (typeof explicitScale === "boolean") {
+            scale = explicitScale ? 1 : 20;
+          } else if (typeof explicitIsPercent === "boolean") {
+            scale = explicitIsPercent ? 1 : 20;
+          } else if (max > 5) {
+            scale = 1;
+          }
           return {
             discipline: student.conduct.discipline * scale,
             effort: student.conduct.effort * scale,
@@ -196,6 +213,10 @@ export default function StudentDetailsPanelShared({
           const params = new URLSearchParams({ examId: String(examId), studentId: String(studentId) });
           if (classId) params.append('classId', String(classId));
           const res = await fetch(`/api/teacher/student-subjects?${params.toString()}`);
+          if (!res.ok) {
+            const errorText = await res.text().catch(() => "");
+            throw new Error(`teacher/student-subjects ${res.status}: ${errorText}`);
+          }
           const json = await res.json();
           const fallbackRows = Array.isArray(json?.rows) ? (json.rows as StudentSubjectRow[]) : [];
           if (fallbackRows.length > 0) {

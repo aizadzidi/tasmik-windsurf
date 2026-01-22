@@ -291,16 +291,19 @@ export async function GET(request: NextRequest) {
       .eq("exam_id", examId)
       .eq("tenant_id", tenantId)
       .in("student_id", allowedStudentIds);
-    const optOutMap = new Map<string, Set<string>>();
-    if (!optOutRes.error) {
-      (optOutRes.data ?? []).forEach((row: SubjectOptOutRow) => {
-        const sid = row?.student_id ? String(row.student_id) : null;
-        const subjId = row?.subject_id ? String(row.subject_id) : null;
-        if (!sid || !subjId) return;
-        if (!optOutMap.has(sid)) optOutMap.set(sid, new Set());
-        optOutMap.get(sid)!.add(subjId);
-      });
+    if (optOutRes.error) {
+      throw new Error(
+        `Failed to load subject_opt_outs for exam ${examId} tenant ${tenantId}: ${optOutRes.error.message}`
+      );
     }
+    const optOutMap = new Map<string, Set<string>>();
+    (optOutRes.data ?? []).forEach((row: SubjectOptOutRow) => {
+      const sid = row?.student_id ? String(row.student_id) : null;
+      const subjId = row?.subject_id ? String(row.subject_id) : null;
+      if (!sid || !subjId) return;
+      if (!optOutMap.has(sid)) optOutMap.set(sid, new Set());
+      optOutMap.get(sid)!.add(subjId);
+    });
 
     const conductEntriesRes = await supabaseAdmin
       .from("conduct_entries")
