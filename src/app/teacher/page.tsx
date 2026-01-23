@@ -45,7 +45,7 @@ type SmartSuggestion = {
   surah: string;
   juzuk: number;
   ayatFrom: number;
-  ayatTo: number;
+  ayatTo: number | null;
   pageFrom: number | null;
   pageTo: number | null | undefined;
 } | undefined;
@@ -283,22 +283,19 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
         }
       }
 
-      // Old Murajaah - suggest continuing from latest old murajaah or tasmi
+      // Old Murajaah - suggest continuing from latest old murajaah (like Tasmi)
       const latestMurajaah = studentReports
-        .filter(r => r.type === "Murajaah" || r.type === "Old Murajaah")
+        .filter(r => r.type === "Old Murajaah" || r.type === "Murajaah")
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
-      
+
       if (latestMurajaah) {
-        // Continue from latest murajaah position
         const nextAyatFrom = latestMurajaah.ayat_to + 1;
         const nextPageFrom = latestMurajaah.page_to ? latestMurajaah.page_to + 1 : null;
-        const progressionSize = Math.min(20, Math.max(10, latestMurajaah.ayat_to - latestMurajaah.ayat_from + 1));
-        
         return {
           surah: latestMurajaah.surah,
           juzuk: latestMurajaah.juzuk || 1,
           ayatFrom: nextAyatFrom,
-          ayatTo: nextAyatFrom + progressionSize - 1,
+          ayatTo: null,
           pageFrom: nextPageFrom,
           pageTo: nextPageFrom ? nextPageFrom + 1 : null
         };
@@ -1252,7 +1249,6 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
             onSave={editReport}
             surahs={SURAHS}
             grades={GRADES}
-            reportTypes={REPORT_TYPES}
           />
         )}
 

@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { getJuzFromPageRange, getPageRangeFromJuz, getPageWithinJuz } from "@/lib/quranMapping";
+import { getJuzFromPageRange, getPageWithinJuz, isPagesInSameJuz } from "@/lib/quranMapping";
 
 interface QuickReportModalProps {
   student: {
@@ -27,7 +27,7 @@ interface QuickReportModalProps {
     surah: string;
     juzuk: number;
     ayatFrom: number;
-    ayatTo: number;
+    ayatTo: number | null;
     pageFrom?: number | null;
     pageTo?: number | null;
   };
@@ -78,13 +78,6 @@ export default function QuickReportModal({
   const isNewMurajaah = normalizedReportType === "New Murajaah";
   const isOldMurajaah = normalizedReportType === "Old Murajaah";
 
-  const suggestedJuz = suggestions?.juzuk
-    ?? (suggestions?.pageFrom
-      ? getJuzFromPageRange(suggestions.pageFrom, suggestions.pageTo ?? undefined)
-      : null);
-  const suggestedPageFrom = suggestions?.pageFrom ? getPageWithinJuz(suggestions.pageFrom) : null;
-  const suggestedPageTo = suggestions?.pageTo ? getPageWithinJuz(suggestions.pageTo) : null;
-
   const [form, setForm] = useState({
     surah: suggestions?.surah || "",
     juzuk: suggestions?.juzuk?.toString() || "",
@@ -104,31 +97,39 @@ export default function QuickReportModal({
   const [surahTo, setSurahTo] = useState<string>("");
   const [surahTouched, setSurahTouched] = useState(false);
   const [ayatTouched, setAyatTouched] = useState(false);
-  const [juzWithin, setJuzWithin] = useState(suggestedJuz ? suggestedJuz.toString() : "");
-  const [pageWithinFrom, setPageWithinFrom] = useState(suggestedPageFrom ? suggestedPageFrom.toString() : "");
-  const [pageWithinTo, setPageWithinTo] = useState(suggestedPageTo ? suggestedPageTo.toString() : "");
-  const [isWithinRange, setIsWithinRange] = useState(
-    Boolean(suggestedPageFrom && suggestedPageTo && suggestedPageFrom !== suggestedPageTo)
-  );
+  const [isWithinRange, setIsWithinRange] = useState(() => (
+    Boolean(suggestions?.pageFrom && suggestions?.pageTo && suggestions.pageFrom !== suggestions.pageTo)
+  ));
   const recentAnchor = suggestions?.pageTo ?? suggestions?.pageFrom ?? null;
   const [reviewAnchorPage, setReviewAnchorPage] = useState(recentAnchor ? String(recentAnchor) : "");
   const [reviewCount, setReviewCount] = useState("3");
 
-  const withinPagePreview = useMemo(() => {
-    const juzValue = parseInt(juzWithin, 10);
-    const fromValue = parseInt(pageWithinFrom, 10);
-    const toValue = parseInt(pageWithinTo, 10);
-    if (!juzValue || !fromValue) return null;
-    const juzRange = getPageRangeFromJuz(juzValue);
-    if (!juzRange) return null;
-    const endValue = isWithinRange ? (pageWithinTo ? toValue : null) : fromValue;
-    if (!endValue || endValue < 1 || endValue > 20 || fromValue < 1 || fromValue > 20) {
+  const oldMurajaahPreview = useMemo(() => {
+    if (!isOldMurajaah) return null;
+    const fromValue = parseInt(form.page_from, 10);
+    const toValue = parseInt(form.page_to, 10);
+    if (!fromValue) return null;
+    const endValue = isWithinRange ? (form.page_to ? toValue : null) : fromValue;
+    if (!endValue) return null;
+    if (
+      fromValue < 1 || fromValue > 604 ||
+      endValue < 1 || endValue > 604
+    ) {
       return null;
     }
-    const absoluteFrom = juzRange.startPage + Math.min(fromValue, endValue) - 1;
-    const absoluteTo = juzRange.startPage + Math.max(fromValue, endValue) - 1;
-    return { from: absoluteFrom, to: absoluteTo };
-  }, [isWithinRange, juzWithin, pageWithinFrom, pageWithinTo]);
+    if (isWithinRange && !isPagesInSameJuz(fromValue, endValue)) {
+      return null;
+    }
+    const juzValue = getJuzFromPageRange(fromValue, endValue);
+    const pageWithin = getPageWithinJuz(endValue);
+    if (!juzValue || !pageWithin) return null;
+    return {
+      juz: juzValue,
+      pageWithin,
+      from: Math.min(fromValue, endValue),
+      to: Math.max(fromValue, endValue)
+    };
+  }, [form.page_from, form.page_to, isOldMurajaah, isWithinRange]);
 
   const reviewRangePreview = useMemo(() => {
     const anchorValue = parseInt(reviewAnchorPage, 10);
@@ -216,7 +217,7 @@ export default function QuickReportModal({
     const requiredPageValidation = isNewMurajaah
       ? (!reviewAnchorPage || !reviewCount)
       : isOldMurajaah
-        ? (!juzWithin || !pageWithinFrom || (isWithinRange && !pageWithinTo))
+        ? (!form.page_from || (isWithinRange && !form.page_to))
       : isPageRange 
         ? (!form.page_from || !form.page_to)
         : !form.page_from;
@@ -244,36 +245,31 @@ export default function QuickReportModal({
       let resolvedJuz: number | null = null;
 
       if (isOldMurajaah) {
-        const juzValue = parseInt(juzWithin, 10);
-        const fromValue = parseInt(pageWithinFrom, 10);
-        const toValue = parseInt(pageWithinTo, 10);
+        const fromValue = parseInt(form.page_from, 10);
+        const toValue = parseInt(form.page_to, 10);
+        const endValue = isWithinRange ? (form.page_to ? toValue : null) : fromValue;
 
-        if (!juzValue || !fromValue || (isWithinRange && !pageWithinTo)) {
+        if (!fromValue || !endValue) {
           setError("Please fill in all required fields");
           setIsSubmitting(false);
           return;
         }
-
-        const juzRange = getPageRangeFromJuz(juzValue);
-        if (!juzRange) {
-          setError("Invalid Juz selection");
-          setIsSubmitting(false);
-          return;
-        }
-
-        const endValue = isWithinRange ? toValue : fromValue;
         if (
-          fromValue < 1 || fromValue > 20 ||
-          endValue < 1 || endValue > 20
+          fromValue < 1 || fromValue > 604 ||
+          endValue < 1 || endValue > 604
         ) {
-          setError("Page within Juz must be between 1 and 20");
+          setError("Page must be between 1 and 604");
           setIsSubmitting(false);
           return;
         }
-
-        resolvedPageFrom = juzRange.startPage + Math.min(fromValue, endValue) - 1;
-        resolvedPageTo = juzRange.startPage + Math.max(fromValue, endValue) - 1;
-        resolvedJuz = juzValue;
+        if (isWithinRange && !isPagesInSameJuz(fromValue, endValue)) {
+          setError("Page range must be within the same Juz");
+          setIsSubmitting(false);
+          return;
+        }
+        resolvedPageFrom = Math.min(fromValue, endValue);
+        resolvedPageTo = Math.max(fromValue, endValue);
+        resolvedJuz = getJuzFromPageRange(resolvedPageFrom, resolvedPageTo);
       } else if (isNewMurajaah) {
         const anchorValue = parseInt(reviewAnchorPage, 10);
         const countValue = parseInt(reviewCount, 10);
@@ -392,49 +388,58 @@ export default function QuickReportModal({
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <div className="text-sm font-semibold text-amber-700">Old Murajaah (Juz-based)</div>
-                  <div className="text-xs text-amber-600">Use Juz + page within Juz (1-20)</div>
+                  <div className="text-xs text-amber-600">Enter actual page (1-604), auto converts to xx/20</div>
                 </div>
                 <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Old</span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs text-amber-700 mb-1">Juz *</label>
-                  <select
-                    value={juzWithin}
-                    onChange={(e) => setJuzWithin(e.target.value)}
-                    className="w-full border border-amber-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-amber-400 text-sm bg-white"
-                  >
-                    <option value="">Select</option>
-                    {Array.from({ length: 30 }, (_, i) => i + 1).map((juz) => (
-                      <option key={juz} value={juz}>{juz}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-amber-700 mb-1">Page in Juz *</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="20"
-                    placeholder="1"
-                    value={pageWithinFrom}
-                    onChange={(e) => setPageWithinFrom(e.target.value)}
-                    className="w-full border border-amber-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-amber-400 text-sm"
-                  />
-                </div>
-                {isWithinRange && (
-                  <div>
-                    <label className="block text-xs text-amber-700 mb-1">Page to *</label>
+                {!isWithinRange ? (
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs text-amber-700 mb-1">Actual Page *</label>
                     <input
                       type="number"
                       min="1"
-                      max="20"
-                      placeholder="20"
-                      value={pageWithinTo}
-                      onChange={(e) => setPageWithinTo(e.target.value)}
+                      max="604"
+                      placeholder="Page number"
+                      value={form.page_from}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setForm((f) => ({
+                          ...f,
+                          page_from: value,
+                          page_to: value
+                        }));
+                      }}
                       className="w-full border border-amber-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-amber-400 text-sm"
                     />
                   </div>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-xs text-amber-700 mb-1">Page from *</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="604"
+                        placeholder="From"
+                        value={form.page_from}
+                        onChange={(e) => setForm((f) => ({ ...f, page_from: e.target.value }))}
+                        className="w-full border border-amber-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-amber-400 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-amber-700 mb-1">Page to *</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="604"
+                        placeholder="To"
+                        value={form.page_to}
+                        onChange={(e) => setForm((f) => ({ ...f, page_to: e.target.value }))}
+                        className="w-full border border-amber-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-amber-400 text-sm"
+                      />
+                    </div>
+                  </>
                 )}
               </div>
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-700">
@@ -445,15 +450,17 @@ export default function QuickReportModal({
                     onChange={(e) => {
                       setIsWithinRange(e.target.checked);
                       if (!e.target.checked) {
-                        setPageWithinTo("");
+                        setForm((f) => ({ ...f, page_to: f.page_from }));
                       }
                     }}
                     className="h-4 w-4 text-amber-600 focus:ring-amber-500 border-amber-200 rounded"
                   />
-                  Range within Juz
+                  Multiple pages
                 </label>
                 <span className="rounded-full bg-white px-3 py-1 border border-amber-200">
-                  {withinPagePreview ? `Absolute pages: ${withinPagePreview.from}-${withinPagePreview.to}` : "Select Juz + page"}
+                  {oldMurajaahPreview
+                    ? `Juz ${oldMurajaahPreview.juz} - ${oldMurajaahPreview.pageWithin}/20`
+                    : "Enter page"}
                 </span>
               </div>
             </div>
@@ -480,12 +487,7 @@ export default function QuickReportModal({
                     placeholder="Page"
                     value={reviewAnchorPage}
                     onChange={(e) => setReviewAnchorPage(e.target.value)}
-                    readOnly={Boolean(recentAnchor)}
-                    className={`w-full border rounded-lg px-3 py-2 text-sm ${
-                      recentAnchor
-                        ? "bg-emerald-50/60 text-emerald-700 border-emerald-200 cursor-not-allowed"
-                        : "border-emerald-200 focus:ring-2 focus:ring-emerald-400"
-                    }`}
+                    className="w-full border border-emerald-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-400"
                   />
                 </div>
                 <div>
@@ -495,7 +497,7 @@ export default function QuickReportModal({
                     onChange={(e) => setReviewCount(e.target.value)}
                     className="w-full border border-emerald-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-400 text-sm bg-white"
                   >
-                    {[3, 4, 5, 10, 20].map((count) => (
+                    {Array.from({ length: 20 }, (_, index) => index + 1).map((count) => (
                       <option key={count} value={count}>
                         Last {count} pages
                       </option>
@@ -574,33 +576,31 @@ export default function QuickReportModal({
                 ))}
               </select>
             )}
-            {!isNewMurajaah && !isOldMurajaah && (
-              <div className="flex items-center mt-2">
-                <input
-                  type="checkbox"
-                  id="multiSurah"
-                  checked={isMultiSurah}
-                  onChange={e => {
-                    const checked = e.target.checked;
-                    setIsMultiSurah(checked);
-                    if (checked) {
-                      // seed range with current selection
-                      setSurahFrom(prev => prev || form.surah || "");
-                      setSurahTo(prev => prev || form.surah || "");
-                    } else {
-                      // collapse back to single surah using 'from' value if set
-                      if (surahFrom) setForm(f => ({ ...f, surah: surahFrom }));
-                      setSurahFrom("");
-                      setSurahTo("");
-                    }
-                  }}
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                />
-                <label htmlFor="multiSurah" className="ml-2 text-sm text-gray-600">
-                  Multiple surahs (surah range)
-                </label>
-              </div>
-            )}
+            <div className="flex items-center mt-2">
+              <input
+                type="checkbox"
+                id="multiSurah"
+                checked={isMultiSurah}
+                onChange={e => {
+                  const checked = e.target.checked;
+                  setIsMultiSurah(checked);
+                  if (checked) {
+                    // seed range with current selection
+                    setSurahFrom(prev => prev || form.surah || "");
+                    setSurahTo(prev => prev || form.surah || "");
+                  } else {
+                    // collapse back to single surah using 'from' value if set
+                    if (surahFrom) setForm(f => ({ ...f, surah: surahFrom }));
+                    setSurahFrom("");
+                    setSurahTo("");
+                  }
+                }}
+                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              />
+              <label htmlFor="multiSurah" className="ml-2 text-sm text-gray-600">
+                Multiple surahs (surah range)
+              </label>
+            </div>
           </div>
 
           {/* Ayat Range */}
