@@ -3,6 +3,7 @@
 export const GRADE_VALUES = {
   'mumtaz': 3,
   'jayyid jiddan': 2,
+  'jayyid jidan': 2,
   'jayyid': 1
 } as const;
 

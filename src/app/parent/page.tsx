@@ -27,7 +27,12 @@ import { formatMurajaahDisplay } from "@/lib/quranMapping";
 import type { Report } from "@/types/teacher";
 import jsPDF from "jspdf";
 import autoTable from 'jspdf-autotable';
-import { getWeekBoundaries } from "@/lib/gradeUtils";
+import {
+  formatGradeLabel,
+  formatWeekLabel,
+  summarizeReportsByWeek,
+  type WeeklyReportSummary
+} from "@/lib/parentReportUtils";
 
 
 type ViewMode = 'tasmik' | 'murajaah' | 'juz_tests';
@@ -365,31 +370,51 @@ export default function ParentPage() {
   const downloadCSV = (child: StudentProgressData, childReports: Report[]) => {
     // Filter out Murajaah reports
     const tasmikReports = childReports.filter(report => report.type === 'Tasmi');
-    const reportsByMonth = tasmikReports.reduce((acc, report) => {
-      const month = new Date(report.date).toLocaleString('default', { month: 'long', year: 'numeric' });
-      if (!acc[month]) {
-        acc[month] = { tasmi: [] };
-      }
-      acc[month].tasmi.push(report);
-      return acc;
-    }, {} as Record<string, { tasmi: Report[] }>);
+    const weeklySummaries = summarizeReportsByWeek(tasmikReports, 'Tasmi');
+    const summariesByMonth = weeklySummaries.reduce(
+      (acc, summary) => {
+        if (!acc[summary.monthLabel]) {
+          acc[summary.monthLabel] = [];
+        }
+        acc[summary.monthLabel].push(summary);
+        return acc;
+      },
+      {} as Record<string, WeeklyReportSummary[]>
+    );
 
-    const sortedMonths = Object.keys(reportsByMonth).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
-    const headers = ["Date", "Type", "Surah", "Juzuk", "Ayat", "Page", "Grade"];
-    let csvString = `Tasmik Report for ${child.name}\n\n`;
+    const sortedMonths = Object.keys(summariesByMonth).sort(
+      (a, b) => new Date(b).getTime() - new Date(a).getTime()
+    );
+    const headers = [
+      "Week",
+      "Date Range",
+      "Type",
+      "Surah",
+      "Juz",
+      "Ayat",
+      "Page",
+      "Grade"
+    ];
+    let csvString = `Tasmik Weekly Summary for ${child.name}\n\n`;
 
     for (const month of sortedMonths) {
       csvString += `${month}\n`;
-      const { tasmi } = reportsByMonth[month];
+      const summaries = summariesByMonth[month];
 
-      if (tasmi.length > 0) {
-        csvString += `Tasmi Reports\n`;
+      if (summaries.length > 0) {
+        csvString += `Tasmik Weekly Summary\n`;
         csvString += headers.join(',') + '\n';
-        tasmi.forEach(r => {
-          const pageRange = (r.page_from && r.page_to) ? 
-            `${Math.min(r.page_from, r.page_to)}-${Math.max(r.page_from, r.page_to)}` : 
-            `${r.page_from ?? ''}-${r.page_to ?? ''}`;
-          const row = [r.date, r.type, r.surah, r.juzuk ?? '', `${r.ayat_from}-${r.ayat_to}`, pageRange, r.grade ?? ''];
+        summaries.forEach(summary => {
+          const row = [
+            summary.weekLabel,
+            summary.weekRange,
+            summary.typeLabel,
+            summary.surahDisplay,
+            summary.juzDisplay,
+            summary.ayatDisplay,
+            summary.pageDisplay,
+            formatGradeLabel(summary.grade)
+          ];
           csvString += row.map(val => `"${val}"`).join(',') + '\n';
         });
         csvString += '\n';
@@ -425,15 +450,22 @@ export default function ParentPage() {
       });
     };
 
-    // Data processing - only Tasmik reports
-    const reportsByMonth = tasmikReports.reduce((acc, report) => {
-      const month = new Date(report.date).toLocaleString('default', { month: 'long', year: 'numeric' });
-      if (!acc[month]) acc[month] = { tasmi: [] };
-      acc[month].tasmi.push(report);
-      return acc;
-    }, {} as Record<string, { tasmi: Report[] }>);
+    // Data processing - weekly summaries for Tasmik reports
+    const weeklySummaries = summarizeReportsByWeek(tasmikReports, 'Tasmi');
+    const summariesByMonth = weeklySummaries.reduce(
+      (acc, summary) => {
+        if (!acc[summary.monthLabel]) {
+          acc[summary.monthLabel] = [];
+        }
+        acc[summary.monthLabel].push(summary);
+        return acc;
+      },
+      {} as Record<string, WeeklyReportSummary[]>
+    );
 
-    const sortedMonths = Object.keys(reportsByMonth).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+    const sortedMonths = Object.keys(summariesByMonth).sort(
+      (a, b) => new Date(b).getTime() - new Date(a).getTime()
+    );
     const TASMI_COLOR: [number, number, number] = [22, 163, 74];
     const pageHeight = doc.internal.pageSize.height;
 
@@ -458,7 +490,7 @@ export default function ParentPage() {
     // Report title
     doc.setFontSize(18);
     doc.setFont('helvetica', 'bold');
-    doc.text('Tasmik Progress Report', 14, 50);
+    doc.text('Tasmik Weekly Progress Report', 14, 50);
     doc.setFontSize(12);
     doc.setFont('helvetica', 'normal');
     doc.text(`Student: ${child.name}`, 14, 58);
@@ -510,21 +542,20 @@ export default function ParentPage() {
       doc.text(month, 14, yPos);
       yPos += 8;
 
-      const { tasmi } = reportsByMonth[month];
-      const tableCols = ["Date", "Surah", "Ayat", "Page", "Grade"];
+      const summaries = summariesByMonth[month];
+      const tableCols = ["Week", "Range", "Surah", "Ayat", "Page", "Grade"];
 
-      if (tasmi.length > 0) {
+      if (summaries.length > 0) {
         autoTable(doc, {
           startY: yPos,
-          head: [[{ content: 'Tasmi Reports', colSpan: 5, styles: { fillColor: TASMI_COLOR, textColor: 255, fontStyle: 'bold' } } ], tableCols],
-          body: tasmi.map(r => [
-            r.date, 
-            r.surah, 
-            `${r.ayat_from}-${r.ayat_to}`, 
-            (r.page_from && r.page_to) ? 
-              `${Math.min(r.page_from, r.page_to)}-${Math.max(r.page_from, r.page_to)}` : 
-              `${r.page_from ?? '-'}-${r.page_to ?? '-'}`,
-            r.grade ?? '-'
+          head: [[{ content: 'Tasmik Weekly Summary', colSpan: 6, styles: { fillColor: TASMI_COLOR, textColor: 255, fontStyle: 'bold' } } ], tableCols],
+          body: summaries.map(summary => [
+            summary.weekLabel,
+            summary.weekRange,
+            summary.surahDisplay,
+            summary.ayatDisplay,
+            summary.pageDisplay,
+            formatGradeLabel(summary.grade)
           ]),
           theme: 'grid',
           headStyles: { fillColor: [240, 240, 240], textColor: 30, fontStyle: 'bold' },
@@ -919,17 +950,9 @@ export default function ParentPage() {
                               </td>
                               <td className="px-4 py-3 text-center text-gray-700">
                                 <div className="text-sm">
-                                  {child.last_read_date ? (() => {
-                                    const { monday } = getWeekBoundaries(child.last_read_date);
-                                    const mondayDate = new Date(monday);
-                                    const weekIndex = Math.floor((mondayDate.getDate() - 1) / 7) + 1;
-                                    const monthName = mondayDate.toLocaleString('default', { month: 'short' });
-                                    return (
-                                      <>
-                                        <div>{`${monthName} W${weekIndex}`}</div>
-                                      </>
-                                    );
-                                  })() : '-'}
+                                  {child.last_read_date ? (
+                                    <div>{formatWeekLabel(child.last_read_date)}</div>
+                                  ) : '-'}
                                 </div>
                               </td>
                             </>

@@ -1,22 +1,8 @@
 "use client";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { getWeekBoundaries } from "@/lib/gradeUtils";
-import type { ViewMode } from "@/types/teacher";
-
-interface Report {
-  id: string;
-  student_id: string;
-  type: string;
-  surah: string;
-  juzuk: number | null;
-  ayat_from: number;
-  ayat_to: number;
-  page_from: number | null;
-  page_to: number | null;
-  grade: string | null;
-  date: string;
-}
+import { formatGradeLabel, summarizeReportsByWeek } from "@/lib/parentReportUtils";
+import type { Report, ViewMode } from "@/types/teacher";
 
 interface JuzTestRecord {
   id: string;
@@ -96,6 +82,13 @@ export default function ParentFullRecordsModal({
     }
     return reports;
   }, [reports, viewMode, murajaahTab, newMurajaahReports, oldMurajaahReports]);
+
+  const murajaahTitle = murajaahTab === 'new' ? 'New Murajaah' : 'Old Murajaah';
+  const weeklySummaries = useMemo(() => {
+    if (viewMode === 'juz_tests') return [];
+    const typeLabel = viewMode === 'tasmik' ? 'Tasmi' : murajaahTitle;
+    return summarizeReportsByWeek(filteredReports, typeLabel);
+  }, [filteredReports, murajaahTitle, viewMode]);
 
   const fetchStudentReports = useCallback(async () => {
     if (initialLoadRef.current) {
@@ -247,7 +240,6 @@ export default function ParentFullRecordsModal({
 
   if (!student) return null;
 
-  const murajaahTitle = murajaahTab === 'new' ? 'New Murajaah' : 'Old Murajaah';
   const getViewModeTitle = () => {
     switch (viewMode) {
       case 'tasmik': return 'Tasmik Records';
@@ -390,7 +382,7 @@ export default function ParentFullRecordsModal({
                 </div>
               )}
             </div>
-          ) : filteredReports.length === 0 ? (
+          ) : weeklySummaries.length === 0 ? (
             <div className="p-8 text-center">
               <div className="text-gray-400 mb-4">
                 <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -402,73 +394,64 @@ export default function ParentFullRecordsModal({
             </div>
           ) : (
             <div className="p-6">
-              {filteredReports.length === 0 ? (
-                <div className="p-8 text-center text-gray-600">No records available.</div>
-              ) : (
-                <div className="overflow-hidden rounded-xl border border-gray-200 shadow-lg">
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b text-sm">Type</th>
-                          <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b text-sm">Surah</th>
-                          <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Juz</th>
-                          <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Ayat</th>
-                          <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Page</th>
-                          <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Grade</th>
-                          <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Date</th>
+              <div className="overflow-hidden rounded-xl border border-gray-200 shadow-lg">
+                <div className="overflow-x-auto">
+                  <table className="min-w-full">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b text-sm">Type</th>
+                        <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b text-sm">Surah</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Juz</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Ayat</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Page</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Grade</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Week</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white">
+                      {weeklySummaries.map((summary, index) => (
+                        <tr key={summary.weekKey} className={`transition-colors hover:bg-gray-50 ${index % 2 === 0 ? 'bg-white' : 'bg-gray-25'}`}>
+                          <td className="px-4 py-3 text-gray-700 border-b border-gray-100">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                              {summary.typeLabel}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-gray-800 font-medium border-b border-gray-100 text-sm">{summary.surahDisplay}</td>
+                          <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                            <span className="inline-flex items-center justify-center rounded-full bg-purple-100 text-purple-800 text-xs font-semibold px-2 py-0.5">
+                              {summary.juzDisplay}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                            <span className="text-xs font-mono">{summary.ayatDisplay}</span>
+                          </td>
+                          <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                            <span className="text-xs font-mono">
+                              {summary.pageDisplay}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-center border-b border-gray-100">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                              summary.grade === 'mumtaz' ? 'bg-green-100 text-green-800' :
+                              summary.grade === 'jayyid jiddan' ? 'bg-yellow-100 text-yellow-800' :
+                              summary.grade === 'jayyid' ? 'bg-orange-100 text-orange-800' :
+                              'bg-gray-100 text-gray-800'
+                            }`}>
+                              {formatGradeLabel(summary.grade)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                            <div className="text-xs">
+                              <div className="font-medium">{summary.weekLabel}</div>
+                              <div className="text-gray-500">{summary.weekRange}</div>
+                            </div>
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody className="bg-white">
-                        {filteredReports.map((report, index) => (
-                          <tr key={report.id} className={`transition-colors hover:bg-gray-50 ${index % 2 === 0 ? 'bg-white' : 'bg-gray-25'}`}>
-                            <td className="px-4 py-3 text-gray-700 border-b border-gray-100">
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                                {report.type}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-gray-800 font-medium border-b border-gray-100 text-sm">{report.surah}</td>
-                            <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
-                              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-purple-100 text-purple-800 text-xs font-semibold">
-                                {report.juzuk}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
-                              <span className="text-xs font-mono">{report.ayat_from}-{report.ayat_to}</span>
-                            </td>
-                            <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
-                              <span className="text-xs font-mono">
-                                {report.page_from && report.page_to ? 
-                                  `${Math.min(report.page_from, report.page_to)}-${Math.max(report.page_from, report.page_to)}` : 
-                                  '-'
-                                }
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-center border-b border-gray-100">
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                                report.grade === 'mumtaz' ? 'bg-green-100 text-green-800' :
-                                report.grade === 'jayyid jiddan' ? 'bg-yellow-100 text-yellow-800' :
-                                report.grade === 'jayyid' ? 'bg-orange-100 text-orange-800' :
-                                'bg-gray-100 text-gray-800'
-                              }`}>
-                                {report.grade ? report.grade.charAt(0).toUpperCase() + report.grade.slice(1) : ''}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
-                              <div className="text-xs">
-                                <div className="font-medium">{report.date}</div>
-                                <div className="text-gray-500">
-                                  {getWeekBoundaries(report.date).weekRange}
-                                </div>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              )}
+              </div>
             </div>
           )}
         </div>
