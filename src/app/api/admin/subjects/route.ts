@@ -1,28 +1,55 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
+import { resolveTenantIdFromRequest } from '@/lib/tenantProvisioning';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const adminErrorDetails = (error: unknown, fallback: string) => {
+  const message = error instanceof Error ? error.message : fallback;
+  const status = message.includes('Admin access required') ? 403 : 500;
+  return { message, status };
+};
+
+const resolveTenantIdOrThrow = async (request: NextRequest) =>
+  adminOperationSimple(async (client) => {
+    const tenantId = await resolveTenantIdFromRequest(request, client);
+    if (tenantId) return tenantId;
+
+    const { data, error } = await client.from('tenants').select('id').limit(2);
+    if (error) throw error;
+    if (!data || data.length !== 1) {
+      throw new Error('Tenant context missing');
+    }
+
+    return data[0].id;
+  });
+
+const toNullableText = (value?: string | null) => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+};
 
 // GET - Fetch all subjects
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const { data: subjects, error } = await supabase
-      .from('subjects')
-      .select('*')
-      .order('name');
+    const tenantId = await resolveTenantIdOrThrow(request);
 
-    if (error) {
-      console.error('Error fetching subjects:', error);
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
-    }
+    const subjects = await adminOperationSimple(async (client) => {
+      const { data, error } = await client
+        .from('subjects')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .order('name');
+
+      if (error) throw error;
+      return data;
+    });
 
     return NextResponse.json({ success: true, subjects });
   } catch (error: unknown) {
     console.error('Unexpected error fetching subjects:', error);
-    return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
+    const { message, status } = adminErrorDetails(error, 'Internal server error');
+    return NextResponse.json({ success: false, error: message }, { status });
   }
 }
 
@@ -31,42 +58,54 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { name, description } = body;
+    const tenantId = await resolveTenantIdOrThrow(request);
 
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
       return NextResponse.json({ success: false, error: 'Name is required' }, { status: 400 });
     }
 
-    // Check if subject with same name already exists
-    const { data: existingSubject } = await supabase
-      .from('subjects')
-      .select('id')
-      .eq('name', name.trim())
-      .single();
+    const newSubject = await adminOperationSimple(async (client) => {
+      // Check if subject with same name already exists
+      const { data: existingSubject, error: existingError } = await client
+        .from('subjects')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .eq('name', name.trim())
+        .maybeSingle();
 
-    if (existingSubject) {
-      return NextResponse.json({ success: false, error: 'Subject with this name already exists' }, { status: 409 });
-    }
+      if (existingError) throw existingError;
+      if (existingSubject) {
+        return NextResponse.json(
+          { success: false, error: 'Subject with this name already exists' },
+          { status: 409 }
+        );
+      }
 
-    const { data: newSubject, error } = await supabase
-      .from('subjects')
-      .insert([
-        {
-          name: name.trim(),
-          description: description?.trim() || null,
-        }
-      ])
-      .select()
-      .single();
+      const { data, error } = await client
+        .from('subjects')
+        .insert([
+          {
+            name: name.trim(),
+            description: toNullableText(description),
+            tenant_id: tenantId,
+          },
+        ])
+        .select()
+        .single();
 
-    if (error) {
-      console.error('Error creating subject:', error);
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      if (error) throw error;
+      return data;
+    });
+
+    if (newSubject instanceof NextResponse) {
+      return newSubject;
     }
 
     return NextResponse.json({ success: true, subject: newSubject });
   } catch (error: unknown) {
     console.error('Unexpected error creating subject:', error);
-    return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
+    const { message, status } = adminErrorDetails(error, 'Internal server error');
+    return NextResponse.json({ success: false, error: message }, { status });
   }
 }
 
@@ -75,6 +114,7 @@ export async function PUT(request: NextRequest) {
   try {
     const url = new URL(request.url);
     const id = url.searchParams.get('id');
+    const tenantId = await resolveTenantIdOrThrow(request);
 
     if (!id) {
       return NextResponse.json({ success: false, error: 'Subject ID is required' }, { status: 400 });
@@ -87,31 +127,41 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Name is required' }, { status: 400 });
     }
 
-    // Check if another subject with same name already exists (excluding current subject)
-    const { data: existingSubject } = await supabase
-      .from('subjects')
-      .select('id')
-      .eq('name', name.trim())
-      .neq('id', id)
-      .single();
+    const updatedSubject = await adminOperationSimple(async (client) => {
+      // Check if another subject with same name already exists (excluding current subject)
+      const { data: existingSubject, error: existingError } = await client
+        .from('subjects')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .eq('name', name.trim())
+        .neq('id', id)
+        .maybeSingle();
 
-    if (existingSubject) {
-      return NextResponse.json({ success: false, error: 'Another subject with this name already exists' }, { status: 409 });
-    }
+      if (existingError) throw existingError;
+      if (existingSubject) {
+        return NextResponse.json(
+          { success: false, error: 'Another subject with this name already exists' },
+          { status: 409 }
+        );
+      }
 
-    const { data: updatedSubject, error } = await supabase
-      .from('subjects')
-      .update({
-        name: name.trim(),
-        description: description?.trim() || null,
-      })
-      .eq('id', id)
-      .select()
-      .single();
+      const { data, error } = await client
+        .from('subjects')
+        .update({
+          name: name.trim(),
+          description: toNullableText(description),
+        })
+        .eq('tenant_id', tenantId)
+        .eq('id', id)
+        .select()
+        .single();
 
-    if (error) {
-      console.error('Error updating subject:', error);
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      if (error) throw error;
+      return data;
+    });
+
+    if (updatedSubject instanceof NextResponse) {
+      return updatedSubject;
     }
 
     if (!updatedSubject) {
@@ -121,7 +171,8 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ success: true, subject: updatedSubject });
   } catch (error: unknown) {
     console.error('Unexpected error updating subject:', error);
-    return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
+    const { message, status } = adminErrorDetails(error, 'Internal server error');
+    return NextResponse.json({ success: false, error: message }, { status });
   }
 }
 
@@ -130,62 +181,69 @@ export async function DELETE(request: NextRequest) {
   try {
     const url = new URL(request.url);
     const id = url.searchParams.get('id');
+    const tenantId = await resolveTenantIdOrThrow(request);
 
     if (!id) {
       return NextResponse.json({ success: false, error: 'Subject ID is required' }, { status: 400 });
     }
 
-    // Check if subject is being used in any exam results
-    const { data: examResults, error: checkError } = await supabase
-      .from('exam_results')
-      .select('id')
-      .eq('subject_id', id)
-      .limit(1);
+    const deleteResponse = await adminOperationSimple(async (client) => {
+      // Check if subject is being used in any exam results
+      const { data: examResults, error: checkError } = await client
+        .from('exam_results')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .eq('subject_id', id)
+        .limit(1);
 
-    if (checkError) {
-      console.error('Error checking subject usage:', checkError);
-      return NextResponse.json({ success: false, error: 'Error checking subject usage' }, { status: 500 });
-    }
+      if (checkError) throw checkError;
+      if (examResults && examResults.length > 0) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Cannot delete subject that has exam results. Please remove associated exam results first.'
+          },
+          { status: 409 }
+        );
+      }
 
-    if (examResults && examResults.length > 0) {
-      return NextResponse.json({ 
-        success: false, 
-        error: 'Cannot delete subject that has exam results. Please remove associated exam results first.' 
-      }, { status: 409 });
-    }
+      // Check if subject is being used in any exam subjects
+      const { data: examSubjects, error: checkExamError } = await client
+        .from('exam_subjects')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .eq('subject_id', id)
+        .limit(1);
 
-    // Check if subject is being used in any exam subjects
-    const { data: examSubjects, error: checkExamError } = await supabase
-      .from('exam_subjects')
-      .select('id')
-      .eq('subject_id', id)
-      .limit(1);
+      if (checkExamError) throw checkExamError;
+      if (examSubjects && examSubjects.length > 0) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Cannot delete subject that is assigned to exams. Please remove from exams first.'
+          },
+          { status: 409 }
+        );
+      }
 
-    if (checkExamError) {
-      console.error('Error checking exam subject usage:', checkExamError);
-      return NextResponse.json({ success: false, error: 'Error checking exam subject usage' }, { status: 500 });
-    }
+      const { error: deleteError } = await client
+        .from('subjects')
+        .delete()
+        .eq('tenant_id', tenantId)
+        .eq('id', id);
 
-    if (examSubjects && examSubjects.length > 0) {
-      return NextResponse.json({ 
-        success: false, 
-        error: 'Cannot delete subject that is assigned to exams. Please remove from exams first.' 
-      }, { status: 409 });
-    }
+      if (deleteError) throw deleteError;
+      return null;
+    });
 
-    const { error: deleteError } = await supabase
-      .from('subjects')
-      .delete()
-      .eq('id', id);
-
-    if (deleteError) {
-      console.error('Error deleting subject:', deleteError);
-      return NextResponse.json({ success: false, error: deleteError.message }, { status: 500 });
+    if (deleteResponse instanceof NextResponse) {
+      return deleteResponse;
     }
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
     console.error('Unexpected error deleting subject:', error);
-    return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
+    const { message, status } = adminErrorDetails(error, 'Internal server error');
+    return NextResponse.json({ success: false, error: message }, { status });
   }
 }
