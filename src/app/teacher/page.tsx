@@ -12,6 +12,7 @@ import JuzTestProgressLineChart from "@/components/teacher/JuzTestProgressLineCh
 import JuzTestHistoryModalViewOnly from "@/components/teacher/JuzTestHistoryModalViewOnly";
 import ScheduleTestModal from "@/components/teacher/ScheduleTestModal";
 import { notificationService } from "@/lib/notificationService";
+import { useProgramScope } from "@/hooks/useProgramScope";
 import {
   StudentProgressData,
   calculateDaysSinceLastRead,
@@ -104,6 +105,7 @@ export default function TeacherPage() {
   const [reports, setReports] = useState<Report[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
   const [teacherName, setTeacherName] = useState<string>("");
+  const { programScope } = useProgramScope({ role: "teacher", userId });
   
   // Monitor state
   const [monitorStudents, setMonitorStudents] = useState<StudentProgressData[]>([]);
@@ -696,7 +698,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
-      <Navbar />
+      <Navbar programScope={programScope} />
       <div className="relative p-4 sm:p-6">
         <div className="max-w-7xl mx-auto">
           {/* Header */}

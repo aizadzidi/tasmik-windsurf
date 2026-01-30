@@ -18,6 +18,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         router.replace("/login");
         return;
       }
+      const { data: userData } = await supabase.auth.getUser();
+      if (!isMounted) return;
+      if (!userData.user?.email_confirmed_at) {
+        await supabase.auth.signOut();
+        router.replace("/login");
+        return;
+      }
       setReady(true);
     };
 

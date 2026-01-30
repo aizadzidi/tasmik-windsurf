@@ -5,6 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { supabase } from "@/lib/supabaseClient";
 import StudentTable, { type StudentData } from "@/components/admin/exam/StudentTable";
 import StudentDetailsPanel from "@/components/exam/StudentDetailsPanelShared";
+import { useRouter } from "next/navigation";
+import { useProgramScope } from "@/hooks/useProgramScope";
+import type { ProgramScope } from "@/types/programs";
 
 type Child = { id: string; name: string; class_id: string | null };
 type MetaExam = {
@@ -41,7 +44,7 @@ type ExamSummaryResponse = {
   students?: ExamStudentSummary[];
 };
 
-export default function ParentExamPage() {
+function ParentExamContent({ programScope }: { programScope: ProgramScope }) {
   const [children, setChildren] = React.useState<Child[]>([]);
   const [exams, setExams] = React.useState<MetaExam[]>([]);
   const [selectedExam, setSelectedExam] = React.useState("");
@@ -231,7 +234,7 @@ export default function ParentExamPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
-      <Navbar />
+      <Navbar programScope={programScope} />
       <div className="p-4 sm:p-6">
         <div className="max-w-6xl mx-auto">
           <Card>
@@ -271,4 +274,21 @@ export default function ParentExamPage() {
       />
     </div>
   );
+}
+
+export default function ParentExamPage() {
+  const router = useRouter();
+  const { programScope, loading: programScopeLoading } = useProgramScope({ role: "parent" });
+
+  React.useEffect(() => {
+    if (!programScopeLoading && programScope === "online") {
+      router.replace("/parent");
+    }
+  }, [programScope, programScopeLoading, router]);
+
+  if (programScopeLoading || programScope === "online") {
+    return null;
+  }
+
+  return <ParentExamContent programScope={programScope} />;
 }

@@ -17,7 +17,9 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { supabase } from "@/lib/supabaseClient";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
+import { useProgramScope } from "@/hooks/useProgramScope";
+import type { ProgramScope } from "@/types/programs";
 import {
   Calendar,
   Check,
@@ -142,7 +144,7 @@ const ProgressRing: React.FC<ProgressRingProps> = ({ progress, neutral = false }
 
 type TopicTrackingDensity = "default" | "compact";
 
-function TeacherLessonPageContent() {
+function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope }) {
   const searchParams = useSearchParams();
   const densityParam = searchParams?.get("density");
   const density: TopicTrackingDensity = densityParam === "compact" ? "compact" : "default";
@@ -965,7 +967,7 @@ function TeacherLessonPageContent() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar />
+      <Navbar programScope={programScope} />
       <Modal
         open={Boolean(remarkModalTarget)}
         title={remarkModalTarget?.subtopicTitle || "Remark"}
@@ -2064,9 +2066,22 @@ function TeacherLessonPageContent() {
 }
 
 export default function TeacherLessonPage() {
+  const router = useRouter();
+  const { programScope, loading: programScopeLoading } = useProgramScope({ role: "teacher" });
+
+  React.useEffect(() => {
+    if (!programScopeLoading && programScope === "online") {
+      router.replace("/teacher");
+    }
+  }, [programScope, programScopeLoading, router]);
+
+  if (programScopeLoading || programScope === "online") {
+    return null;
+  }
+
   return (
     <React.Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading lesson page…</div>}>
-      <TeacherLessonPageContent />
+      <TeacherLessonPageContent programScope={programScope} />
     </React.Suspense>
   );
 }

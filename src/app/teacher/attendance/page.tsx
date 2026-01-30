@@ -26,6 +26,9 @@ import { supabase } from "@/lib/supabaseClient";
 import { listAttendanceRecords, upsertAttendanceRecord } from "@/lib/attendanceApi";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
+import { useProgramScope } from "@/hooks/useProgramScope";
+import { useRouter } from "next/navigation";
+import type { ProgramScope } from "@/types/programs";
 
 const ANALYTICS_RANGE_OPTIONS = [
   { id: "today", label: "Today", days: 1 },
@@ -192,7 +195,7 @@ type StudentRosterRow = {
   parent_id: string | null;
 };
 
-export default function TeacherAttendancePage() {
+function TeacherAttendanceContent({ programScope }: { programScope: ProgramScope }) {
   // State
   const [classes, setClasses] = React.useState<ClassAttendance[]>([]);
   const [selectedClassId, setSelectedClassId] = React.useState("");
@@ -480,7 +483,7 @@ export default function TeacherAttendancePage() {
 
   return (
     <div className="min-h-screen bg-[#F2F2F7] selection:bg-indigo-100 selection:text-indigo-900 flex flex-col">
-      <Navbar />
+      <Navbar programScope={programScope} />
 
       <main className="flex-1 max-w-[1100px] w-full mx-auto px-4 sm:px-6 py-8 flex flex-col min-h-0">
         {/* Header Section */}
@@ -815,4 +818,21 @@ export default function TeacherAttendancePage() {
       </main>
     </div>
   );
+}
+
+export default function TeacherAttendancePage() {
+  const router = useRouter();
+  const { programScope, loading: programScopeLoading } = useProgramScope({ role: "teacher" });
+
+  React.useEffect(() => {
+    if (!programScopeLoading && programScope === "online") {
+      router.replace("/teacher");
+    }
+  }, [programScope, programScopeLoading, router]);
+
+  if (programScopeLoading || programScope === "online") {
+    return null;
+  }
+
+  return <TeacherAttendanceContent programScope={programScope} />;
 }

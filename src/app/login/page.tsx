@@ -13,6 +13,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
   const [isSignUp, setIsSignUp] = useState(false);
   const [name, setName] = useState("");
   const router = useRouter();
@@ -65,6 +66,7 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     setError("");
+    setInfo("");
     try {
       if (isSignUp) {
       // Sign up flow
@@ -94,6 +96,11 @@ export default function LoginPage() {
       const accessToken =
         data.session?.access_token ||
         (await supabase.auth.getSession()).data.session?.access_token;
+      if (!data.session) {
+        setInfo("Please check your email to verify your account before signing in.");
+        setLoading(false);
+        return;
+      }
       if (accessToken) {
         await ensureProfile(accessToken);
       }
@@ -105,7 +112,11 @@ export default function LoginPage() {
       const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
       console.log('signInWithPassword result:', { data, signInError });
       if (signInError) {
+        if (signInError.message.toLowerCase().includes("confirm") || signInError.message.toLowerCase().includes("verify")) {
+          setError("Email not verified. Please check your email and verify before signing in.");
+        } else {
         setError(signInError.message);
+        }
         setLoading(false);
         return;
       }
@@ -211,6 +222,11 @@ export default function LoginPage() {
                   required
                   className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all"
                 />
+              </div>
+            )}
+            {info && (
+              <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-sm text-blue-800">
+                {info}
               </div>
             )}
             <div>

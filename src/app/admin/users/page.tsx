@@ -13,16 +13,30 @@ type UserRow = {
   role: "admin" | "teacher" | "parent";
 };
 
+type ProgramRow = {
+  id: string;
+  name: string;
+  type: "campus" | "online" | "hybrid";
+};
+
+type AssignmentValue = "campus" | "online" | "both" | "unassigned";
+
 const ROLE_OPTIONS: UserRow["role"][] = ["admin", "teacher", "parent"];
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [programs, setPrograms] = useState<ProgramRow[]>([]);
+  const [assignmentsByTeacher, setAssignmentsByTeacher] = useState<Record<string, AssignmentValue>>({});
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [assignmentSavingId, setAssignmentSavingId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [assignmentError, setAssignmentError] = useState("");
   const [query, setQuery] = useState("");
   const updateControllers = useRef<Map<string, AbortController>>(new Map());
   const updateRequestIds = useRef<Map<string, number>>(new Map());
+  const assignmentControllers = useRef<Map<string, AbortController>>(new Map());
+  const assignmentRequestIds = useRef<Map<string, number>>(new Map());
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -52,9 +66,69 @@ export default function AdminUsersPage() {
     }
   }, []);
 
+  const fetchPrograms = useCallback(async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    setAssignmentError("");
+    try {
+      const res = await fetch("/api/admin/programs", { signal: controller.signal });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        throw new Error(payload?.error || "Failed to load programs");
+      }
+      const data = await res.json();
+      setPrograms(Array.isArray(data) ? data : []);
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
+      const message = err instanceof Error ? err.message : "Failed to load programs";
+      setAssignmentError(message);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }, []);
+
+  const fetchTeacherAssignments = useCallback(async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    setAssignmentError("");
+    try {
+      const res = await fetch("/api/admin/teacher-assignments", { signal: controller.signal });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        throw new Error(payload?.error || "Failed to load teacher assignments");
+      }
+      const data = await res.json();
+      const nextMap: Record<string, AssignmentValue> = {};
+      if (Array.isArray(data)) {
+        data.forEach((row) => {
+          const teacherId = row.teacher_id as string;
+          const types = Array.isArray(row.program_types) ? row.program_types : [];
+          if (types.includes("campus") && types.includes("online")) {
+            nextMap[teacherId] = "both";
+          } else if (types.includes("online")) {
+            nextMap[teacherId] = "online";
+          } else if (types.includes("campus")) {
+            nextMap[teacherId] = "campus";
+          } else {
+            nextMap[teacherId] = "unassigned";
+          }
+        });
+      }
+      setAssignmentsByTeacher(nextMap);
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
+      const message = err instanceof Error ? err.message : "Failed to load teacher assignments";
+      setAssignmentError(message);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }, []);
+
   useEffect(() => {
     fetchUsers();
-  }, [fetchUsers]);
+    fetchPrograms();
+    fetchTeacherAssignments();
+  }, [fetchPrograms, fetchTeacherAssignments, fetchUsers]);
 
   const filteredUsers = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -111,6 +185,60 @@ export default function AdminUsersPage() {
     }
   };
 
+  const updateTeacherAssignment = async (teacherId: string, value: AssignmentValue) => {
+    const existingController = assignmentControllers.current.get(teacherId);
+    if (existingController) {
+      existingController.abort();
+    }
+    const controller = new AbortController();
+    assignmentControllers.current.set(teacherId, controller);
+    const nextRequestId = (assignmentRequestIds.current.get(teacherId) ?? 0) + 1;
+    assignmentRequestIds.current.set(teacherId, nextRequestId);
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    setAssignmentSavingId(teacherId);
+    setAssignmentError("");
+
+    const programTypes =
+      value === "both"
+        ? ["campus", "online"]
+        : value === "campus"
+          ? ["campus"]
+          : value === "online"
+            ? ["online"]
+            : [];
+
+    try {
+      const res = await fetch("/api/admin/teacher-assignments", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ teacher_id: teacherId, program_types: programTypes }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        throw new Error(payload?.error || "Failed to update teacher assignment");
+      }
+      if (assignmentRequestIds.current.get(teacherId) !== nextRequestId) return;
+      setAssignmentsByTeacher((prev) => ({ ...prev, [teacherId]: value }));
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        if (assignmentRequestIds.current.get(teacherId) === nextRequestId) {
+          setAssignmentError("Request timed out");
+        }
+        return;
+      }
+      if (assignmentRequestIds.current.get(teacherId) !== nextRequestId) return;
+      const message = err instanceof Error ? err.message : "Failed to update teacher assignment";
+      setAssignmentError(message);
+    } finally {
+      clearTimeout(timeoutId);
+      if (assignmentRequestIds.current.get(teacherId) === nextRequestId) {
+        assignmentControllers.current.delete(teacherId);
+        setAssignmentSavingId(null);
+      }
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <AdminNavbar />
@@ -147,6 +275,11 @@ export default function AdminUsersPage() {
               {error}
             </div>
           ) : null}
+          {assignmentError ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              {assignmentError}
+            </div>
+          ) : null}
 
           <Card className="p-4">
             {loading ? (
@@ -169,7 +302,7 @@ export default function AdminUsersPage() {
                           {user.email || "No email"}
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex flex-wrap items-center gap-3">
                         <select
                           value={user.role}
                           onChange={(e) =>
@@ -187,6 +320,27 @@ export default function AdminUsersPage() {
                         </select>
                         {savingId === user.id ? (
                           <span className="text-xs text-slate-500">Saving…</span>
+                        ) : null}
+                        {user.role === "teacher" ? (
+                          <>
+                            <select
+                              value={assignmentsByTeacher[user.id] ?? "unassigned"}
+                              onChange={(e) =>
+                                updateTeacherAssignment(user.id, e.target.value as AssignmentValue)
+                              }
+                              aria-label={`Program assignment for ${user.name || user.email || "teacher"}`}
+                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
+                              disabled={assignmentSavingId === user.id || programs.length === 0}
+                            >
+                              <option value="unassigned">Unassigned</option>
+                              <option value="campus">Campus</option>
+                              <option value="online">Online</option>
+                              <option value="both">Campus + Online</option>
+                            </select>
+                            {assignmentSavingId === user.id ? (
+                              <span className="text-xs text-slate-500">Saving…</span>
+                            ) : null}
+                          </>
                         ) : null}
                       </div>
                     </div>

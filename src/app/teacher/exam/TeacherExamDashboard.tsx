@@ -12,6 +12,9 @@ import { fetchGradeSummary } from "@/lib/db/exams";
 import type { GradeSummaryRow } from "@/lib/db/exams";
 import StudentDetailsPanelTeacher from "@/components/teacher/StudentDetailsPanelTeacher";
 import type { StudentData } from "@/components/admin/exam/StudentTable";
+import { useProgramScope } from "@/hooks/useProgramScope";
+import { useRouter } from "next/navigation";
+import type { ProgramScope } from "@/types/programs";
 
 // Dynamic conduct criteria from database
 interface ConductCriteria {
@@ -75,7 +78,7 @@ type StudentRow = {
   optedOut?: boolean;
 };
 
-export default function TeacherExamDashboard() {
+function TeacherExamDashboardContent({ programScope }: { programScope: ProgramScope }) {
   const [userId, setUserId] = React.useState<string>("");
   const [classes, setClasses] = React.useState<ClassItem[]>([]);
   const [subjects, setSubjects] = React.useState<SubjectItem[]>([]);
@@ -1313,7 +1316,7 @@ export default function TeacherExamDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <Navbar />
+      <Navbar programScope={programScope} />
       <main className="px-4 py-8 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-6xl">
           <header className="mb-8">
@@ -1903,6 +1906,23 @@ export default function TeacherExamDashboard() {
       />
     </div>
   );
+}
+
+export default function TeacherExamDashboard() {
+  const router = useRouter();
+  const { programScope, loading: programScopeLoading } = useProgramScope({ role: "teacher" });
+
+  React.useEffect(() => {
+    if (!programScopeLoading && programScope === "online") {
+      router.replace("/teacher");
+    }
+  }, [programScope, programScopeLoading, router]);
+
+  if (programScopeLoading || programScope === "online") {
+    return null;
+  }
+
+  return <TeacherExamDashboardContent programScope={programScope} />;
 }
 type StudentRosterItem = { id: string; name: string; class_id: string | null };
 type StudentRowWithIndex = StudentRow & { _idx: number };

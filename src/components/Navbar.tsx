@@ -4,10 +4,16 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import SignOutButton from "@/components/SignOutButton";
+import type { ProgramScope } from "@/types/programs";
 
-export default function Navbar() {
+type NavbarProps = {
+  programScope?: ProgramScope | null;
+};
+
+export default function Navbar({ programScope }: NavbarProps) {
   const pathname = usePathname();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const isOnlineOnly = programScope === "online";
 
   // Determine the user role and dashboard info based on current path
   const isParent = pathname.startsWith('/parent');
@@ -33,15 +39,19 @@ export default function Navbar() {
               </svg>
             )
           },
-          {
-            href: "/parent/exam",
-            label: "Exam Results",
-            icon: (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            )
-          },
+          ...(!isOnlineOnly
+            ? [
+                {
+                  href: "/parent/exam",
+                  label: "Exam Results",
+                  icon: (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  )
+                },
+              ]
+            : []),
           {
             href: "/parent/payments",
             label: "Payments",
@@ -68,37 +78,42 @@ export default function Navbar() {
               </svg>
             )
           },
-          {
-            href: "/teacher/attendance",
-            label: "Attendance",
-            icon: (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" strokeWidth={2} />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 2v4M8 2v4M3 10h18" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 16l2 2 4-5" />
-              </svg>
-            )
-          },
-          {
-            href: "/teacher/lesson",
-            label: "Lessons",
-            icon: (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5h11a2 2 0 012 2v12H7a2 2 0 01-2-2V5z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 3h9a2 2 0 012 2v14" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9h6M9 13h4" />
-              </svg>
-            )
-          },
-          { 
-            href: "/teacher/exam", 
-            label: "Exams", 
-            icon: (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            )
-          }
+          ...(!isOnlineOnly
+            ? [
+                {
+                  href: "/teacher/attendance",
+                  label: "Attendance",
+                  icon: (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" strokeWidth={2} />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 2v4M8 2v4M3 10h18" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 16l2 2 4-5" />
+                    </svg>
+                  )
+                },
+                {
+                  href: "/teacher/lesson",
+                  label: "Lessons",
+                  icon: (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5h11a2 2 0 012 2v12H7a2 2 0 01-2-2V5z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 3h9a2 2 0 012 2v14" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9h6M9 13h4" />
+                    </svg>
+                  )
+                },
+                {
+                  href: "/teacher/exam",
+                  label: "Exams",
+                  icon: (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  )
+                },
+              ]
+            : []),
+          
         ]
       };
     } else if (isAdmin) {

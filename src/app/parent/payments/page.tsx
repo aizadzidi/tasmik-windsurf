@@ -27,6 +27,7 @@ import type { PaymentCartItem } from "@/types/payments";
 import { Input } from "@/components/ui/Input";
 import { Card, CardContent } from "@/components/ui/Card";
 import { CheckCircle2 } from "lucide-react";
+import { useProgramScope } from "@/hooks/useProgramScope";
 
 interface RawAssignment extends ChildFeeAssignment {
   fee?: FeeCatalogItem;
@@ -121,6 +122,7 @@ function getCustomAmountForParent(
 }
 
 export default function ParentPaymentsPage() {
+  const { programScope } = useProgramScope({ role: "parent" });
   const [loading, setLoading] = useState(true);
   const [parentId, setParentId] = useState<string | null>(null);
   const [parentProfile, setParentProfile] = useState<ParentProfile>({});
@@ -676,7 +678,7 @@ export default function ParentPaymentsPage() {
 
   return (
     <>
-      <Navbar />
+      <Navbar programScope={programScope} />
       <main className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
         <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
           <div className="space-y-6 lg:space-y-8">

@@ -33,6 +33,7 @@ import {
   summarizeReportsByWeek,
   type WeeklyReportSummary
 } from "@/lib/parentReportUtils";
+import { useProgramScope } from "@/hooks/useProgramScope";
 
 
 type ViewMode = 'tasmik' | 'murajaah' | 'juz_tests';
@@ -44,6 +45,7 @@ export default function ParentPage() {
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const { programScope } = useProgramScope({ role: "parent", userId: parentId });
   
   // View and filter state
   const [viewMode, setViewMode] = useState<ViewMode>('tasmik');
@@ -581,7 +583,7 @@ export default function ParentPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
-      <Navbar />
+      <Navbar programScope={programScope} />
       <div className="relative p-4 sm:p-6">
         <div className="max-w-7xl mx-auto">
           {/* Header */}
