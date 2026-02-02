@@ -11,6 +11,7 @@ type TestSessionRow = {
   status: string | null;
   juz_number?: number | string | null;
   notes?: string | null;
+  tenant_id?: string | null;
   students?: {
     name?: string | null;
     users?: {
@@ -45,12 +46,14 @@ function isWeekend(dateStr: string) {
 async function pickFirstAvailableSlot(
   client: SupabaseClient,
   dateStr: string,
+  tenantId: string,
   excludeSessionId?: string
 ) {
   const { data: existing, error } = await client
     .from('test_sessions')
     .select('id, slot_number')
     .eq('scheduled_date', dateStr)
+    .eq('tenant_id', tenantId)
     .neq('status', 'cancelled');
   if (error) throw error;
   const used = new Set<number>();
@@ -217,6 +220,17 @@ if (!student_id || !scheduled_date) {
     }
 
     const data = await adminOperationSimple(async (client) => {
+      const { data: studentRow, error: studentErr } = await client
+        .from('students')
+        .select('tenant_id')
+        .eq('id', student_id)
+        .single();
+      if (studentErr) throw studentErr;
+      const tenantId = (studentRow as { tenant_id?: string | null } | null)?.tenant_id;
+      if (!tenantId) {
+        throw new Error('Student tenant not found.');
+      }
+
 // Block weekends
       if (isWeekend(scheduled_date)) {
         throw new Error('Scheduling is only allowed Monday–Friday.');
@@ -236,7 +250,7 @@ if (!student_id || !scheduled_date) {
 // Auto-pick earliest available slot if none provided
       let finalSlot = slot_number;
       if (!finalSlot) {
-        const picked = await pickFirstAvailableSlot(client, scheduled_date);
+        const picked = await pickFirstAvailableSlot(client, scheduled_date, tenantId);
         if (!picked) {
           throw new Error('Selected day is full. Please choose another day.');
         }
@@ -245,7 +259,15 @@ if (!student_id || !scheduled_date) {
 
       const { data, error } = await client
         .from('test_sessions')
-        .insert([{ student_id, scheduled_date, slot_number: finalSlot, juz_number, notes, scheduled_by: requested_by }])
+        .insert([{
+          student_id,
+          scheduled_date,
+          slot_number: finalSlot,
+          juz_number,
+          notes,
+          scheduled_by: requested_by,
+          tenant_id: tenantId
+        }])
         .select();
       if (error) {
         if (getPostgrestCode(error) === '23505') {
@@ -288,11 +310,11 @@ export async function PATCH(request: NextRequest) {
 // Fetch current session
       const { data: current, error: currentErr } = await client
         .from('test_sessions')
-        .select('id, scheduled_date, slot_number')
+        .select('id, scheduled_date, slot_number, tenant_id')
         .eq('id', id)
         .single();
       if (currentErr) throw currentErr;
-      const currentSession = current as BasicSessionRow | null;
+      const currentSession = current as (BasicSessionRow & { tenant_id?: string | null }) | null;
 
       // Weekend guard on date change
       const nextDate = allowed.scheduled_date || currentSession?.scheduled_date;
@@ -302,7 +324,11 @@ export async function PATCH(request: NextRequest) {
 
       // If changing date and slot not provided, pick first available
       if (!allowed.slot_number && allowed.scheduled_date && allowed.scheduled_date !== currentSession?.scheduled_date) {
-        const picked = await pickFirstAvailableSlot(client, allowed.scheduled_date, id as string);
+        const tenantId = currentSession?.tenant_id;
+        if (!tenantId) {
+          throw new Error('Session tenant not found.');
+        }
+        const picked = await pickFirstAvailableSlot(client, allowed.scheduled_date, tenantId, id as string);
         if (!picked) throw new Error('Selected day is full. Please choose another day.');
         allowed.slot_number = picked;
       }
