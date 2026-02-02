@@ -45,6 +45,8 @@ type SubtopicProgress = {
   remark: string | null;
 };
 
+type TopicType = "new" | "revision";
+
 type TopicWithProgress = {
   id: string;
   class_id: string;
@@ -52,6 +54,7 @@ type TopicWithProgress = {
   title: string;
   subtopics: string[];
   order_index: number;
+  topic_type: TopicType;
   subTopicProgress: SubtopicProgress[];
 };
 
@@ -62,6 +65,7 @@ type EditorState = {
   title: string;
   subtopics: string[];
   orderIndex: number;
+  topicType: TopicType;
 };
 
 const toDateInput = (date: string | null) => {
@@ -153,6 +157,8 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
   const [subjects, setSubjects] = React.useState<SubjectItem[]>([]);
   const [activeTab, setActiveTab] = React.useState<"tracker" | "manage">("tracker");
   const [academicYear, setAcademicYear] = React.useState<number>(() => new Date().getFullYear());
+  const [trackerMode, setTrackerMode] = React.useState<TopicType>("new");
+  const [manageTopicFilter, setManageTopicFilter] = React.useState<"all" | TopicType>("all");
   const yearOptions = React.useMemo(() => {
     const now = new Date().getFullYear();
     const start = now - 2;
@@ -212,6 +218,7 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
     title: "",
     subtopics: [],
     orderIndex: 0,
+    topicType: "new",
   });
   const [savingEditor, setSavingEditor] = React.useState(false);
 
@@ -219,11 +226,40 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
   const leafPadding = density === "compact" ? "px-3.5 py-2" : "px-4 py-[9px]";
   const pillPadding = density === "compact" ? "px-3 py-2" : "px-3.5 py-2.5";
 
+  const filteredTrackerTopics = React.useMemo(
+    () => trackerTopics.filter((topic) => (topic.topic_type ?? "new") === trackerMode),
+    [trackerMode, trackerTopics]
+  );
+
+  const filteredManageTopics = React.useMemo(() => {
+    if (manageTopicFilter === "all") return manageTopics;
+    return manageTopics.filter((topic) => (topic.topic_type ?? "new") === manageTopicFilter);
+  }, [manageTopicFilter, manageTopics]);
+
+  const actionVerb = trackerMode === "revision" ? "revised" : "taught";
+  const progressLabel = trackerMode === "revision" ? "Revision progress" : "Teaching progress";
+  const actionLabel = trackerMode === "revision" ? "Mark revised" : "Mark taught";
+  const dateLabel = trackerMode === "revision" ? "Revised date" : "Taught date";
+  const trackerEmptyMessage =
+    trackerTopics.length === 0
+      ? "No topics yet for this class and subject."
+      : trackerMode === "revision"
+        ? "No revision topics yet for this class and subject."
+        : "No new lesson topics yet for this class and subject.";
+  const manageEmptyMessage =
+    manageTopics.length === 0
+      ? "No topics for this class and subject yet."
+      : manageTopicFilter === "revision"
+        ? "No revision topics yet for this class and subject."
+        : manageTopicFilter === "new"
+          ? "No new topics yet for this class and subject."
+          : "No topics match this filter.";
+
   const { totalSubtopics, completedSubtopics } = React.useMemo(() => {
     let total = 0;
     let done = 0;
 
-    for (const topic of trackerTopics) {
+    for (const topic of filteredTrackerTopics) {
       const subs = topic.subtopics ?? [];
       const expected = subs.length > 0 ? subs.length : 1;
       total += expected;
@@ -240,7 +276,7 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
     }
 
     return { totalSubtopics: total, completedSubtopics: done };
-  }, [trackerTopics]);
+  }, [filteredTrackerTopics]);
 
   const progressPercent = totalSubtopics
     ? Math.round((completedSubtopics / totalSubtopics) * 100)
@@ -329,6 +365,7 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
     title: string;
     sub_topics: string[] | null;
     order_index: number | null;
+    topic_type: string | null;
   };
 
   type LessonSubtopicProgressRow = {
@@ -371,6 +408,7 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
         title: topic.title,
         subtopics: Array.isArray(topic.sub_topics) ? topic.sub_topics.filter(Boolean).map(String) : [],
         order_index: topic.order_index ?? 0,
+        topic_type: (topic.topic_type === "revision" ? "revision" : "new") as TopicType,
         subTopicProgress: subtopicProgressMap.get(String(topic.id)) ?? [],
       }));
     },
@@ -394,7 +432,7 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
       try {
         const { data: topicRows, error: topicError } = await supabase
           .from("lesson_topics")
-          .select("id, class_id, subject_id, title, sub_topics, order_index")
+          .select("id, class_id, subject_id, title, sub_topics, order_index, topic_type")
           .eq("class_id", classId)
           .eq("subject_id", subjectId)
           .order("order_index", { ascending: true })
@@ -571,8 +609,8 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
   }, [academicYear, trackerClassId, trackerSubjectId]);
 
   React.useEffect(() => {
-    setOpenTopicIds(new Set(trackerTopics.map((topic) => topic.id)));
-  }, [trackerTopics]);
+    setOpenTopicIds(new Set(filteredTrackerTopics.map((topic) => topic.id)));
+  }, [filteredTrackerTopics]);
 
   React.useEffect(() => {
     fetchTopics({ classId: manageClassId, subjectId: manageSubjectId, target: "manage" });
@@ -873,14 +911,17 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
         title: topic.title,
         subtopics: topic.subtopics ?? [],
         orderIndex: topic.order_index ?? 0,
+        topicType: topic.topic_type ?? "new",
       });
     } else {
+      const defaultType = manageTopicFilter === "all" ? "new" : manageTopicFilter;
       setEditorState({
         classId: manageClassId || trackerClassId,
         subjectId: manageSubjectId || trackerSubjectId,
         title: "",
         subtopics: [],
         orderIndex: 0,
+        topicType: defaultType,
       });
     }
     setEditorOpen(true);
@@ -902,6 +943,7 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
         title: editorState.title.trim(),
         sub_topics: subtopics.length ? subtopics : null,
         order_index: Number(editorState.orderIndex) || 0,
+        topic_type: editorState.topicType,
         created_by: userId,
       };
       if (editorMode === "edit" && editorState.id) {
@@ -928,7 +970,7 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
 
   const handleDeleteTopic = async (topicId: string) => {
     if (!topicId) return;
-    const confirmed = window.confirm("Delete this topic? This removes its taught status too.");
+    const confirmed = window.confirm("Delete this topic? This removes its progress history too.");
     if (!confirmed) return;
     setSavingTopicId(topicId);
     setInlineError(null);
@@ -963,6 +1005,21 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
       }
       return next;
     });
+  };
+
+  const renderTopicTypeBadge = (topicType: TopicType) => {
+    const isRevision = topicType === "revision";
+    return (
+      <span
+        className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${
+          isRevision
+            ? "border-amber-200 bg-amber-50 text-amber-700"
+            : "border-emerald-200 bg-emerald-50 text-emerald-700"
+        }`}
+      >
+        {isRevision ? "Revision" : "New"}
+      </span>
+    );
   };
 
   return (
@@ -1002,7 +1059,7 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
         <div className="space-y-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-xs font-semibold uppercase tracking-[0.14em] text-gray-400 dark:text-slate-500">
-              Taught date
+              {dateLabel}
             </div>
             <div className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm text-gray-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50">
               <Calendar className="h-4 w-4 text-gray-500 dark:text-slate-400" />
@@ -1213,11 +1270,11 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
               <div className="border-t border-gray-100 pt-6">
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">Teaching progress</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">{progressLabel}</p>
                     <p className="text-xl font-semibold text-gray-900">{progressPercent}%</p>
                   </div>
                   <p className="text-sm text-gray-700">
-                    {completedSubtopics} / {totalSubtopics || 0} subtopics taught
+                    {completedSubtopics} / {totalSubtopics || 0} subtopics {actionVerb}
                   </p>
                   <p className="text-sm text-gray-500">
                     {trackerClassName} · {trackerSubjectName} · {academicYear}
@@ -1234,13 +1291,39 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
 
             <Card className={`${trackingCardClass} p-8`}>
               <CardHeader className="mb-2 px-0">
-                <div className="flex flex-col gap-1">
-                  <CardTitle className="text-sm font-semibold text-gray-900 leading-tight dark:text-slate-50">
-                    Topic Tracking
-                  </CardTitle>
-                  <p className="text-xs text-gray-500 dark:text-slate-400">
-                    Tap the checkbox to mark taught; remark required and date fills automatically.
-                  </p>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <CardTitle className="text-sm font-semibold text-gray-900 leading-tight dark:text-slate-50">
+                        Topic Tracking
+                      </CardTitle>
+                      {renderTopicTypeBadge(trackerMode)}
+                    </div>
+                  </div>
+                  <div className="inline-flex items-center rounded-full border border-gray-200 bg-white p-1 shadow-sm">
+                    <button
+                      type="button"
+                      onClick={() => setTrackerMode("new")}
+                      className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                        trackerMode === "new"
+                          ? "bg-gray-900 text-white shadow"
+                          : "text-gray-600 hover:text-gray-900"
+                      }`}
+                    >
+                      New Lesson
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTrackerMode("revision")}
+                      className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                        trackerMode === "revision"
+                          ? "bg-gray-900 text-white shadow"
+                          : "text-gray-600 hover:text-gray-900"
+                      }`}
+                    >
+                      Revision
+                    </button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="px-0">
@@ -1249,12 +1332,12 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Loading topics…
                   </div>
-                ) : trackerTopics.length === 0 ? (
+                ) : filteredTrackerTopics.length === 0 ? (
                   <div className="flex flex-col items-center justify-center gap-3 rounded-xl bg-gray-50 px-4 py-10 text-center dark:bg-slate-800">
                     <div className="rounded-full bg-gray-100 p-3 text-gray-400 dark:bg-slate-700 dark:text-slate-300">
                       <List className="h-6 w-6" />
                     </div>
-                    <div className="text-sm text-gray-600 dark:text-slate-300">No topics yet for this class and subject.</div>
+                    <div className="text-sm text-gray-600 dark:text-slate-300">{trackerEmptyMessage}</div>
                     <button
                       className="text-sm font-semibold text-gray-900 underline-offset-4 hover:underline dark:text-slate-100"
                       onClick={() => setActiveTab("manage")}
@@ -1264,7 +1347,7 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
                   </div>
                 ) : (
                   <div className="mt-5 space-y-4">
-                    {trackerTopics.map((topic) => {
+                    {filteredTrackerTopics.map((topic) => {
                       const isSaving = savingTopicId === topic.id;
                       const subtopics = topic.subtopics ?? [];
                       const isLeafTopic = subtopics.length === 0;
@@ -1320,9 +1403,10 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
 	                                  }}
 	                                />
 		                                <div className="min-w-0 flex-1">
-		                                  <div className="flex items-start justify-between gap-2">
-		                                    <span className="text-sm font-medium text-gray-900 dark:text-slate-50">{topic.title}</span>
-		                                  </div>
+                                  <div className="flex items-start justify-between gap-2">
+                                    <span className="text-sm font-medium text-gray-900 dark:text-slate-50">{topic.title}</span>
+                                    {renderTopicTypeBadge(topic.topic_type)}
+                                  </div>
 		                                  {!leafRemarkExpanded && leafExistingRemark.trim() ? (
 		                                    <div className="mt-1 flex items-center gap-1 text-xs leading-5 text-gray-500 dark:text-slate-400">
 		                                      <span className="min-w-0 line-clamp-2">“{leafExistingRemark}”</span>
@@ -1394,7 +1478,7 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
 	                                              if (!remark) {
 	                                                setRemarkErrors((prev) => ({
 	                                                  ...prev,
-	                                                  [leafKey]: "Remark is required to mark this subtopic as taught.",
+                                                  [leafKey]: `Remark is required to mark this subtopic as ${actionVerb}.`,
 	                                                }));
 	                                                return;
 	                                              }
@@ -1407,7 +1491,7 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
 	                                              void markSubtopicTaughtWithRemark(topic, 0, remark);
 	                                            }}
 	                                          >
-	                                            Mark taught
+                                            {actionLabel}
 	                                          </Button>
 	                                        )}
 	                                      </div>
@@ -1457,7 +1541,10 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
                             <div className="flex items-center gap-3 text-left">
                               <ProgressRing progress={progress} neutral={totalCount === 0} />
                               <div className="flex flex-col">
-                                <span className="text-sm font-medium text-gray-900 dark:text-slate-50">{topic.title}</span>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-medium text-gray-900 dark:text-slate-50">{topic.title}</span>
+                                  {renderTopicTypeBadge(topic.topic_type)}
+                                </div>
                                 {totalCount ? (
                                   <span className="text-[11px] text-gray-500 dark:text-slate-400">
                                     {totalCount} subtopic{totalCount > 1 ? "s" : ""}
@@ -1619,7 +1706,7 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
 	                                                          if (!remark) {
 	                                                            setRemarkErrors((prev) => ({
 	                                                              ...prev,
-	                                                              [remarkKey]: "Remark is required to mark this subtopic as taught.",
+                                                              [remarkKey]: `Remark is required to mark this subtopic as ${actionVerb}.`,
 	                                                            }));
 	                                                            return;
 	                                                          }
@@ -1632,7 +1719,7 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
 	                                                          void markSubtopicTaughtWithRemark(topic, index, remark);
 	                                                        }}
 	                                                      >
-	                                                        Mark taught
+                                                        {actionLabel}
 	                                                      </Button>
 	                                                    )}
 	                                                  </div>
@@ -1835,6 +1922,29 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
               <CardHeader className="mb-2 px-0">
                 <CardTitle className="text-sm font-semibold text-gray-900">Topic List</CardTitle>
                 <p className="mt-1 text-xs text-gray-500">Edit titles or remove topics with subtle controls.</p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {[
+                    { value: "all", label: "All" },
+                    { value: "new", label: "New topic" },
+                    { value: "revision", label: "Revision topic" },
+                  ].map((option) => {
+                    const active = manageTopicFilter === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setManageTopicFilter(option.value as "all" | TopicType)}
+                        className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                          active
+                            ? "border-gray-900 bg-gray-900 text-white"
+                            : "border-gray-200 text-gray-600 hover:border-gray-300 hover:text-gray-900"
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </CardHeader>
               <CardContent className="px-0">
                 {loadingManageTopics ? (
@@ -1842,16 +1952,19 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Loading topics…
                   </div>
-                ) : manageTopics.length === 0 ? (
+                ) : filteredManageTopics.length === 0 ? (
                   <div className="rounded-xl bg-gray-50 px-4 py-8 text-center text-sm text-gray-600">
-                    No topics for this class and subject yet.
+                    {manageEmptyMessage}
                   </div>
                 ) : (
                   <div className="divide-y divide-gray-100">
-	                    {manageTopics.map((topic) => (
+	                    {filteredManageTopics.map((topic) => (
 	                      <div key={topic.id} className="flex items-center justify-between gap-3 px-2 py-3">
 	                        <div>
-	                          <div className="text-sm font-semibold text-gray-900">{topic.title}</div>
+	                          <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+                              {topic.title}
+                              {renderTopicTypeBadge(topic.topic_type)}
+                            </div>
 	                          {topic.subtopics?.length ? (
 	                            <div className="text-[11px] text-gray-500 line-clamp-2">
 	                              Subtopics: {topic.subtopics.join(", ")}
@@ -1954,6 +2067,38 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
                     />
                   </div>
 	                </div>
+                <div className="mt-4 flex flex-col gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                    Topic type
+                  </span>
+                  <div className="inline-flex w-fit items-center rounded-full border border-gray-200 bg-gray-50 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setEditorState((prev) => ({ ...prev, topicType: "new" }))}
+                      className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                        editorState.topicType === "new"
+                          ? "bg-gray-900 text-white shadow"
+                          : "text-gray-600 hover:text-gray-900"
+                      }`}
+                    >
+                      New topic
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditorState((prev) => ({ ...prev, topicType: "revision" }))}
+                      className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                        editorState.topicType === "revision"
+                          ? "bg-gray-900 text-white shadow"
+                          : "text-gray-600 hover:text-gray-900"
+                      }`}
+                    >
+                      Revision topic
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    Use revision for recap, reinforcement, or assessment-aligned practice.
+                  </p>
+                </div>
 	                <div className="mt-4 grid grid-cols-1 gap-4">
 	                  <div className="flex flex-col gap-2">
 	                    <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
