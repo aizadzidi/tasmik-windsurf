@@ -50,6 +50,11 @@ const toLocalDateKey = (date: Date) => {
 
 const todayIso = () => toLocalDateKey(new Date());
 
+const normalizeAttendanceDate = (value: string) => {
+  const raw = String(value);
+  return raw.length >= 10 ? raw.slice(0, 10) : raw;
+};
+
 // --- UI Components ---
 
 function SegmentedControl({
@@ -227,19 +232,19 @@ function TeacherAttendanceContent({ programScope }: { programScope: ProgramScope
   );
 
   const analyticsDateRange = React.useMemo(() => {
-    const end = new Date();
+    const end = new Date(`${selectedDate}T00:00:00`);
     const start = new Date(end);
     start.setDate(start.getDate() - (currentRangeMeta.days - 1));
     return {
       start: toLocalDateKey(start),
       end: toLocalDateKey(end),
     };
-  }, [currentRangeMeta]);
+  }, [currentRangeMeta, selectedDate]);
 
   const attendanceLookbackStart = React.useMemo(() => {
     const end = new Date();
     const start = new Date(end);
-    start.setDate(start.getDate() - 60); // Optimize: fetch less initially
+    start.setDate(start.getDate() - 365);
     return toLocalDateKey(start);
   }, []);
 
@@ -324,11 +329,12 @@ function TeacherAttendanceContent({ programScope }: { programScope: ProgramScope
         const grouped = new Map<string, { classId: string; date: string; statuses: Record<string, AttendanceStatus>; submitted: boolean }>();
 
         historyRes.records.forEach(rec => {
-          const key = `${rec.class_id}_${rec.attendance_date}`;
+          const dateKey = normalizeAttendanceDate(String(rec.attendance_date));
+          const key = `${rec.class_id}_${dateKey}`;
           if (!grouped.has(key)) {
             grouped.set(key, {
               classId: String(rec.class_id),
-              date: String(rec.attendance_date),
+              date: dateKey,
               statuses: {},
               submitted: true
             });
@@ -727,7 +733,13 @@ function TeacherAttendanceContent({ programScope }: { programScope: ProgramScope
                 </div>
                 <div className="h-[400px]">
                   <ClassAttendanceBarChart
-                    data={getClassAnalyticsForRange(attendanceState, classes, analyticsDateRange.start, analyticsDateRange.end)}
+                    data={getClassAnalyticsForRange(
+                      attendanceState,
+                      classes,
+                      analyticsDateRange.start,
+                      analyticsDateRange.end,
+                      { includeUnsubmitted: true }
+                    )}
                   />
                 </div>
               </div>

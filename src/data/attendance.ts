@@ -265,7 +265,8 @@ export const getClassAnalyticsForRange = (
   state: AttendanceRecord,
   classes: ClassAttendance[],
   startDate: string,
-  endDate: string
+  endDate: string,
+  options: { includeUnsubmitted?: boolean } = {}
 ) => {
   const dayList: string[] = [];
   const cursor = new Date(`${startDate}T00:00:00`);
@@ -289,15 +290,23 @@ export const getClassAnalyticsForRange = (
     }
   }
 
+  const includeUnsubmitted = Boolean(options.includeUnsubmitted);
+
   return classes.map((classItem) => {
     let present = 0;
     let total = 0;
     let submittedDays = 0;
+    const classState = state[classItem.id] ?? {};
     dayList.forEach((date) => {
-      const stats = calculateClassDailyStats(state, classItem.id, classItem.students, date);
-      if (!stats.submitted) return;
-      present += stats.present;
-      total += stats.total;
+      const entry = classState[date];
+      if (!entry) return;
+      if (!includeUnsubmitted && !entry.submitted) return;
+      const statuses = entry.statuses ?? {};
+      const presentCount = classItem.students.filter(
+        (student) => statuses[student.id] !== "absent"
+      ).length;
+      present += presentCount;
+      total += classItem.students.length;
       submittedDays += 1;
     });
     const percent = total ? Math.round((present / total) * 100) : 0;

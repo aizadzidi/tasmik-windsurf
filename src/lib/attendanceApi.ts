@@ -22,20 +22,36 @@ export async function listAttendanceRecords(params: {
     return { records: [] };
   }
 
-  const { data, error } = await supabase
-    .from("attendance_records")
-    .select("id, class_id, attendance_date, student_id, status, recorded_by, notes, created_at, updated_at")
-    .in("class_id", params.classIds)
-    .gte("attendance_date", params.startDate)
-    .lte("attendance_date", params.endDate)
-    .order("attendance_date", { ascending: true })
-    .order("student_id", { ascending: true });
+  const pageSize = 1000;
+  let from = 0;
+  const allRecords: AttendanceRecordRow[] = [];
 
-  if (error) {
-    return { records: [], error: error.message };
+  while (true) {
+    const { data, error } = await supabase
+      .from("attendance_records")
+      .select("id, class_id, attendance_date, student_id, status, recorded_by, notes, created_at, updated_at")
+      .in("class_id", params.classIds)
+      .gte("attendance_date", params.startDate)
+      .lte("attendance_date", params.endDate)
+      .order("attendance_date", { ascending: true })
+      .order("student_id", { ascending: true })
+      .range(from, from + pageSize - 1);
+
+    if (error) {
+      return { records: [], error: error.message };
+    }
+
+    if (data && data.length > 0) {
+      allRecords.push(...(data as AttendanceRecordRow[]));
+    }
+
+    if (!data || data.length < pageSize) {
+      break;
+    }
+    from += pageSize;
   }
 
-  return { records: (data ?? []) as AttendanceRecordRow[] };
+  return { records: allRecords };
 }
 
 export async function upsertAttendanceRecord(params: {
@@ -52,13 +68,9 @@ export async function upsertAttendanceRecord(params: {
     recorded_by: params.recordedBy,
   }));
 
-  // Avoid relying on unknown unique constraints; replace all rows for the class/date.
-  const deleteRes = await deleteAttendanceRecord({ classId: params.classId, date: params.date });
-  if (deleteRes.error) {
-    return { ok: false, error: deleteRes.error };
-  }
-
-  const { error } = await supabase.from("attendance_records").insert(rows);
+  const { error } = await supabase
+    .from("attendance_records")
+    .upsert(rows, { onConflict: "attendance_date,student_id" });
 
   if (error) {
     return { ok: false, error: error.message };

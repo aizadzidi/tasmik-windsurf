@@ -14,8 +14,9 @@ import {
   calculateStudentSummaries,
   getClassAnalyticsForRange,
 } from "@/data/attendance";
+import { listAttendanceRecords } from "@/lib/attendanceApi";
 import { deleteHoliday, listHolidays, upsertHoliday } from "@/lib/holidaysApi";
-import type { AttendanceRecord, ClassAttendance, SchoolHoliday } from "@/types/attendance";
+import type { AttendanceRecord, AttendanceStatus, ClassAttendance, SchoolHoliday } from "@/types/attendance";
 import { supabase } from "@/lib/supabaseClient";
 
 type FormState = {
@@ -67,6 +68,11 @@ const toLocalDateKey = (date: Date) => {
 };
 
 const todayIso = () => toLocalDateKey(new Date());
+
+const normalizeAttendanceDate = (value: string) => {
+  const raw = String(value);
+  return raw.length >= 10 ? raw.slice(0, 10) : raw;
+};
 
 const humanDate = (value: string) =>
   value
@@ -134,6 +140,13 @@ export default function AdminAttendancePage() {
     start.setDate(start.getDate() - (summaryRangeMeta.days - 1));
     return toLocalDateKey(start);
   }, [summaryRangeMeta]);
+
+  const attendanceLookbackStart = React.useMemo(() => {
+    const end = new Date();
+    const start = new Date(end);
+    start.setDate(start.getDate() - 365);
+    return toLocalDateKey(start);
+  }, []);
 
   const fetchStudentRoster = React.useCallback(async () => {
     const pageSize = 1000;
@@ -204,7 +217,52 @@ export default function AdminAttendancePage() {
         .sort((a, b) => a.name.localeCompare(b.name));
 
       setClasses(roster);
-      setAttendanceState(buildInitialAttendanceState(roster));
+
+      const historyRes = await listAttendanceRecords({
+        classIds: roster.map((c) => c.id),
+        startDate: attendanceLookbackStart,
+        endDate: todayIso(),
+      });
+
+      if (historyRes.error) {
+        setAttendanceState(buildInitialAttendanceState(roster));
+        setFetchError("Unable to load attendance history. Please try again.");
+        return;
+      }
+
+      const newState: AttendanceRecord = {};
+      const grouped = new Map<
+        string,
+        { classId: string; date: string; statuses: Record<string, AttendanceStatus>; submitted: boolean }
+      >();
+
+      historyRes.records.forEach((rec) => {
+        const dateKey = normalizeAttendanceDate(String(rec.attendance_date));
+        const key = `${rec.class_id}_${dateKey}`;
+        if (!grouped.has(key)) {
+          grouped.set(key, {
+            classId: String(rec.class_id),
+            date: dateKey,
+            statuses: {},
+            submitted: true,
+          });
+        }
+        const group = grouped.get(key);
+        if (group) {
+          group.statuses[String(rec.student_id)] = rec.status || "present";
+        }
+      });
+
+      grouped.forEach((g) => {
+        newState[g.classId] = newState[g.classId] || {};
+        newState[g.classId][g.date] = {
+          statuses: g.statuses,
+          submitted: true,
+          note: "",
+        };
+      });
+
+      setAttendanceState(Object.keys(newState).length ? newState : buildInitialAttendanceState(roster));
     } catch (error) {
       console.error("Failed to load class roster", error);
       setClasses([]);
@@ -213,7 +271,7 @@ export default function AdminAttendancePage() {
     } finally {
       setLoadingClasses(false);
     }
-  }, [fetchStudentRoster]);
+  }, [fetchStudentRoster, attendanceLookbackStart]);
 
   const fetchHolidays = React.useCallback(async () => {
     setLoadingHolidays(true);
