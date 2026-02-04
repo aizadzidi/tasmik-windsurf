@@ -88,7 +88,26 @@ export async function POST(request: NextRequest) {
       parent_contact_number,
       parent_occupation,
       household_income,
-      interviewer_remark
+      interviewer_remark,
+      student_id_no,
+      date_of_birth,
+      birth_place,
+      gender,
+      religion,
+      admission_date,
+      leaving_date,
+      admission_age,
+      leaving_age,
+      reason_leaving,
+      conduct_record,
+      attendance_record,
+      club_sport,
+      club_position,
+      participation_achievement,
+      hafazan_surah,
+      hafazan_page,
+      hafazan_ayah,
+      hafazan_grade
     } = body;
     const tenantId = await resolveTenantIdOrThrow(request);
 
@@ -103,6 +122,11 @@ export async function POST(request: NextRequest) {
     const resolvedCrmStage = crm_stage || resolveDefaultStage(resolvedRecordType);
 
     const data = await adminOperationSimple(async (client) => {
+      const today = new Date().toISOString().slice(0, 10);
+      const resolvedAdmissionDate =
+        toNullableText(admission_date) ?? (resolvedRecordType === 'student' ? today : null);
+      const resolvedLeavingDate =
+        toNullableText(leaving_date) ?? (resolvedCrmStage === 'discontinued' ? today : null);
       const { data, error } = await client
         .from('students')
         .insert([{
@@ -120,7 +144,26 @@ export async function POST(request: NextRequest) {
           parent_contact_number: toNullableText(parent_contact_number),
           parent_occupation: toNullableText(parent_occupation),
           household_income: toNullableText(household_income),
-          interviewer_remark: toNullableText(interviewer_remark)
+          interviewer_remark: toNullableText(interviewer_remark),
+          student_id_no: toNullableText(student_id_no),
+          date_of_birth: toNullableText(date_of_birth),
+          birth_place: toNullableText(birth_place),
+          gender: toNullableText(gender),
+          religion: toNullableText(religion),
+          admission_date: resolvedAdmissionDate,
+          leaving_date: resolvedLeavingDate,
+          admission_age: toNullableText(admission_age),
+          leaving_age: toNullableText(leaving_age),
+          reason_leaving: toNullableText(reason_leaving),
+          conduct_record: toNullableText(conduct_record),
+          attendance_record: toNullableText(attendance_record),
+          club_sport: toNullableText(club_sport),
+          club_position: toNullableText(club_position),
+          participation_achievement: toNullableText(participation_achievement),
+          hafazan_surah: toNullableText(hafazan_surah),
+          hafazan_page: toNullableText(hafazan_page),
+          hafazan_ayah: toNullableText(hafazan_ayah),
+          hafazan_grade: toNullableText(hafazan_grade)
         }])
         .select()
         .single();
@@ -156,7 +199,26 @@ export async function PUT(request: NextRequest) {
       parent_contact_number,
       parent_occupation,
       household_income,
-      interviewer_remark
+      interviewer_remark,
+      student_id_no,
+      date_of_birth,
+      birth_place,
+      gender,
+      religion,
+      admission_date,
+      leaving_date,
+      admission_age,
+      leaving_age,
+      reason_leaving,
+      conduct_record,
+      attendance_record,
+      club_sport,
+      club_position,
+      participation_achievement,
+      hafazan_surah,
+      hafazan_page,
+      hafazan_ayah,
+      hafazan_grade
     } = body;
     const tenantId = await resolveTenantIdOrThrow(request);
 
@@ -181,7 +243,24 @@ export async function PUT(request: NextRequest) {
       parent_contact_number: toNullableText(parent_contact_number),
       parent_occupation: toNullableText(parent_occupation),
       household_income: toNullableText(household_income),
-      interviewer_remark: toNullableText(interviewer_remark)
+      interviewer_remark: toNullableText(interviewer_remark),
+      student_id_no: toNullableText(student_id_no),
+      date_of_birth: toNullableText(date_of_birth),
+      birth_place: toNullableText(birth_place),
+      gender: toNullableText(gender),
+      religion: toNullableText(religion),
+      admission_age: toNullableText(admission_age),
+      leaving_age: toNullableText(leaving_age),
+      reason_leaving: toNullableText(reason_leaving),
+      conduct_record: toNullableText(conduct_record),
+      attendance_record: toNullableText(attendance_record),
+      club_sport: toNullableText(club_sport),
+      club_position: toNullableText(club_position),
+      participation_achievement: toNullableText(participation_achievement),
+      hafazan_surah: toNullableText(hafazan_surah),
+      hafazan_page: toNullableText(hafazan_page),
+      hafazan_ayah: toNullableText(hafazan_ayah),
+      hafazan_grade: toNullableText(hafazan_grade)
     };
 
     if (!crm_stage && record_type) {
@@ -189,6 +268,33 @@ export async function PUT(request: NextRequest) {
     }
 
     const data = await adminOperationSimple(async (client) => {
+      const today = new Date().toISOString().slice(0, 10);
+      const needsAdmissionDate = record_type === 'student';
+      const needsLeavingDate = crm_stage === 'discontinued';
+      const admissionInput = toNullableText(admission_date);
+      const leavingInput = toNullableText(leaving_date);
+
+      if ((needsAdmissionDate && !admissionInput) || (needsLeavingDate && !leavingInput)) {
+        const { data: existing, error: existingError } = await client
+          .from('students')
+          .select('admission_date, leaving_date')
+          .eq('id', id)
+          .eq('tenant_id', tenantId)
+          .single();
+
+        if (existingError) throw existingError;
+
+        if (needsAdmissionDate) {
+          updates.admission_date = admissionInput ?? existing?.admission_date ?? today;
+        }
+        if (needsLeavingDate) {
+          updates.leaving_date = leavingInput ?? existing?.leaving_date ?? today;
+        }
+      } else {
+        if (admissionInput) updates.admission_date = admissionInput;
+        if (leavingInput) updates.leaving_date = leavingInput;
+      }
+
       const { data, error } = await client
         .from('students')
         .update(updates)

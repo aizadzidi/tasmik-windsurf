@@ -26,6 +26,14 @@ interface StudentRecord {
   parent_occupation?: string | null;
   household_income?: string | null;
   interviewer_remark?: string | null;
+  student_id_no?: string | null;
+  date_of_birth?: string | null;
+  birth_place?: string | null;
+  gender?: string | null;
+  religion?: string | null;
+  admission_date?: string | null;
+  leaving_date?: string | null;
+  reason_leaving?: string | null;
 }
 
 interface Parent {
@@ -81,6 +89,14 @@ interface StudentFormState {
   household_income: string;
   interviewer_remark: string;
   crm_status_reason: string;
+  student_id_no: string;
+  date_of_birth: string;
+  birth_place: string;
+  gender: string;
+  religion: string;
+  admission_date: string;
+  leaving_date: string;
+  reason_leaving: string;
 }
 
 const defaultStageByType: Record<RecordType, CrmStage> = {
@@ -189,6 +205,64 @@ const normalizeWhatsappNumber = (value: string) => {
   return digits;
 };
 
+const parseMyKadDob = (value: string) => {
+  const digits = value.replace(/[^\d]/g, "");
+  if (digits.length < 6) return null;
+  const yy = Number(digits.slice(0, 2));
+  const mm = Number(digits.slice(2, 4));
+  const dd = Number(digits.slice(4, 6));
+  if (Number.isNaN(yy) || Number.isNaN(mm) || Number.isNaN(dd)) return null;
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  const currentYear = new Date().getFullYear();
+  const currentYY = currentYear % 100;
+  const century = yy > currentYY ? 1900 : 2000;
+  const fullYear = century + yy;
+  const date = new Date(fullYear, mm - 1, dd);
+  if (Number.isNaN(date.getTime())) return null;
+  if (date.getFullYear() !== fullYear || date.getMonth() !== mm - 1 || date.getDate() !== dd) {
+    return null;
+  }
+  const paddedMonth = String(mm).padStart(2, "0");
+  const paddedDay = String(dd).padStart(2, "0");
+  return `${fullYear}-${paddedMonth}-${paddedDay}`;
+};
+
+const parseLocalDate = (value: string | null) => {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (match) {
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const date = new Date(year, month - 1, day);
+    if (
+      date.getFullYear() !== year ||
+      date.getMonth() !== month - 1 ||
+      date.getDate() !== day
+    ) {
+      return null;
+    }
+    return date;
+  }
+  const fallback = new Date(value);
+  return Number.isNaN(fallback.getTime()) ? null : fallback;
+};
+
+const calculateAge = (dob: string | null, onDate: string | null) => {
+  if (!dob || !onDate) return null;
+  const dobDate = parseLocalDate(dob);
+  const refDate = parseLocalDate(onDate);
+  if (!dobDate || !refDate) return null;
+  let age = refDate.getFullYear() - dobDate.getFullYear();
+  const monthDiff = refDate.getMonth() - dobDate.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && refDate.getDate() < dobDate.getDate())) {
+    age -= 1;
+  }
+  return age >= 0 ? age : null;
+};
+
+const formatAgeLabel = (age: number | null) => (age === null ? "" : `${age} years old`);
+
 const buildWhatsappLink = (value: string) => {
   const normalized = normalizeWhatsappNumber(value);
   if (!normalized) {
@@ -236,7 +310,15 @@ const buildFormState = (
   parent_occupation: student.parent_occupation || "",
   household_income: student.household_income || "",
   interviewer_remark: student.interviewer_remark || "",
-  crm_status_reason: student.crm_status_reason || ""
+  crm_status_reason: student.crm_status_reason || "",
+  student_id_no: student.student_id_no || "",
+  date_of_birth: student.date_of_birth || "",
+  birth_place: student.birth_place || "",
+  gender: student.gender || "",
+  religion: student.religion || "",
+  admission_date: student.admission_date || "",
+  leaving_date: student.leaving_date || "",
+  reason_leaving: student.reason_leaving || ""
 });
 
 const buildEmptyForm = (recordType: RecordType): StudentFormState => ({
@@ -253,7 +335,15 @@ const buildEmptyForm = (recordType: RecordType): StudentFormState => ({
   parent_occupation: "",
   household_income: "",
   interviewer_remark: "",
-  crm_status_reason: ""
+  crm_status_reason: "",
+  student_id_no: "",
+  date_of_birth: "",
+  birth_place: "",
+  gender: "",
+  religion: "",
+  admission_date: "",
+  leaving_date: "",
+  reason_leaving: ""
 });
 
 type StudentFormFieldsProps = {
@@ -274,6 +364,9 @@ const StudentFormFields = ({
   onChange
 }: StudentFormFieldsProps) => {
   const showReason = isReasonStage(form.crm_stage);
+  const derivedDob = form.date_of_birth || parseMyKadDob(form.identification_number) || "";
+  const admissionAge = calculateAge(derivedDob || null, form.admission_date || null);
+  const leavingAge = calculateAge(derivedDob || null, form.leaving_date || null);
 
   return (
     <div className="space-y-4">
@@ -459,8 +552,22 @@ const StudentFormFields = ({
               className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
               value={form.identification_number}
               onChange={(e) =>
-                onChange({ identification_number: e.target.value })
+                onChange({
+                  identification_number: e.target.value,
+                  date_of_birth: parseMyKadDob(e.target.value) || form.date_of_birth
+                })
               }
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Date of Birth (Auto from IC)
+            </label>
+            <input
+              type="text"
+              className="w-full border-gray-300 rounded-md shadow-sm p-2 border bg-gray-50 text-gray-600"
+              value={derivedDob}
+              readOnly
             />
           </div>
           <div className="md:col-span-2">
@@ -473,6 +580,120 @@ const StudentFormFields = ({
               className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
               value={form.address}
               onChange={(e) => onChange({ address: e.target.value })}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-gray-100 pt-4">
+        <h3 className="text-sm font-semibold text-gray-800 mb-2">
+          Certificate Details (School Leaving)
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Student ID No.
+            </label>
+            <input
+              type="text"
+              placeholder="Enter student ID"
+              className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+              value={form.student_id_no}
+              onChange={(e) => onChange({ student_id_no: e.target.value })}
+            />
+          </div>
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Place of Birth / Nation
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Kedah, Malaysia"
+              className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+              value={form.birth_place}
+              onChange={(e) => onChange({ birth_place: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Gender
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Male"
+              className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+              value={form.gender}
+              onChange={(e) => onChange({ gender: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Religion
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Islam"
+              className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+              value={form.religion}
+              onChange={(e) => onChange({ religion: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Date of School Admission
+            </label>
+            <input
+              type="text"
+              className="w-full border-gray-300 rounded-md shadow-sm p-2 border bg-gray-50 text-gray-600"
+              value={form.admission_date || ""}
+              readOnly
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Date of Leaving School
+            </label>
+            <input
+              type="text"
+              className="w-full border-gray-300 rounded-md shadow-sm p-2 border bg-gray-50 text-gray-600"
+              value={form.leaving_date || ""}
+              readOnly
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              School-admission age
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. 15 years old"
+              className="w-full border-gray-300 rounded-md shadow-sm p-2 border bg-gray-50 text-gray-600"
+              value={formatAgeLabel(admissionAge)}
+              readOnly
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              School-leaving age
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. 18 years old"
+              className="w-full border-gray-300 rounded-md shadow-sm p-2 border bg-gray-50 text-gray-600"
+              value={formatAgeLabel(leavingAge)}
+              readOnly
+            />
+          </div>
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Reason of Leaving
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Graduated from school"
+              className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
+              value={form.reason_leaving}
+              onChange={(e) => onChange({ reason_leaving: e.target.value })}
             />
           </div>
         </div>
@@ -744,7 +965,15 @@ export default function AdminCrmPage() {
         parent_occupation: updates.parent_occupation,
         household_income: updates.household_income,
         interviewer_remark: updates.interviewer_remark,
-        crm_status_reason: updates.crm_status_reason
+        crm_status_reason: updates.crm_status_reason,
+        student_id_no: updates.student_id_no,
+        date_of_birth: updates.date_of_birth,
+        birth_place: updates.birth_place,
+        gender: updates.gender,
+        religion: updates.religion,
+        admission_date: updates.admission_date,
+        leaving_date: updates.leaving_date,
+        reason_leaving: updates.reason_leaving
       };
 
       const response = await fetch("/api/admin/students", {
@@ -1103,7 +1332,15 @@ export default function AdminCrmPage() {
           parent_occupation: addForm.parent_occupation,
           household_income: addForm.household_income,
           interviewer_remark: addForm.interviewer_remark,
-          crm_status_reason: addForm.crm_status_reason
+          crm_status_reason: addForm.crm_status_reason,
+          student_id_no: addForm.student_id_no,
+          date_of_birth: addForm.date_of_birth,
+          birth_place: addForm.birth_place,
+          gender: addForm.gender,
+          religion: addForm.religion,
+          admission_date: addForm.admission_date,
+          leaving_date: addForm.leaving_date,
+          reason_leaving: addForm.reason_leaving
         })
       });
 

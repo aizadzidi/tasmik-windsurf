@@ -72,6 +72,17 @@ const AdminNavbar = () => {
         </svg>
       )
     },
+    {
+      href: "/admin/certificates",
+      label: "Certificates",
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4h7l4 4v12a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 4v4h4" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 3h6" />
+        </svg>
+      )
+    },
     { 
       href: "/admin/historical", 
       label: "Historical Entry", 
