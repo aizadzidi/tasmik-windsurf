@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { ResponsiveLine } from "@nivo/line";
 import { supabase } from "@/lib/supabaseClient";
+import { formatJuzTestLabel } from "@/lib/juzTestUtils";
 
 interface JuzTest {
   id: string;
@@ -14,6 +15,9 @@ interface JuzTest {
   remarks?: string;
   test_juz?: boolean;
   test_hizb?: boolean;
+  hizb_number?: number | null;
+  page_from?: number | null;
+  page_to?: number | null;
 }
 
 interface JuzTestProgressLineChartProps {
@@ -30,6 +34,9 @@ interface ChartDataPoint {
   examiner?: string;
   id: string;
   test_hizb?: boolean;
+  hizb_number?: number | null;
+  page_from?: number | null;
+  page_to?: number | null;
 }
 
 interface ChartSeries {
@@ -107,7 +114,10 @@ export default function JuzTestProgressLineChart({
           passed: test.passed,
           examiner: test.examiner_name,
           id: `juz-${test.juz_number}-${test.id}`,
-          test_hizb: test.test_hizb
+          test_hizb: test.test_hizb,
+          hizb_number: test.hizb_number ?? null,
+          page_from: test.page_from ?? null,
+          page_to: test.page_to ?? null
         }))
     }
   ];
@@ -233,7 +243,14 @@ export default function JuzTestProgressLineChart({
             return (
               <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3">
                 <div className="text-sm font-medium text-gray-900">
-                  {data.test_hizb ? `Hizb ${(data.juz - 1) * 2 + 1} Test` : `Juz ${data.juz} Test`}
+                  {formatJuzTestLabel({
+                    juz_number: data.juz,
+                    test_hizb: data.test_hizb,
+                    hizb_number: data.hizb_number,
+                    page_from: data.page_from,
+                    page_to: data.page_to
+                  })}{" "}
+                  Test
                 </div>
                 {data.examiner !== 'Historical Entry' && (
                   <div className="text-sm text-gray-600">

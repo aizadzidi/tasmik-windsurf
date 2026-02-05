@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { formatGradeLabel, summarizeReportsByWeek } from "@/lib/parentReportUtils";
+import { formatJuzTestLabel, formatJuzTestPageRange } from "@/lib/juzTestUtils";
 import type { Report, ViewMode } from "@/types/teacher";
 
 interface JuzTestRecord {
@@ -14,6 +15,9 @@ interface JuzTestRecord {
   examiner_name?: string;
   remarks?: string;
   test_hizb?: boolean;
+  hizb_number?: number | null;
+  page_from?: number | null;
+  page_to?: number | null;
   section2_scores?: {
     memorization?: { [key: string]: number };
     middle_verse?: { [key: string]: number };
@@ -340,8 +344,13 @@ export default function ParentFullRecordsModal({
                           </span>
                           <div>
                             <div className="text-lg font-bold text-gray-800">
-                              {test.test_hizb ? `Hizb ${(test.juz_number - 1) * 2 + 1}` : `Juz ${test.juz_number}`}
+                              {formatJuzTestLabel(test)}
                             </div>
+                            {formatJuzTestPageRange(test) && (
+                              <div className="text-xs text-gray-500">
+                                {formatJuzTestPageRange(test)}
+                              </div>
+                            )}
                             <div className="text-sm text-gray-600">
                               {test.examiner_name === 'Historical Entry' 
                                 ? (test.passed ? 'Historical Pass' : 'Historical Fail')

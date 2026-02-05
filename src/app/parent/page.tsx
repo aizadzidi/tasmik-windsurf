@@ -24,6 +24,7 @@ import {
   SummaryStats
 } from "@/lib/reportUtils";
 import { formatMurajaahDisplay } from "@/lib/quranMapping";
+import { formatJuzTestLabel, formatJuzTestPageRange } from "@/lib/juzTestUtils";
 import type { Report } from "@/types/teacher";
 import jsPDF from "jspdf";
 import autoTable from 'jspdf-autotable';
@@ -172,7 +173,7 @@ export default function ParentPage() {
           // Get juz test data
           supabase
             .from("juz_tests")
-            .select("student_id, juz_number, test_date, passed, total_percentage, examiner_name, test_hizb")
+            .select("student_id, juz_number, test_date, passed, total_percentage, examiner_name, test_hizb, hizb_number, page_from, page_to")
             .in("student_id", studentIds)
             .order("test_date", { ascending: false })
             .then(result => {
@@ -237,6 +238,9 @@ export default function ParentPage() {
               total_percentage: number;
               examiner_name?: string;
               test_hizb?: boolean;
+              hizb_number?: number | null;
+              page_from?: number | null;
+              page_to?: number | null;
             };
           };
         });
@@ -871,8 +875,7 @@ export default function ParentPage() {
                                     // Show Hizb if the latest passed test was a Hizb test
                                     const latestTest = extendedChild.latest_test_result;
                                     if (latestTest && latestTest.passed && latestTest.test_hizb) {
-                                      const hizbNumber = (latestTest.juz_number - 1) * 2 + 1;
-                                      return `Hizb ${hizbNumber}`;
+                                      return formatJuzTestLabel(latestTest);
                                     }
                                     // Otherwise show Juz from memorization
                                     return `Juz ${extendedChild.highest_memorized_juz || 0}`;
@@ -893,11 +896,13 @@ export default function ParentPage() {
                                   {extendedChild.latest_test_result ? (
                                     <>
                                       <div className="font-medium">
-                                        {extendedChild.latest_test_result.test_hizb 
-                                          ? `Hizb ${(extendedChild.latest_test_result.juz_number - 1) * 2 + 1}`
-                                          : `Juz ${extendedChild.latest_test_result.juz_number}`
-                                        }
+                                        {formatJuzTestLabel(extendedChild.latest_test_result)}
                                       </div>
+                                      {formatJuzTestPageRange(extendedChild.latest_test_result) && (
+                                        <div className="text-xs text-gray-500">
+                                          {formatJuzTestPageRange(extendedChild.latest_test_result)}
+                                        </div>
+                                      )}
                                       <div className={`text-xs font-medium ${
                                         extendedChild.latest_test_result.passed 
                                           ? 'text-green-600' 

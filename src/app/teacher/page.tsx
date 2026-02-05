@@ -25,6 +25,7 @@ import {
   SummaryStats
 } from "@/lib/reportUtils";
 import { formatMurajaahDisplay } from "@/lib/quranMapping";
+import { formatJuzTestLabel, formatJuzTestPageRange } from "@/lib/juzTestUtils";
 import type { Student, Report, ViewMode } from "@/types/teacher";
 
 const SURAHS = [
@@ -435,7 +436,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
             // Latest test by date (for display in table)
             supabase
               .from("juz_tests")
-              .select("juz_number, test_date, passed, total_percentage, examiner_name, test_hizb")
+              .select("juz_number, test_date, passed, total_percentage, examiner_name, test_hizb, hizb_number, page_from, page_to")
               .eq("student_id", student.id)
               .order("test_date", { ascending: false })
               .order("id", { ascending: false })
@@ -493,6 +494,9 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
               passed: boolean;
               total_percentage: number;
               test_hizb?: boolean;
+              hizb_number?: number | null;
+              page_from?: number | null;
+              page_to?: number | null;
             };
           };
         } else {
@@ -997,8 +1001,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
                                     // Show Hizb if the latest passed test was a Hizb test
                                     const latestTest = extendedStudent.latest_test_result;
                                     if (latestTest && latestTest.passed && latestTest.test_hizb) {
-                                      const hizbNumber = (latestTest.juz_number - 1) * 2 + 1;
-                                      return `Hizb ${hizbNumber}`;
+                                      return formatJuzTestLabel(latestTest);
                                     }
                                     // Otherwise show Juz from memorization
                                     return `Juz ${extendedStudent.highest_memorized_juz || 0}`;
@@ -1019,11 +1022,13 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
                                       {extendedStudent.latest_test_result ? (
                                         <>
                                           <div className="font-medium">
-                                            {extendedStudent.latest_test_result.test_hizb 
-                                              ? `Hizb ${(extendedStudent.latest_test_result.juz_number - 1) * 2 + 1}`
-                                              : `Juz ${extendedStudent.latest_test_result.juz_number}`
-                                            }
+                                            {formatJuzTestLabel(extendedStudent.latest_test_result)}
                                           </div>
+                                          {formatJuzTestPageRange(extendedStudent.latest_test_result) && (
+                                            <div className="text-xs text-gray-500">
+                                              {formatJuzTestPageRange(extendedStudent.latest_test_result)}
+                                            </div>
+                                          )}
                                           <div className={`text-xs font-medium ${
                                             extendedStudent.latest_test_result.passed 
                                               ? 'text-green-600' 

@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import EditJuzTestForm from './EditJuzTestForm';
+import { formatJuzTestLabel, formatJuzTestPageRange, getDisplayHizbNumber } from '@/lib/juzTestUtils';
 
 interface JuzTest {
   id: string;
@@ -21,6 +22,7 @@ interface JuzTest {
   page_to?: number;
   test_juz?: boolean;
   test_hizb?: boolean;
+  hizb_number?: number | null;
   section2_scores?: {
     memorization?: { [key: string]: number };
     middle_verse?: { [key: string]: number };
@@ -44,6 +46,7 @@ interface EditJuzTestFormData {
   page_to?: number;
   test_juz: boolean;
   test_hizb: boolean;
+  hizb_number?: number | null;
   section2_scores?: {
     memorization?: { [key: string]: number };
     middle_verse?: { [key: string]: number };
@@ -282,7 +285,9 @@ export default function JuzTestHistoryModal({
 
   // Simple filter by search term - includes hizb number search
   const filteredTests = tests.filter(test => {
-    const displayNumber = test.test_hizb ? (test.juz_number - 1) * 2 + 1 : test.juz_number;
+    const displayNumber = test.test_hizb
+      ? (getDisplayHizbNumber(test) ?? test.juz_number)
+      : test.juz_number;
     const displayType = test.test_hizb ? 'hizb' : 'juz';
     
     return displayNumber.toString().includes(searchTerm) ||
@@ -396,13 +401,18 @@ export default function JuzTestHistoryModal({
                       <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg ${
                         test.passed ? 'bg-green-500' : 'bg-red-500'
                       }`}>
-                        {test.juz_number}
+                        {test.test_hizb ? (getDisplayHizbNumber(test) ?? test.juz_number) : test.juz_number}
                       </div>
                       <div>
                         <h3 className="font-bold text-lg text-gray-900">
-                          {test.test_hizb ? `Hizb ${(test.juz_number - 1) * 2 + 1}` : `Juz ${test.juz_number}`}
+                          {formatJuzTestLabel(test)}
                         </h3>
                         <div className="flex flex-col gap-1">
+                          {formatJuzTestPageRange(test) && (
+                            <p className="text-xs text-gray-500">
+                              {formatJuzTestPageRange(test)}
+                            </p>
+                          )}
                           {test.examiner_name !== 'Historical Entry' && (
                             <p className="text-sm text-gray-500">
                               {new Date(test.test_date).toLocaleDateString('en-US', {
@@ -501,6 +511,7 @@ export default function JuzTestHistoryModal({
       {showEditForm && editingTest && (
         <EditJuzTestForm
           test={editingTest}
+          studentName={studentName}
           onSave={handleSaveEdit}
           onCancel={() => {
             setShowEditForm(false);

@@ -24,6 +24,7 @@ import {
   getSummaryStats
 } from "@/lib/reportUtils";
 import { formatMurajaahDisplay } from "@/lib/quranMapping";
+import { formatJuzTestLabel, formatJuzTestPageRange } from "@/lib/juzTestUtils";
 
 type ViewMode = 'tasmik' | 'murajaah' | 'juz_tests';
 type LatestReport = {
@@ -44,6 +45,9 @@ type JuzTestEntry = {
   test_date: string;
   total_percentage?: number;
   test_hizb?: boolean;
+  hizb_number?: number | null;
+  page_from?: number | null;
+  page_to?: number | null;
 };
 
 // Helper function to format latest reading
@@ -165,9 +169,10 @@ export default function AdminReportsPage() {
 
           // Latest test (passed or failed)
           const latestTest = student.juz_tests?.[0] || null;
-          const latestTestJuz = latestTest?.juz_number || 0;
+          const highestTestedJuz =
+            student.juz_tests?.reduce((max, test) => Math.max(max, test.juz_number || 0), 0) || 0;
 
-          const gap = Math.max(0, (memorizedForGap || 0) - latestTestJuz);
+          const gap = Math.max(0, (memorizedForGap || 0) - highestTestedJuz);
 
           return {
             id: student.id,
@@ -487,7 +492,7 @@ export default function AdminReportsPage() {
                         const extended = student as StudentProgressData & {
                           highest_memorized_juz?: number;
                           highest_completed_juz?: number;
-                          latest_test_result?: { juz_number: number; test_date: string; passed?: boolean; total_percentage?: number; examiner_name?: string; test_hizb?: boolean } | null;
+                          latest_test_result?: { juz_number: number; test_date: string; passed?: boolean; total_percentage?: number; examiner_name?: string; test_hizb?: boolean; hizb_number?: number | null; page_from?: number | null; page_to?: number | null } | null;
                           juz_test_gap?: number;
                         };
                         const rowClass = viewMode === 'juz_tests'
@@ -534,8 +539,7 @@ export default function AdminReportsPage() {
                                   // Show Hizb if the latest passed test was a Hizb test
                                   const latestTest = extended.latest_test_result;
                                   if (latestTest && latestTest.passed && latestTest.test_hizb) {
-                                    const hizbNumber = (latestTest.juz_number - 1) * 2 + 1;
-                                    return `Hizb ${hizbNumber}`;
+                                    return formatJuzTestLabel(latestTest);
                                   }
                                   // Otherwise show Juz from memorization
                                   return `Memorized: Juz ${extended.highest_memorized_juz || 0}`;
@@ -545,11 +549,13 @@ export default function AdminReportsPage() {
                                 {extended.latest_test_result ? (
                                   <div>
                                     <div className="font-medium">
-                                      {extended.latest_test_result.test_hizb 
-                                        ? `Hizb ${(extended.latest_test_result.juz_number - 1) * 2 + 1}`
-                                        : `Juz ${extended.latest_test_result.juz_number}`
-                                      }
+                                      {formatJuzTestLabel(extended.latest_test_result)}
                                     </div>
+                                    {formatJuzTestPageRange(extended.latest_test_result) && (
+                                      <div className="text-xs text-gray-500">
+                                        {formatJuzTestPageRange(extended.latest_test_result)}
+                                      </div>
+                                    )}
                                     <div className={`text-xs font-medium ${extended.latest_test_result?.passed ? 'text-green-600' : 'text-red-600'}`}>
                                       {extended.latest_test_result.examiner_name === 'Historical Entry'
                                         ? (extended.latest_test_result.passed ? 'PASSED' : 'FAILED')

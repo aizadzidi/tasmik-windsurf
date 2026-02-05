@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+import { formatJuzTestLabel, formatJuzTestPageRange, getDisplayHizbNumber } from '@/lib/juzTestUtils';
 
 interface JuzTest {
   id: string;
@@ -15,6 +16,9 @@ interface JuzTest {
   recitation_score?: number;
   remarks?: string;
   test_hizb?: boolean;
+  hizb_number?: number | null;
+  page_from?: number | null;
+  page_to?: number | null;
   section2_scores?: {
     memorization?: { [key: string]: number };
     middle_verse?: { [key: string]: number };
@@ -82,7 +86,9 @@ export default function JuzTestHistoryModalViewOnly({
 
   // Simple filter by search term
   const filteredTests = tests.filter(test => 
-    test.juz_number.toString().includes(searchTerm) ||
+    (test.test_hizb
+      ? (getDisplayHizbNumber(test) ?? test.juz_number).toString().includes(searchTerm)
+      : test.juz_number.toString().includes(searchTerm)) ||
     (test.examiner_name || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -296,13 +302,18 @@ export default function JuzTestHistoryModalViewOnly({
                       <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg ${
                         test.passed ? 'bg-green-500' : 'bg-red-500'
                       }`}>
-                        {test.juz_number}
+                        {test.test_hizb ? (getDisplayHizbNumber(test) ?? test.juz_number) : test.juz_number}
                       </div>
                       <div>
                         <h3 className="font-bold text-lg text-gray-900">
-                          {test.test_hizb ? `Hizb ${(test.juz_number - 1) * 2 + 1}` : `Juz ${test.juz_number}`}
+                          {formatJuzTestLabel(test)}
                         </h3>
                         <div className="flex flex-col gap-1">
+                          {formatJuzTestPageRange(test) && (
+                            <p className="text-xs text-gray-500">
+                              {formatJuzTestPageRange(test)}
+                            </p>
+                          )}
                           {test.examiner_name !== 'Historical Entry' && (
                             <p className="text-sm text-gray-500">
                               {new Date(test.test_date).toLocaleDateString('en-US', {
