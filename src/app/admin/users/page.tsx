@@ -31,6 +31,7 @@ export default function AdminUsersPage() {
   const [programs, setPrograms] = useState<ProgramRow[]>([]);
   const [assignmentsByTeacher, setAssignmentsByTeacher] = useState<Record<string, AssignmentValue>>({});
   const [adminPagePermissions, setAdminPagePermissions] = useState<Record<string, Record<string, boolean>>>({});
+  const [expandedAdminAccess, setExpandedAdminAccess] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [assignmentSavingId, setAssignmentSavingId] = useState<string | null>(null);
@@ -315,6 +316,39 @@ export default function AdminUsersPage() {
     }
   };
 
+  const getEnabledPermissionKeys = useCallback(
+    (userId: string) =>
+      ADMIN_PAGE_PERMISSIONS
+        .filter((permission) => adminPagePermissions[userId]?.[permission.key])
+        .map((permission) => permission.key),
+    [adminPagePermissions]
+  );
+
+  const getEnabledPermissionLabels = useCallback(
+    (userId: string) =>
+      ADMIN_PAGE_PERMISSIONS
+        .filter((permission) => adminPagePermissions[userId]?.[permission.key])
+        .map((permission) => permission.label),
+    [adminPagePermissions]
+  );
+
+  const toggleAdminAccess = async (userId: string, enabled: boolean) => {
+    const currentKeys = getEnabledPermissionKeys(userId);
+    if (enabled) {
+      if (currentKeys.length === 0) {
+        await updateAssignmentPermission(userId, "admin:dashboard", true);
+      }
+      setExpandedAdminAccess((prev) => ({ ...prev, [userId]: true }));
+      return;
+    }
+
+    for (const key of currentKeys) {
+      await updateAssignmentPermission(userId, key, false);
+    }
+    setExpandedAdminAccess((prev) => ({ ...prev, [userId]: false }));
+  };
+
+
   return (
     <div className="min-h-screen bg-gray-50">
       <AdminNavbar />
@@ -370,89 +404,166 @@ export default function AdminUsersPage() {
                 {filteredUsers.length === 0 ? (
                   <div className="text-sm text-slate-500">No users found.</div>
                 ) : (
-                  filteredUsers.map((user) => (
-                    <div
-                      key={user.id}
-                      className="flex flex-col gap-3 border-b border-slate-100 pb-3 last:border-b-0 last:pb-0 md:flex-row md:items-center md:justify-between"
-                    >
-                      <div>
-                        <div className="text-sm font-semibold text-slate-900">
-                          {user.name || "Unnamed user"}
-                        </div>
-                        <div className="text-xs text-slate-500">
-                          {user.email || "No email"}
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-3">
-                        <select
-                          value={user.role}
-                          onChange={(e) =>
-                            updateRole(user.id, e.target.value as UserRow["role"])
-                          }
-                          aria-label={`Role for ${user.name || user.email || "user"}`}
-                          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
-                          disabled={savingId === user.id}
-                        >
-                          {ROLE_OPTIONS.map((role) => (
-                            <option key={role} value={role}>
-                              {role}
-                            </option>
-                          ))}
-                        </select>
-                        {savingId === user.id ? (
-                          <span className="text-xs text-slate-500">Saving…</span>
-                        ) : null}
-                        {user.role === "teacher" ? (
-                          <>
-                            <select
-                              value={assignmentsByTeacher[user.id] ?? "unassigned"}
-                              onChange={(e) =>
-                                updateTeacherAssignment(user.id, e.target.value as AssignmentValue)
-                              }
-                              aria-label={`Program assignment for ${user.name || user.email || "teacher"}`}
-                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
-                              disabled={assignmentSavingId === user.id || programs.length === 0}
-                            >
-                              <option value="unassigned">Unassigned</option>
-                              <option value="campus">Campus</option>
-                              <option value="online">Online</option>
-                              <option value="both">Campus + Online</option>
-                            </select>
-                            {assignmentSavingId === user.id ? (
-                              <span className="text-xs text-slate-500">Saving…</span>
-                            ) : null}
-                            <div className="flex flex-wrap items-center gap-3">
-                              {ADMIN_PAGE_PERMISSIONS.map((permission) => {
-                                const savingKey = `${user.id}:${permission.key}`;
-                                const isSaving = Boolean(permissionSaving[savingKey]);
-                                const checked = Boolean(
-                                  adminPagePermissions[user.id]?.[permission.key]
-                                );
-                                return (
-                                  <div key={permission.key} className="flex items-center gap-2">
-                                    <Switch
-                                      checked={checked}
-                                      onCheckedChange={(nextChecked) =>
-                                        updateAssignmentPermission(
-                                          user.id,
-                                          permission.key,
-                                          nextChecked
-                                        )
-                                      }
-                                      className={isSaving ? "opacity-60 pointer-events-none" : undefined}
-                                    />
-                                    <span className="text-xs text-slate-600">
-                                      {permission.label}
-                                    </span>
-                                  </div>
-                                );
-                              })}
+                  filteredUsers.map((user) => {
+                    const isTeacher = user.role === "teacher";
+                    const enabledLabels = getEnabledPermissionLabels(user.id);
+                    const enabledKeys = getEnabledPermissionKeys(user.id);
+                    const isAdminAccessEnabled = enabledKeys.length > 0;
+                    const isExpanded = Boolean(expandedAdminAccess[user.id]);
+                    const summary =
+                      enabledLabels.length === 0
+                        ? "No admin pages enabled"
+                        : `Enabled pages: ${enabledLabels.slice(0, 3).join(", ")}${
+                            enabledLabels.length > 3
+                              ? ` +${enabledLabels.length - 3} more`
+                              : ""
+                          }`;
+
+                    return (
+                      <div
+                        key={user.id}
+                        className="rounded-2xl border border-slate-100 bg-white/90 px-4 py-4 shadow-sm"
+                      >
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="min-w-[220px]">
+                            <div className="text-sm font-semibold text-slate-900">
+                              {user.name || "Unnamed user"}
                             </div>
-                          </>
-                        ) : null}
+                            <div className="text-xs text-slate-500">
+                              {user.email || "No email"}
+                            </div>
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                              <select
+                                value={user.role}
+                                onChange={(e) =>
+                                  updateRole(user.id, e.target.value as UserRow["role"])
+                                }
+                                aria-label={`Role for ${user.name || user.email || "user"}`}
+                                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
+                                disabled={savingId === user.id}
+                              >
+                                {ROLE_OPTIONS.map((role) => (
+                                  <option key={role} value={role}>
+                                    {role}
+                                  </option>
+                                ))}
+                              </select>
+                              {savingId === user.id ? (
+                                <span className="text-xs text-slate-500">Saving…</span>
+                              ) : null}
+                              {isTeacher ? (
+                                <>
+                                  <select
+                                    value={assignmentsByTeacher[user.id] ?? "unassigned"}
+                                    onChange={(e) =>
+                                      updateTeacherAssignment(
+                                        user.id,
+                                        e.target.value as AssignmentValue
+                                      )
+                                    }
+                                    aria-label={`Program assignment for ${user.name || user.email || "teacher"}`}
+                                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
+                                    disabled={assignmentSavingId === user.id || programs.length === 0}
+                                  >
+                                    <option value="unassigned">Unassigned</option>
+                                    <option value="campus">Campus</option>
+                                    <option value="online">Online</option>
+                                    <option value="both">Campus + Online</option>
+                                  </select>
+                                  {assignmentSavingId === user.id ? (
+                                    <span className="text-xs text-slate-500">Saving…</span>
+                                  ) : null}
+                                </>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          {isTeacher ? (
+                            <div className="w-full rounded-xl border border-slate-100 bg-slate-50/70 p-3 lg:ml-auto lg:max-w-lg">
+                              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                                    Admin Access
+                                  </p>
+                                  <p className="text-sm text-slate-700">{summary}</p>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <div className="flex items-center gap-2 scale-90">
+                                    <Switch
+                                      checked={isAdminAccessEnabled}
+                                      onCheckedChange={(nextChecked) =>
+                                        toggleAdminAccess(user.id, nextChecked)
+                                      }
+                                    />
+                                    <span className="text-[11px] text-slate-500">Enable</span>
+                                  </div>
+                                  {isAdminAccessEnabled ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setExpandedAdminAccess((prev) => ({
+                                          ...prev,
+                                          [user.id]: !isExpanded,
+                                        }))
+                                      }
+                                      className="text-xs font-semibold text-slate-400 hover:text-slate-600"
+                                    >
+                                      {isExpanded ? "Hide" : "Customize"}
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </div>
+
+                              {isAdminAccessEnabled ? (
+                                isExpanded ? (
+                                  <div className="mt-2 flex flex-wrap gap-1.5">
+                                    {ADMIN_PAGE_PERMISSIONS.map((permission) => {
+                                      const savingKey = `${user.id}:${permission.key}`;
+                                      const isSaving = Boolean(permissionSaving[savingKey]);
+                                      const checked = Boolean(
+                                        adminPagePermissions[user.id]?.[permission.key]
+                                      );
+
+                                      return (
+                                        <button
+                                          key={permission.key}
+                                          type="button"
+                                          aria-pressed={checked}
+                                          onClick={() =>
+                                            updateAssignmentPermission(
+                                              user.id,
+                                              permission.key,
+                                              !checked
+                                            )
+                                          }
+                                          disabled={isSaving}
+                                          className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                                            checked
+                                              ? "bg-blue-600 text-white"
+                                              : "border border-slate-200/80 bg-white text-slate-500"
+                                          } ${
+                                            isSaving
+                                              ? "opacity-60"
+                                              : "hover:border-slate-300 hover:text-slate-700"
+                                          }`}
+                                        >
+                                          {permission.label}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                ) : null
+                              ) : (
+                                <p className="mt-2 text-xs text-slate-500">
+                                  Enable admin access to choose pages.
+                                </p>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             )}
