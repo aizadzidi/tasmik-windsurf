@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { ChevronDown, ChevronUp, Info, Users } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { authFetch } from "@/lib/authFetch";
 import Navbar from "@/components/Navbar";
 import { getGradingScale, computeGrade, type GradingScale } from "@/lib/gradingUtils";
 import ConductEditor from "@/components/teacher/ConductEditor";
@@ -163,7 +164,7 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
       const [{ data: classesData }, { data: subjectsData }, examsResp] = await Promise.all([
         supabase.from('classes').select('id, name').order('name'),
         supabase.from('subjects').select('id, name').order('name'),
-        fetch('/api/admin/exam-metadata').then((r) => r.json()).catch((e) => { console.error('Failed to load exam metadata', e); return { exams: [] } })
+        authFetch('/api/admin/exam-metadata').then((r) => r.json()).catch((e) => { console.error('Failed to load exam metadata', e); return { exams: [] } })
       ]);
       setClasses(classesData || []);
       setSubjects(subjectsData || []);

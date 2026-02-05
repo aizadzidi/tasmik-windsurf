@@ -1,6 +1,7 @@
 "use client";
 import React, { useState, useEffect } from 'react';
 import { notificationService, type JuzTestNotification } from '@/lib/notificationService';
+import { authFetch } from '@/lib/authFetch';
 import { Card } from '@/components/ui/Card';
 
 interface NotificationPanelProps {
@@ -24,7 +25,7 @@ export default function NotificationPanel({ isVisible, onClose }: NotificationPa
     setError(null);
     try {
       // Prefer server API (service role) for consistent names; fallback to client service
-      const res = await fetch('/api/admin/notifications');
+      const res = await authFetch('/api/admin/notifications');
       if (res.ok) {
         const data = await res.json();
         setNotifications(data.notifications || []);

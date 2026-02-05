@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
+import { requireAdminPermission } from '@/lib/adminPermissions';
 
 // PUT - Toggle student completion status (admin only)
 export async function PUT(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ['admin:dashboard']);
+    if (!guard.ok) return guard.response;
+
     const body = await request.json();
     const { student_id, completed } = body;
 

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { authFetch } from "@/lib/authFetch";
 import AdminNavbar from "@/components/admin/AdminNavbar";
 import { Card } from "@/components/ui/Card";
 import JuzTestModal from "@/components/admin/JuzTestModal";
@@ -76,7 +77,7 @@ export default function AdminReportsPage() {
 
       try {
         // Fetch student progress data via secure API
-        const response = await fetch(`/api/admin/reports?viewMode=${viewMode}`);
+        const response = await authFetch(`/api/admin/reports?viewMode=${viewMode}`);
         
         if (!response.ok) {
           const errorData = await response.json();

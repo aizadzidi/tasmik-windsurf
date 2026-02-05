@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+import { authFetch } from '@/lib/authFetch';
 import EditJuzTestForm from './EditJuzTestForm';
 import { formatJuzTestLabel, formatJuzTestPageRange, getDisplayHizbNumber } from '@/lib/juzTestUtils';
 
@@ -236,7 +237,7 @@ export default function JuzTestHistoryModal({
     }
 
     try {
-      const response = await fetch(`/api/admin/juz-tests?id=${testId}`, {
+      const response = await authFetch(`/api/admin/juz-tests?id=${testId}`, {
         method: 'DELETE',
       });
 
@@ -258,7 +259,7 @@ export default function JuzTestHistoryModal({
     if (!editingTest) return;
 
     try {
-      const response = await fetch(`/api/admin/juz-tests?id=${editingTest.id}`, {
+      const response = await authFetch(`/api/admin/juz-tests?id=${editingTest.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

@@ -25,6 +25,7 @@ import {
 } from "@/lib/reportUtils";
 import { formatMurajaahDisplay } from "@/lib/quranMapping";
 import { formatJuzTestLabel, formatJuzTestPageRange } from "@/lib/juzTestUtils";
+import { authFetch } from "@/lib/authFetch";
 
 type ViewMode = 'tasmik' | 'murajaah' | 'juz_tests';
 type LatestReport = {
@@ -124,7 +125,7 @@ export default function AdminReportsPage() {
 
     try {
       // Fetch student progress data via secure API
-      const response = await fetch(`/api/admin/reports?viewMode=${viewMode}`);
+      const response = await authFetch(`/api/admin/reports?viewMode=${viewMode}`);
       
       if (!response.ok) {
         const errorData = await response.json();

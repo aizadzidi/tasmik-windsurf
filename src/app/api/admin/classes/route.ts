@@ -1,9 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
+import { requireAdminPermission } from '@/lib/adminPermissions';
 
 // GET - Fetch all classes (admin only)
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, [
+      'admin:dashboard',
+      'admin:crm',
+      'admin:certificates',
+    ]);
+    if (!guard.ok) return guard.response;
+
     const data = await adminOperationSimple(async (client) => {
       const { data, error } = await client
         .from('classes')
@@ -29,6 +37,13 @@ export async function GET() {
 // POST - Create new class (admin only)
 export async function POST(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, [
+      'admin:dashboard',
+      'admin:crm',
+      'admin:certificates',
+    ]);
+    if (!guard.ok) return guard.response;
+
     const body = await request.json();
     const { name, level } = body;
     const allowedLevels = [
@@ -78,6 +93,13 @@ export async function POST(request: NextRequest) {
 // PUT - Update class name (admin only)
 export async function PUT(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, [
+      'admin:dashboard',
+      'admin:crm',
+      'admin:certificates',
+    ]);
+    if (!guard.ok) return guard.response;
+
     const body = await request.json();
     const { id, name, level } = body;
     const allowedLevels = [
@@ -128,6 +150,13 @@ export async function PUT(request: NextRequest) {
 // DELETE - Remove class (admin only)
 export async function DELETE(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, [
+      'admin:dashboard',
+      'admin:crm',
+      'admin:certificates',
+    ]);
+    if (!guard.ok) return guard.response;
+
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
 

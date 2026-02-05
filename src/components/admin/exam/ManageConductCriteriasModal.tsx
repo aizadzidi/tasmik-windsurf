@@ -1,6 +1,7 @@
 "use client";
 import React, { useState, useEffect } from "react";
 import { X, Plus, Edit, Trash2 } from "lucide-react";
+import { authFetch } from "@/lib/authFetch";
 
 interface ConductCriteria {
   id: string;
@@ -35,7 +36,7 @@ export default function ManageConductCriteriasModal({
   const fetchCriterias = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/admin/conduct-criterias');
+      const response = await authFetch('/api/admin/conduct-criterias');
       const data = await response.json();
       
       if (data.success) {
@@ -74,7 +75,7 @@ export default function ManageConductCriteriasModal({
       const url = isEditing ? `/api/admin/conduct-criterias?id=${editingCriteria.id}` : '/api/admin/conduct-criterias';
       const method = isEditing ? 'PUT' : 'POST';
 
-      const response = await fetch(url, {
+      const response = await authFetch(url, {
         method,
         headers: {
           'Content-Type': 'application/json',
@@ -109,7 +110,7 @@ export default function ManageConductCriteriasModal({
     if (!confirm(`Are you sure you want to delete "${criteria.name}"?`)) return;
 
     try {
-      const response = await fetch(`/api/admin/conduct-criterias?id=${criteria.id}`, {
+      const response = await authFetch(`/api/admin/conduct-criterias?id=${criteria.id}`, {
         method: 'DELETE',
       });
 

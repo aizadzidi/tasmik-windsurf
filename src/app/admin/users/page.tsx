@@ -5,6 +5,9 @@ import AdminNavbar from "@/components/admin/AdminNavbar";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+import { Switch } from "@/components/ui/Switch";
+import { ADMIN_PAGE_PERMISSIONS } from "@/lib/adminAccess";
+import { authFetch } from "@/lib/authFetch";
 
 type UserRow = {
   id: string;
@@ -27,11 +30,14 @@ export default function AdminUsersPage() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [programs, setPrograms] = useState<ProgramRow[]>([]);
   const [assignmentsByTeacher, setAssignmentsByTeacher] = useState<Record<string, AssignmentValue>>({});
+  const [adminPagePermissions, setAdminPagePermissions] = useState<Record<string, Record<string, boolean>>>({});
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [assignmentSavingId, setAssignmentSavingId] = useState<string | null>(null);
+  const [permissionSaving, setPermissionSaving] = useState<Record<string, boolean>>({});
   const [error, setError] = useState("");
   const [assignmentError, setAssignmentError] = useState("");
+  const [permissionError, setPermissionError] = useState("");
   const [query, setQuery] = useState("");
   const updateControllers = useRef<Map<string, AbortController>>(new Map());
   const updateRequestIds = useRef<Map<string, number>>(new Map());
@@ -44,7 +50,7 @@ export default function AdminUsersPage() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
     try {
-      const res = await fetch("/api/admin/users", {
+      const res = await authFetch("/api/admin/users", {
         signal: controller.signal,
       });
       if (!res.ok) {
@@ -71,7 +77,7 @@ export default function AdminUsersPage() {
     const timeoutId = setTimeout(() => controller.abort(), 10000);
     setAssignmentError("");
     try {
-      const res = await fetch("/api/admin/programs", { signal: controller.signal });
+      const res = await authFetch("/api/admin/programs", { signal: controller.signal });
       if (!res.ok) {
         const payload = await res.json().catch(() => null);
         throw new Error(payload?.error || "Failed to load programs");
@@ -92,7 +98,7 @@ export default function AdminUsersPage() {
     const timeoutId = setTimeout(() => controller.abort(), 10000);
     setAssignmentError("");
     try {
-      const res = await fetch("/api/admin/teacher-assignments", { signal: controller.signal });
+      const res = await authFetch("/api/admin/teacher-assignments", { signal: controller.signal });
       if (!res.ok) {
         const payload = await res.json().catch(() => null);
         throw new Error(payload?.error || "Failed to load teacher assignments");
@@ -124,11 +130,44 @@ export default function AdminUsersPage() {
     }
   }, []);
 
+  const fetchAdminPagePermissions = useCallback(async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    setPermissionError("");
+    try {
+      const res = await authFetch("/api/admin/user-permissions", { signal: controller.signal });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        throw new Error(payload?.error || "Failed to load permissions");
+      }
+      const data = await res.json();
+      const allowedKeys = new Set(ADMIN_PAGE_PERMISSIONS.map((item) => item.key));
+      const nextMap: Record<string, Record<string, boolean>> = {};
+      if (Array.isArray(data)) {
+        data.forEach((row) => {
+          if (!row?.user_id || !row?.permission_key) return;
+          if (!allowedKeys.has(String(row.permission_key))) return;
+          const userId = String(row.user_id);
+          if (!nextMap[userId]) nextMap[userId] = {};
+          nextMap[userId][String(row.permission_key)] = true;
+        });
+      }
+      setAdminPagePermissions(nextMap);
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
+      const message = err instanceof Error ? err.message : "Failed to load permissions";
+      setPermissionError(message);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }, []);
+
   useEffect(() => {
     fetchUsers();
     fetchPrograms();
     fetchTeacherAssignments();
-  }, [fetchPrograms, fetchTeacherAssignments, fetchUsers]);
+    fetchAdminPagePermissions();
+  }, [fetchAdminPagePermissions, fetchPrograms, fetchTeacherAssignments, fetchUsers]);
 
   const filteredUsers = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -152,7 +191,7 @@ export default function AdminUsersPage() {
     setSavingId(userId);
     setError("");
     try {
-      const res = await fetch("/api/admin/users", {
+      const res = await authFetch("/api/admin/users", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: userId, role }),
@@ -208,7 +247,7 @@ export default function AdminUsersPage() {
             : [];
 
     try {
-      const res = await fetch("/api/admin/teacher-assignments", {
+      const res = await authFetch("/api/admin/teacher-assignments", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ teacher_id: teacherId, program_types: programTypes }),
@@ -236,6 +275,43 @@ export default function AdminUsersPage() {
         assignmentControllers.current.delete(teacherId);
         setAssignmentSavingId(null);
       }
+    }
+  };
+
+  const updateAssignmentPermission = async (
+    userId: string,
+    permissionKey: string,
+    enabled: boolean
+  ) => {
+    const savingKey = `${userId}:${permissionKey}`;
+    setPermissionSaving((prev) => ({ ...prev, [savingKey]: true }));
+    setPermissionError("");
+    try {
+      const res = await authFetch("/api/admin/user-permissions", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          permission_key: permissionKey,
+          enabled,
+        }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        throw new Error(payload?.error || "Failed to update permission");
+      }
+      setAdminPagePermissions((prev) => ({
+        ...prev,
+        [userId]: {
+          ...(prev[userId] ?? {}),
+          [permissionKey]: enabled,
+        },
+      }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to update permission";
+      setPermissionError(message);
+    } finally {
+      setPermissionSaving((prev) => ({ ...prev, [savingKey]: false }));
     }
   };
 
@@ -278,6 +354,11 @@ export default function AdminUsersPage() {
           {assignmentError ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
               {assignmentError}
+            </div>
+          ) : null}
+          {permissionError ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              {permissionError}
             </div>
           ) : null}
 
@@ -340,6 +421,33 @@ export default function AdminUsersPage() {
                             {assignmentSavingId === user.id ? (
                               <span className="text-xs text-slate-500">Saving…</span>
                             ) : null}
+                            <div className="flex flex-wrap items-center gap-3">
+                              {ADMIN_PAGE_PERMISSIONS.map((permission) => {
+                                const savingKey = `${user.id}:${permission.key}`;
+                                const isSaving = Boolean(permissionSaving[savingKey]);
+                                const checked = Boolean(
+                                  adminPagePermissions[user.id]?.[permission.key]
+                                );
+                                return (
+                                  <div key={permission.key} className="flex items-center gap-2">
+                                    <Switch
+                                      checked={checked}
+                                      onCheckedChange={(nextChecked) =>
+                                        updateAssignmentPermission(
+                                          user.id,
+                                          permission.key,
+                                          nextChecked
+                                        )
+                                      }
+                                      className={isSaving ? "opacity-60 pointer-events-none" : undefined}
+                                    />
+                                    <span className="text-xs text-slate-600">
+                                      {permission.label}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </>
                         ) : null}
                       </div>

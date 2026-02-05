@@ -15,6 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ChevronsUpDown, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import logo from "@/app/icon.png";
+import { authFetch } from "@/lib/authFetch";
 
 const playfair = Playfair_Display({
   subsets: ["latin"],
@@ -332,8 +333,8 @@ export default function CertificatesPage() {
       setStudentError("");
       try {
         const [studentsRes, classesRes] = await Promise.all([
-          fetch("/api/admin/students"),
-          fetch("/api/admin/classes"),
+          authFetch("/api/admin/students"),
+          authFetch("/api/admin/classes"),
         ]);
 
         if (!studentsRes.ok) {
@@ -393,7 +394,7 @@ export default function CertificatesPage() {
       }
       setHafazanLoading(true);
       try {
-        const response = await fetch(
+        const response = await authFetch(
           `/api/admin/student-reports?studentId=${selectedStudentId}&viewMode=tasmik`
         );
         if (!response.ok) {

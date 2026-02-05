@@ -1,6 +1,7 @@
 "use client";
 import React, { useState, useEffect } from "react";
 import { X, Plus, Edit, Trash2, Check } from "lucide-react";
+import { authFetch } from "@/lib/authFetch";
 
 interface Subject {
   id: string;
@@ -36,7 +37,7 @@ export default function ManageSubjectsModal({
   const fetchSubjects = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/admin/subjects');
+      const response = await authFetch('/api/admin/subjects');
       const data = await response.json();
       
       if (data.success) {
@@ -69,7 +70,7 @@ export default function ManageSubjectsModal({
       const url = isEditing ? `/api/admin/subjects?id=${editingSubject.id}` : '/api/admin/subjects';
       const method = isEditing ? 'PUT' : 'POST';
 
-      const response = await fetch(url, {
+      const response = await authFetch(url, {
         method,
         headers: {
           'Content-Type': 'application/json',
@@ -131,7 +132,7 @@ export default function ManageSubjectsModal({
       setFormLoading(true);
       const subjectArray = Array.from(selectedSubjects);
       const deletePromises = subjectArray.map(subjectId =>
-        fetch(`/api/admin/subjects?id=${subjectId}`, { method: 'DELETE' })
+        authFetch(`/api/admin/subjects?id=${subjectId}`, { method: 'DELETE' })
       );
 
       const responses = await Promise.all(deletePromises);
@@ -186,7 +187,7 @@ export default function ManageSubjectsModal({
     if (!confirm(`Are you sure you want to delete "${subject.name}"?`)) return;
 
     try {
-      const response = await fetch(`/api/admin/subjects?id=${subject.id}`, {
+      const response = await authFetch(`/api/admin/subjects?id=${subject.id}`, {
         method: 'DELETE',
       });
 

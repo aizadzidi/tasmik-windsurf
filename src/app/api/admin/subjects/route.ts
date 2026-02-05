@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
 import { resolveTenantIdFromRequest } from '@/lib/tenantProvisioning';
+import { requireAdminPermission } from '@/lib/adminPermissions';
 
 const adminErrorDetails = (error: unknown, fallback: string) => {
   const message = error instanceof Error ? error.message : fallback;
@@ -32,6 +33,9 @@ const toNullableText = (value?: string | null) => {
 // GET - Fetch all subjects
 export async function GET(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ['admin:exam']);
+    if (!guard.ok) return guard.response;
+
     const tenantId = await resolveTenantIdOrThrow(request);
 
     const subjects = await adminOperationSimple(async (client) => {
@@ -56,6 +60,9 @@ export async function GET(request: NextRequest) {
 // POST - Create a new subject
 export async function POST(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ['admin:exam']);
+    if (!guard.ok) return guard.response;
+
     const body = await request.json();
     const { name, description } = body;
     const tenantId = await resolveTenantIdOrThrow(request);
@@ -112,6 +119,9 @@ export async function POST(request: NextRequest) {
 // PUT - Update an existing subject
 export async function PUT(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ['admin:exam']);
+    if (!guard.ok) return guard.response;
+
     const url = new URL(request.url);
     const id = url.searchParams.get('id');
     const tenantId = await resolveTenantIdOrThrow(request);
@@ -179,6 +189,9 @@ export async function PUT(request: NextRequest) {
 // DELETE - Delete a subject
 export async function DELETE(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ['admin:exam']);
+    if (!guard.ok) return guard.response;
+
     const url = new URL(request.url);
     const id = url.searchParams.get('id');
     const tenantId = await resolveTenantIdOrThrow(request);

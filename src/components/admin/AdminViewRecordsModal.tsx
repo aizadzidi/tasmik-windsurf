@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getWeekBoundaries } from "@/lib/gradeUtils";
+import { authFetch } from "@/lib/authFetch";
 
 interface Report {
   id: string;
@@ -40,7 +41,7 @@ export default function AdminViewRecordsModal({
     setLoading(true);
     try {
       // Use API route for secure admin access
-      const response = await fetch(
+      const response = await authFetch(
         `/api/admin/student-reports?studentId=${student.id}&viewMode=${viewMode}`
       );
       

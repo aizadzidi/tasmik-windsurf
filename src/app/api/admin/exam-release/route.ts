@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { requireAdminPermission } from '@/lib/adminPermissions';
 
 export async function POST(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ['admin:exam']);
+    if (!guard.ok) return guard.response;
+
     const { examId, released } = await request.json();
     if (!examId || typeof released !== 'boolean') {
       return NextResponse.json({ error: 'examId and released are required' }, { status: 400 });

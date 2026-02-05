@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { requireAdminPermission } from '@/lib/adminPermissions';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -7,8 +8,11 @@ const supabase = createClient(
 );
 
 // GET - Fetch all conduct criteria
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ['admin:exam']);
+    if (!guard.ok) return guard.response;
+
     const { data: criterias, error } = await supabase
       .from('conduct_criterias')
       .select('*')
@@ -29,6 +33,9 @@ export async function GET() {
 // POST - Create a new conduct criteria
 export async function POST(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ['admin:exam']);
+    if (!guard.ok) return guard.response;
+
     const body = await request.json();
     const { name, description, max_score } = body;
 
@@ -80,6 +87,9 @@ export async function POST(request: NextRequest) {
 // PUT - Update an existing conduct criteria
 export async function PUT(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ['admin:exam']);
+    if (!guard.ok) return guard.response;
+
     const url = new URL(request.url);
     const id = url.searchParams.get('id');
 
@@ -142,6 +152,9 @@ export async function PUT(request: NextRequest) {
 // DELETE - Delete a conduct criteria
 export async function DELETE(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ['admin:exam']);
+    if (!guard.ok) return guard.response;
+
     const url = new URL(request.url);
     const id = url.searchParams.get('id');
 

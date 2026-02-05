@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
+import { requireAdminPermission } from "@/lib/adminPermissions";
 
 type GradeEntry = {
   letter?: string;
@@ -51,8 +52,11 @@ function validateGradingScale(scale: GradingScale): { ok: true } | { ok: false; 
 }
 
 // POST - Create a grading system (admin only via service role client)
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ["admin:exam"]);
+    if (!guard.ok) return guard.response;
+
     const body = await request.json();
     const { name, description, grading_scale } = body || {};
 
@@ -88,8 +92,11 @@ export async function POST(request: Request) {
 }
 
 // PUT - Update a grading system by id (admin only via service role client)
-export async function PUT(request: Request) {
+export async function PUT(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ["admin:exam"]);
+    if (!guard.ok) return guard.response;
+
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
     if (!id) {
@@ -132,8 +139,11 @@ export async function PUT(request: Request) {
 }
 
 // DELETE - Delete a grading system by id (admin only via service role client)
-export async function DELETE(request: Request) {
+export async function DELETE(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ["admin:exam"]);
+    if (!guard.ok) return guard.response;
+
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
     if (!id) {

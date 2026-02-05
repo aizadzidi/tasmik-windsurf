@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
+import { requireAdminPermission } from "@/lib/adminPermissions";
 
 // Types for exam data
 interface ExamStudent {
@@ -914,7 +915,10 @@ function generateTrend(currentScore: number): number[] {
 }
 
 // POST - Create or update exam results
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+  const guard = await requireAdminPermission(request, ["admin:exam"]);
+  if (!guard.ok) return guard.response;
+
   try {
     const body = await request.json();
     const { examId, studentId, subjectId, mark, conductScores } = body;

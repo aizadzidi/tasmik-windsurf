@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
 import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
+import { requireAdminPermission } from "@/lib/adminPermissions";
 
 type JuzTestPayload = {
   id?: string;
@@ -8,6 +10,15 @@ type JuzTestPayload = {
   juz_number?: number;
   [key: string]: unknown;
 };
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: { autoRefreshToken: false, persistSession: false },
+});
+
+const ADMIN_JUZ_PERMISSIONS = ["admin:reports", "admin:exam"];
 
 const adminErrorDetails = (error: unknown, fallback: string) => {
   const message =
@@ -18,6 +29,27 @@ const adminErrorDetails = (error: unknown, fallback: string) => {
         : fallback;
   const status = message.includes("Admin access required") ? 403 : 500;
   return { message, status };
+};
+
+const resolveUserId = async (request: NextRequest) => {
+  const authHeader = request.headers.get("authorization") || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  if (!token) {
+    return {
+      ok: false as const,
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    };
+  }
+
+  const { data, error } = await supabaseAuth.auth.getUser(token);
+  if (error || !data?.user?.id) {
+    return {
+      ok: false as const,
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    };
+  }
+
+  return { ok: true as const, userId: data.user.id };
 };
 
 const resolveTenantIdOrThrow = async (request: NextRequest) =>
@@ -34,10 +66,53 @@ const resolveTenantIdOrThrow = async (request: NextRequest) =>
     return data[0].id;
   });
 
+const isTeacherAssignedToStudent = async (
+  tenantId: string,
+  userId: string,
+  studentId: string
+) =>
+  adminOperationSimple(async (client) => {
+    const { data: profile, error: profileError } = await client
+      .from("user_profiles")
+      .select("role")
+      .eq("user_id", userId)
+      .eq("tenant_id", tenantId)
+      .maybeSingle();
+    if (profileError) throw profileError;
+    if (profile?.role !== "teacher") return false;
+
+    const { data: student, error: studentError } = await client
+      .from("students")
+      .select("assigned_teacher_id")
+      .eq("id", studentId)
+      .eq("tenant_id", tenantId)
+      .maybeSingle();
+    if (studentError) throw studentError;
+
+    return student?.assigned_teacher_id === userId;
+  });
+
+const resolveStudentIdForTest = async (tenantId: string, testId: string) =>
+  adminOperationSimple(async (client) => {
+    const { data, error } = await client
+      .from("juz_tests")
+      .select("student_id")
+      .eq("id", testId)
+      .eq("tenant_id", tenantId)
+      .maybeSingle();
+    if (error) throw error;
+    return data?.student_id ? String(data.student_id) : null;
+  });
+
 export async function POST(request: NextRequest) {
   try {
     const testData = (await request.json()) as JuzTestPayload;
-    const tenantId = await resolveTenantIdOrThrow(request);
+    const adminGuard = await requireAdminPermission(request, ADMIN_JUZ_PERMISSIONS);
+    if (!adminGuard.ok && adminGuard.response.status !== 403) {
+      return adminGuard.response;
+    }
+
+    const tenantId = adminGuard.ok ? adminGuard.tenantId : await resolveTenantIdOrThrow(request);
     
     // Validate required fields
     if (!testData.student_id || !testData.juz_number) {
@@ -45,6 +120,20 @@ export async function POST(request: NextRequest) {
         { error: "Missing required fields: student_id and juz_number" },
         { status: 400 }
       );
+    }
+
+    if (!adminGuard.ok) {
+      const userGuard = await resolveUserId(request);
+      if (!userGuard.ok) return userGuard.response;
+
+      const isAssigned = await isTeacherAssignedToStudent(
+        tenantId,
+        userGuard.userId,
+        String(testData.student_id)
+      );
+      if (!isAssigned) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
     }
 
     // Insert the juz test record using service-role client (bypasses RLS)
@@ -113,13 +202,31 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const studentId = searchParams.get("student_id");
-    const tenantId = await resolveTenantIdOrThrow(request);
+    const adminGuard = await requireAdminPermission(request, ADMIN_JUZ_PERMISSIONS);
+    if (!adminGuard.ok && adminGuard.response.status !== 403) {
+      return adminGuard.response;
+    }
+    const tenantId = adminGuard.ok ? adminGuard.tenantId : await resolveTenantIdOrThrow(request);
 
     if (!studentId) {
       return NextResponse.json(
         { error: "Missing student_id parameter" },
         { status: 400 }
       );
+    }
+
+    if (!adminGuard.ok) {
+      const userGuard = await resolveUserId(request);
+      if (!userGuard.ok) return userGuard.response;
+
+      const isAssigned = await isTeacherAssignedToStudent(
+        tenantId,
+        userGuard.userId,
+        studentId
+      );
+      if (!isAssigned) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
     }
 
     // Fetch juz tests for the student using service-role client
@@ -147,13 +254,36 @@ export async function PUT(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const testId = searchParams.get("id");
     const updateData = await request.json();
-    const tenantId = await resolveTenantIdOrThrow(request);
+    const adminGuard = await requireAdminPermission(request, ADMIN_JUZ_PERMISSIONS);
+    if (!adminGuard.ok && adminGuard.response.status !== 403) {
+      return adminGuard.response;
+    }
+    const tenantId = adminGuard.ok ? adminGuard.tenantId : await resolveTenantIdOrThrow(request);
 
     if (!testId) {
       return NextResponse.json(
         { error: "Missing test ID parameter" },
         { status: 400 }
       );
+    }
+
+    if (!adminGuard.ok) {
+      const userGuard = await resolveUserId(request);
+      if (!userGuard.ok) return userGuard.response;
+
+      const studentId = await resolveStudentIdForTest(tenantId, testId);
+      if (!studentId) {
+        return NextResponse.json({ error: "Test not found" }, { status: 404 });
+      }
+
+      const isAssigned = await isTeacherAssignedToStudent(
+        tenantId,
+        userGuard.userId,
+        studentId
+      );
+      if (!isAssigned) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
     }
 
     // Update the juz test record using service-role client (bypasses RLS)
@@ -180,13 +310,36 @@ export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const testId = searchParams.get("id");
-    const tenantId = await resolveTenantIdOrThrow(request);
+    const adminGuard = await requireAdminPermission(request, ADMIN_JUZ_PERMISSIONS);
+    if (!adminGuard.ok && adminGuard.response.status !== 403) {
+      return adminGuard.response;
+    }
+    const tenantId = adminGuard.ok ? adminGuard.tenantId : await resolveTenantIdOrThrow(request);
 
     if (!testId) {
       return NextResponse.json(
         { error: "Missing test ID parameter" },
         { status: 400 }
       );
+    }
+
+    if (!adminGuard.ok) {
+      const userGuard = await resolveUserId(request);
+      if (!userGuard.ok) return userGuard.response;
+
+      const studentId = await resolveStudentIdForTest(tenantId, testId);
+      if (!studentId) {
+        return NextResponse.json({ error: "Test not found" }, { status: 404 });
+      }
+
+      const isAssigned = await isTeacherAssignedToStudent(
+        tenantId,
+        userGuard.userId,
+        studentId
+      );
+      if (!isAssigned) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
     }
 
     // Delete the juz test record using service-role client (bypasses RLS)

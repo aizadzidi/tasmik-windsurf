@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
+import { requireAdminPermission } from '@/lib/adminPermissions';
 
 type AdjustmentPayload = {
   parentId: string;
@@ -33,6 +34,9 @@ export async function PUT(request: NextRequest, context: AdjustmentRouteContext)
   const { id: adjustmentId } = await context.params;
 
   try {
+    const guard = await requireAdminPermission(request, ['admin:payments']);
+    if (!guard.ok) return guard.response;
+
     const payload = (await request.json()) as AdjustmentPayload;
 
     if (!adjustmentId) {

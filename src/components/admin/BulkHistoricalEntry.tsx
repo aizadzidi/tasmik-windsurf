@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from "react";
 import { Check, ChevronsUpDown } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { authFetch } from "@/lib/authFetch";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -42,7 +43,7 @@ export default function BulkHistoricalEntry() {
   const fetchStudents = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/students", { cache: "no-store" });
+      const res = await authFetch("/api/admin/students", { cache: "no-store" });
       if (!res.ok) {
         const j = await res.json().catch(() => ({} as Record<string, unknown>));
         throw new Error((j?.error as string) || `HTTP ${res.status}`);

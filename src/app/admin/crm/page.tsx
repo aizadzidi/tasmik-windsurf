@@ -5,6 +5,7 @@ import AdminNavbar from "@/components/admin/AdminNavbar";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
+import { authFetch } from "@/lib/authFetch";
 import { Plus, Settings, UserPlus } from "lucide-react";
 
 type RecordType = "prospect" | "student";
@@ -802,11 +803,11 @@ export default function AdminCrmPage() {
       try {
         const [studentsRes, parentsRes, teachersRes, classesRes, stagesRes] =
           await Promise.all([
-            fetch("/api/admin/students?include_prospects=true"),
-            fetch("/api/admin/users?role=parent"),
-            fetch("/api/admin/users?role=teacher"),
-            fetch("/api/admin/classes"),
-            fetch("/api/admin/crm-stages")
+            authFetch("/api/admin/students?include_prospects=true"),
+            authFetch("/api/admin/users?role=parent"),
+            authFetch("/api/admin/users?role=teacher"),
+            authFetch("/api/admin/classes"),
+            authFetch("/api/admin/crm-stages")
           ]);
 
         if (studentsRes.ok) {
@@ -976,7 +977,7 @@ export default function AdminCrmPage() {
         reason_leaving: updates.reason_leaving
       };
 
-      const response = await fetch("/api/admin/students", {
+      const response = await authFetch("/api/admin/students", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1034,7 +1035,7 @@ export default function AdminCrmPage() {
     setDetailDeleting(true);
     setDetailError("");
     try {
-      const response = await fetch(
+      const response = await authFetch(
         `/api/admin/students?id=${selectedStudent.id}`,
         { method: "DELETE" }
       );
@@ -1235,7 +1236,7 @@ export default function AdminCrmPage() {
             slugifyStageKey(stage.label) ||
             `stage_${stage.sortOrder ?? 0}`;
           if (!stage.id) {
-            const response = await fetch("/api/admin/crm-stages", {
+            const response = await authFetch("/api/admin/crm-stages", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -1252,7 +1253,7 @@ export default function AdminCrmPage() {
               throw new Error(await parseError(response));
             }
           } else {
-            const response = await fetch("/api/admin/crm-stages", {
+            const response = await authFetch("/api/admin/crm-stages", {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -1271,7 +1272,7 @@ export default function AdminCrmPage() {
         })
       );
 
-      const refreshed = await fetch("/api/admin/crm-stages");
+      const refreshed = await authFetch("/api/admin/crm-stages");
       if (!refreshed.ok) {
         throw new Error(await parseError(refreshed));
       }
@@ -1315,7 +1316,7 @@ export default function AdminCrmPage() {
     setAddLoading(true);
     setAddError("");
     try {
-      const response = await fetch("/api/admin/students", {
+      const response = await authFetch("/api/admin/students", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

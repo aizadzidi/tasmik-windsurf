@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
+import { requireAdminPermission } from '@/lib/adminPermissions';
 
 type FeeRouteContext = {
   params: Promise<{ feeId: string }>;
@@ -7,6 +8,9 @@ type FeeRouteContext = {
 
 export async function PUT(req: NextRequest, context: FeeRouteContext) {
   try {
+    const guard = await requireAdminPermission(req, ['admin:payments']);
+    if (!guard.ok) return guard.response;
+
     const { feeId } = await context.params;
     if (!feeId) {
       return NextResponse.json({ error: 'Fee ID required' }, { status: 400 });
@@ -47,8 +51,11 @@ export async function PUT(req: NextRequest, context: FeeRouteContext) {
   }
 }
 
-export async function DELETE(_req: NextRequest, context: FeeRouteContext) {
+export async function DELETE(req: NextRequest, context: FeeRouteContext) {
   try {
+    const guard = await requireAdminPermission(req, ['admin:payments']);
+    if (!guard.ok) return guard.response;
+
     const { feeId } = await context.params;
     if (!feeId) {
       return NextResponse.json({ error: 'Fee ID required' }, { status: 400 });

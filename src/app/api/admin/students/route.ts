@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
 import { resolveTenantIdFromRequest } from '@/lib/tenantProvisioning';
+import { requireAdminPermission } from '@/lib/adminPermissions';
 
 const adminErrorDetails = (error: unknown, fallback: string) => {
   const message = error instanceof Error ? error.message : fallback;
@@ -35,6 +36,14 @@ const resolveDefaultStage = (recordType?: string | null) =>
 // GET - Fetch students (admin only) - optionally filter by ID
 export async function GET(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, [
+      'admin:dashboard',
+      'admin:crm',
+      'admin:certificates',
+      'admin:historical',
+    ]);
+    if (!guard.ok) return guard.response;
+
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
     const includeProspects = searchParams.get('include_prospects') === 'true';
@@ -73,6 +82,14 @@ export async function GET(request: NextRequest) {
 // POST - Create new student (admin only)
 export async function POST(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, [
+      'admin:dashboard',
+      'admin:crm',
+      'admin:certificates',
+      'admin:historical',
+    ]);
+    if (!guard.ok) return guard.response;
+
     const body = await request.json();
     const {
       name,
@@ -183,6 +200,14 @@ export async function POST(request: NextRequest) {
 // PUT - Update student (admin only)
 export async function PUT(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, [
+      'admin:dashboard',
+      'admin:crm',
+      'admin:certificates',
+      'admin:historical',
+    ]);
+    if (!guard.ok) return guard.response;
+
     const body = await request.json();
     const {
       id,
@@ -318,6 +343,14 @@ export async function PUT(request: NextRequest) {
 // DELETE - Delete student (admin only)
 export async function DELETE(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, [
+      'admin:dashboard',
+      'admin:crm',
+      'admin:certificates',
+      'admin:historical',
+    ]);
+    if (!guard.ok) return guard.response;
+
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
     const tenantId = await resolveTenantIdOrThrow(request);

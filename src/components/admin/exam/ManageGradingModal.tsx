@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Plus, Edit2, Trash2, Award, Save } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
+import { authFetch } from '@/lib/authFetch';
 import { useGradingSystems } from '@/hooks/useGradingSystems';
 import type { GradingSystem } from '@/lib/data/getGradingSystems';
 
@@ -134,7 +135,7 @@ export default function ManageGradingModal({ isOpen, onClose, onRefresh: _onRefr
     }
 
     try {
-      const res = await fetch('/api/admin/grading-systems', {
+      const res = await authFetch('/api/admin/grading-systems', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -183,7 +184,7 @@ setShowCreateForm(false);
         const confirmed = confirm(`This grading system is used by ${usedBy} exam(s). Changes will affect existing results/grades. Continue?`);
         if (!confirmed) return;
       }
-      const res = await fetch(`/api/admin/grading-systems?id=${editingSystem.id}`, {
+      const res = await authFetch(`/api/admin/grading-systems?id=${editingSystem.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -224,7 +225,7 @@ setEditingSystem(null);
   const handleDelete = async (id: string, name: string) => {
     if (confirm(`Are you sure you want to delete the grading system "${name}"?`)) {
       try {
-        const res = await fetch(`/api/admin/grading-systems?id=${id}`, { method: 'DELETE' });
+        const res = await authFetch(`/api/admin/grading-systems?id=${id}`, { method: 'DELETE' });
         const json = await res.json();
         if (!res.ok || !json?.success) {
           throw new Error(json?.error || 'Failed to delete grading system');

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
+import { requireAdminPermission } from '@/lib/adminPermissions';
 
 type StudentRow = {
   id: string;
@@ -41,6 +42,9 @@ type ReportRow = {
 // GET - Fetch student progress data for admin reports page
 export async function GET(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ['admin:reports']);
+    if (!guard.ok) return guard.response;
+
     const { searchParams } = new URL(request.url);
     const viewMode = searchParams.get('viewMode') || 'tasmik';
 

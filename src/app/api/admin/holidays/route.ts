@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
+import { requireAdminPermission } from "@/lib/adminPermissions";
 
 type HolidayPayload = {
   id?: string;
@@ -19,8 +20,11 @@ const sanitizePayload = (payload: HolidayPayload) => {
   return { title, start_date, end_date, description, category };
 };
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ["admin:attendance"]);
+    if (!guard.ok) return guard.response;
+
     const data = await adminOperationSimple(async (client) => {
       const { data, error } = await client
         .from("school_holidays")
@@ -39,6 +43,9 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ["admin:attendance"]);
+    if (!guard.ok) return guard.response;
+
     const raw = (await request.json()) as HolidayPayload;
     const { title, start_date, end_date, description, category } = sanitizePayload(raw);
     if (!title || !start_date || !end_date) {
@@ -73,6 +80,9 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ["admin:attendance"]);
+    if (!guard.ok) return guard.response;
+
     const raw = (await request.json()) as HolidayPayload;
     if (!raw.id) {
       return NextResponse.json({ success: false, error: "Holiday id is required" }, { status: 400 });
@@ -111,6 +121,9 @@ export async function PUT(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ["admin:attendance"]);
+    if (!guard.ok) return guard.response;
+
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
     if (!id) {

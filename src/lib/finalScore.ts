@@ -1,5 +1,6 @@
 import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
 import { rpcGetConductSummary } from '@/data/conduct';
+import { authFetch } from '@/lib/authFetch';
 
 type ExamClass = {
   conduct_weightage?: number | null;
@@ -66,7 +67,7 @@ function mean(values: Array<number | null | undefined>): number | null {
 // Fallback to 0 if ambiguous.
 async function fetchConductWeightageFromMeta(examId: string, allowedSubjectIds: string[]): Promise<number> {
   try {
-    const res = await fetch('/api/admin/exam-metadata');
+    const res = await authFetch('/api/admin/exam-metadata');
     const meta = await res.json();
     const exams = Array.isArray(meta?.exams) ? (meta.exams as ExamMeta[]) : [];
     const exam = exams.find((item) => String(item?.id) === String(examId));

@@ -9,6 +9,7 @@ import type {
   ParentOutstandingRow,
   PaymentRecord
 } from '@/types/payments';
+import { authFetch } from '@/lib/authFetch';
 
 const ADMIN_PAYMENTS_BASE = '/api/admin/payments';
 
@@ -21,12 +22,12 @@ async function handleResponse<T>(response: Response): Promise<T> {
 }
 
 export async function fetchAdminPayments() {
-  const response = await fetch(ADMIN_PAYMENTS_BASE, { cache: 'no-store' });
+  const response = await authFetch(ADMIN_PAYMENTS_BASE, { cache: 'no-store' });
   return handleResponse<{ payments: PaymentRecord[] }>(response);
 }
 
 export async function fetchFeeCatalog() {
-  const response = await fetch(`${ADMIN_PAYMENTS_BASE}/fees`, { cache: 'no-store' });
+  const response = await authFetch(`${ADMIN_PAYMENTS_BASE}/fees`, { cache: 'no-store' });
   return handleResponse<{ fees: FeeCatalogItem[] }>(response);
 }
 
@@ -42,7 +43,7 @@ export interface FeePayload {
 }
 
 export async function createFee(payload: FeePayload) {
-  const response = await fetch(`${ADMIN_PAYMENTS_BASE}/fees`, {
+  const response = await authFetch(`${ADMIN_PAYMENTS_BASE}/fees`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -51,7 +52,7 @@ export async function createFee(payload: FeePayload) {
 }
 
 export async function updateFee(id: string, payload: Partial<FeePayload>) {
-  const response = await fetch(`${ADMIN_PAYMENTS_BASE}/fees/${id}`, {
+  const response = await authFetch(`${ADMIN_PAYMENTS_BASE}/fees/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -60,21 +61,21 @@ export async function updateFee(id: string, payload: Partial<FeePayload>) {
 }
 
 export async function deleteFee(id: string) {
-  const response = await fetch(`${ADMIN_PAYMENTS_BASE}/fees/${id}`, {
+  const response = await authFetch(`${ADMIN_PAYMENTS_BASE}/fees/${id}`, {
     method: 'DELETE'
   });
   return handleResponse<{ success: boolean }>(response);
 }
 
 export async function fetchOutstandingSummary() {
-  const response = await fetch(`${ADMIN_PAYMENTS_BASE}/summary`, { cache: 'no-store' });
+  const response = await authFetch(`${ADMIN_PAYMENTS_BASE}/summary`, { cache: 'no-store' });
   return handleResponse<{ summary: AdminOutstandingSummary; monthlyLedger: AdminMonthlyLedgerPoint[] }>(
     response
   );
 }
 
 export async function fetchOutstandingParents(limit = 50) {
-  const response = await fetch(
+  const response = await authFetch(
     `${ADMIN_PAYMENTS_BASE}/outstanding?limit=${encodeURIComponent(limit)}`,
     { cache: 'no-store' }
   );
@@ -92,7 +93,7 @@ export interface BalanceAdjustmentPayload {
 }
 
 export async function listBalanceAdjustments(limit = 50) {
-  const response = await fetch(
+  const response = await authFetch(
     `${ADMIN_PAYMENTS_BASE}/adjustments?limit=${encodeURIComponent(limit)}`,
     { cache: 'no-store' }
   );
@@ -100,7 +101,7 @@ export async function listBalanceAdjustments(limit = 50) {
 }
 
 export async function createBalanceAdjustment(payload: BalanceAdjustmentPayload) {
-  const response = await fetch(`${ADMIN_PAYMENTS_BASE}/adjustments`, {
+  const response = await authFetch(`${ADMIN_PAYMENTS_BASE}/adjustments`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -109,7 +110,7 @@ export async function createBalanceAdjustment(payload: BalanceAdjustmentPayload)
 }
 
 export async function updateBalanceAdjustment(id: string, payload: BalanceAdjustmentPayload) {
-  const response = await fetch(`${ADMIN_PAYMENTS_BASE}/adjustments/${id}`, {
+  const response = await authFetch(`${ADMIN_PAYMENTS_BASE}/adjustments/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -118,11 +119,11 @@ export async function updateBalanceAdjustment(id: string, payload: BalanceAdjust
 }
 
 export async function fetchParentUsers() {
-  const response = await fetch(`${ADMIN_PAYMENTS_BASE}/parents`, { cache: 'no-store' });
+  const response = await authFetch(`${ADMIN_PAYMENTS_BASE}/parents`, { cache: 'no-store' });
   return handleResponse<{ parents: AdminParentUser[] }>(response);
 }
 
 export async function fetchAdminStudents() {
-  const response = await fetch('/api/admin/students', { cache: 'no-store' });
+  const response = await authFetch('/api/admin/students', { cache: 'no-store' });
   return handleResponse<AdminStudent[]>(response);
 }

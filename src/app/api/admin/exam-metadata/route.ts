@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { requireAdminPermission } from "@/lib/adminPermissions";
 
 interface CreateExamData {
   title: string;
@@ -152,8 +153,11 @@ export async function GET() {
 }
 
 // POST - Create new exam
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ["admin:exam"]);
+    if (!guard.ok) return guard.response;
+
     // Parse raw text first to ensure we can gracefully handle invalid JSON
     const raw = await request.text();
     let body: CreateExamData;
@@ -363,8 +367,11 @@ export async function POST(request: Request) {
 }
 
 // PUT - Update existing exam
-export async function PUT(request: Request) {
+export async function PUT(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ["admin:exam"]);
+    if (!guard.ok) return guard.response;
+
     const { searchParams } = new URL(request.url);
     const examId = searchParams.get('id');
     
@@ -579,8 +586,11 @@ export async function PUT(request: Request) {
 }
 
 // DELETE - Delete existing exam
-export async function DELETE(request: Request) {
+export async function DELETE(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ["admin:exam"]);
+    if (!guard.ok) return guard.response;
+
     const { searchParams } = new URL(request.url);
     const examId = searchParams.get('id');
     

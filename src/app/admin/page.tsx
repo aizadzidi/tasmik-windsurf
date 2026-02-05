@@ -9,6 +9,7 @@ import { ChevronsUpDown, Check, Plus, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ClassDistributionChart from "@/components/admin/ClassDistributionChart";
 import TeacherAssignmentChart from "@/components/admin/TeacherAssignmentChart";
+import { authFetch } from "@/lib/authFetch";
 
 interface Student {
   id: string;
@@ -119,10 +120,10 @@ export default function AdminPage() {
       try {
         if (isDev) console.log('Admin page: Starting parallel data fetch...');
         const [studentsRes, parentsRes, teachersRes, classesRes] = await Promise.all([
-          fetch('/api/admin/students'),
-          fetch('/api/admin/users?role=parent'),
-          fetch('/api/admin/users?role=teacher'),
-          fetch('/api/admin/classes'),
+          authFetch('/api/admin/students'),
+          authFetch('/api/admin/users?role=parent'),
+          authFetch('/api/admin/users?role=teacher'),
+          authFetch('/api/admin/classes'),
         ]);
 
         if (studentsRes.ok) {
@@ -188,7 +189,7 @@ export default function AdminPage() {
     setError("");
     
     try {
-      const response = await fetch('/api/admin/students', {
+      const response = await authFetch('/api/admin/students', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -242,7 +243,7 @@ export default function AdminPage() {
     setClassSuccess("");
 
     try {
-      const response = await fetch('/api/admin/classes', {
+      const response = await authFetch('/api/admin/classes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, level: newClassLevel || null })
@@ -288,7 +289,7 @@ export default function AdminPage() {
     setClassSuccess("");
 
     try {
-      const response = await fetch('/api/admin/classes', {
+      const response = await authFetch('/api/admin/classes', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: classId, name, level: editingClassLevel || null })
@@ -328,7 +329,7 @@ export default function AdminPage() {
     setClassSuccess("");
 
     try {
-      const response = await fetch(`/api/admin/classes?id=${classItem.id}`, {
+      const response = await authFetch(`/api/admin/classes?id=${classItem.id}`, {
         method: 'DELETE'
       });
 
@@ -383,7 +384,7 @@ export default function AdminPage() {
     setEditError("");
     
     try {
-      const response = await fetch('/api/admin/students', {
+      const response = await authFetch('/api/admin/students', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -417,7 +418,7 @@ export default function AdminPage() {
     if (!window.confirm('Are you sure you want to delete this student?')) return;
     
     try {
-      const response = await fetch(`/api/admin/students?id=${id}`, {
+      const response = await authFetch(`/api/admin/students?id=${id}`, {
         method: 'DELETE'
       });
 
@@ -442,7 +443,7 @@ export default function AdminPage() {
     setError("");
     
     try {
-      const response = await fetch('/api/admin/students/completion', {
+      const response = await authFetch('/api/admin/students/completion', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

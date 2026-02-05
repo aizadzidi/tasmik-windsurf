@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
+import { requireAdminPermission } from '@/lib/adminPermissions';
 
 // GET - Fetch individual student reports for admin view modal
 export async function GET(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, [
+      'admin:reports',
+      'admin:certificates',
+    ]);
+    if (!guard.ok) return guard.response;
+
     const { searchParams } = new URL(request.url);
     const studentId = searchParams.get('studentId');
     const viewMode = searchParams.get('viewMode') || 'all';

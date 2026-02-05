@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
+import { requireAdminPermission } from '@/lib/adminPermissions';
 
 const asMonthKey = (value: unknown): string | null => {
   if (!value) return null;
@@ -13,11 +14,14 @@ const asMonthKey = (value: unknown): string | null => {
   return null;
 };
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const limit = Math.min(Math.max(Number(searchParams.get('limit')) || 50, 1), 200);
 
   try {
+    const guard = await requireAdminPermission(request, ['admin:payments']);
+    if (!guard.ok) return guard.response;
+
     const data = await adminOperationSimple(async client => {
       const { data: outstandingRows, error } = await client
         .from('parent_outstanding_summary')

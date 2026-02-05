@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
+import { requireAdminPermission } from '@/lib/adminPermissions';
 
 const asMonthKey = (value: unknown): string | null => {
   if (!value) return null;
@@ -13,8 +14,11 @@ const asMonthKey = (value: unknown): string | null => {
   return null;
 };
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ['admin:payments']);
+    if (!guard.ok) return guard.response;
+
     const data = await adminOperationSimple(async client => {
       const [
         { data: outstandingRows, error: outstandingError },

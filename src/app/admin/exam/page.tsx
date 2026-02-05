@@ -13,6 +13,7 @@ import ManageGradingModal from "@/components/admin/exam/ManageGradingModal";
 import { Plus } from "lucide-react";
 import ManageActionsMenu from "@/components/admin/exam/ManageActionsMenu";
 import { parseJsonSafe } from "@/lib/fetchUtils";
+import { authFetch } from "@/lib/authFetch";
 
 // Types
 interface ClassData {
@@ -74,7 +75,7 @@ export default function AdminExamPage() {
   // Fetch exam metadata (exams, classes, subjects) - with safety checks
   const fetchExamMetadata = async () => {
     try {
-      const response = await fetch('/api/admin/exam-metadata');
+      const response = await authFetch('/api/admin/exam-metadata');
       const data: ExamMetadata = await parseJsonSafe(response);
       
       if (data.success) {
@@ -106,7 +107,7 @@ export default function AdminExamPage() {
       if (selectedExam) params.append('examId', selectedExam);
       if (selectedClass) params.append('classId', selectedClass);
       
-      const response = await fetch(`/api/admin/exams?${params}`);
+      const response = await authFetch(`/api/admin/exams?${params}`);
       const data: ExamDataResponse = await parseJsonSafe(response);
       
       if (data.success) {
@@ -313,7 +314,7 @@ export default function AdminExamPage() {
         }
       };
 
-      const response = await fetch('/api/admin/exam-metadata', {
+      const response = await authFetch('/api/admin/exam-metadata', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -357,7 +358,7 @@ export default function AdminExamPage() {
         }
       };
 
-      const response = await fetch(`/api/admin/exam-metadata?id=${examId}`, {
+      const response = await authFetch(`/api/admin/exam-metadata?id=${examId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -390,7 +391,7 @@ export default function AdminExamPage() {
     if (confirm(`Are you sure you want to delete the exam "${examName}"? This action cannot be undone.`)) {
       try {
         // First attempt: try to delete without cascade
-        let response = await fetch(`/api/admin/exam-metadata?id=${examId}`, {
+        let response = await authFetch(`/api/admin/exam-metadata?id=${examId}`, {
           method: 'DELETE',
         });
         let result = await parseJsonSafe(response);
@@ -413,7 +414,7 @@ export default function AdminExamPage() {
           
           if (cascadeConfirm) {
             // Attempt cascade deletion
-            response = await fetch(`/api/admin/exam-metadata?id=${examId}&cascade=true`, {
+            response = await authFetch(`/api/admin/exam-metadata?id=${examId}&cascade=true`, {
               method: 'DELETE',
             });
             result = await parseJsonSafe(response);
@@ -572,7 +573,7 @@ export default function AdminExamPage() {
         }}
         onToggleRelease={async (exam, next) => {
           try {
-            const res = await fetch('/api/admin/exam-release', {
+            const res = await authFetch('/api/admin/exam-release', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ examId: exam.id, released: next })

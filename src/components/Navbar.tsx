@@ -5,6 +5,8 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import SignOutButton from "@/components/SignOutButton";
 import type { ProgramScope } from "@/types/programs";
+import { useAdminPermissions } from "@/hooks/useAdminPermissions";
+import { ADMIN_PERMISSION_KEYS } from "@/lib/adminAccess";
 
 type NavbarProps = {
   programScope?: ProgramScope | null;
@@ -13,12 +15,16 @@ type NavbarProps = {
 export default function Navbar({ programScope }: NavbarProps) {
   const pathname = usePathname();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const { isAdmin: isAdminUser, permissions } = useAdminPermissions();
   const isOnlineOnly = programScope === "online";
 
   // Determine the user role and dashboard info based on current path
   const isParent = pathname.startsWith('/parent');
   const isTeacher = pathname.startsWith('/teacher');
-  const isAdmin = pathname.startsWith('/admin');
+  const isAdminRoute = pathname.startsWith('/admin');
+
+  const hasAdminAccess =
+    isAdminUser || ADMIN_PERMISSION_KEYS.some((key) => permissions.has(key));
 
   const navClasses = isParent
     ? "relative z-50 bg-gradient-to-br from-[#f8fafc]/92 via-white/92 to-[#f8fafc]/92 backdrop-blur-xl border-b border-slate-200/50 shadow-md"
@@ -113,10 +119,39 @@ export default function Navbar({ programScope }: NavbarProps) {
                 },
               ]
             : []),
+          ...(hasAdminAccess
+            ? [
+                {
+                  href: "/admin",
+                  label: "Admin",
+                  icon: (
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 11c1.657 0 3-1.343 3-3S13.657 5 12 5s-3 1.343-3 3 1.343 3 3 3z"
+                      />
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M19.4 15a7.97 7.97 0 00-14.8 0"
+                      />
+                    </svg>
+                  ),
+                },
+              ]
+            : []),
           
         ]
       };
-    } else if (isAdmin) {
+    } else if (isAdminRoute) {
       return {
         dashboardHref: "/admin",
         dashboardLabel: "Admin Dashboard",

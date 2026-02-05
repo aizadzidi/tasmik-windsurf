@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { getPageRangeFromJuz } from "@/lib/quranMapping";
+import { authFetch } from "@/lib/authFetch";
 
 interface JuzTestModalProps {
   isOpen: boolean;
@@ -276,7 +277,7 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
 
       console.log("Submitting test data:", testData);
 
-      const response = await fetch('/api/admin/juz-tests', {
+      const response = await authFetch('/api/admin/juz-tests', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

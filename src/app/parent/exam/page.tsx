@@ -3,6 +3,7 @@ import React from "react";
 import Navbar from "@/components/Navbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { supabase } from "@/lib/supabaseClient";
+import { authFetch } from "@/lib/authFetch";
 import StudentTable, { type StudentData } from "@/components/admin/exam/StudentTable";
 import StudentDetailsPanel from "@/components/exam/StudentDetailsPanelShared";
 import { useRouter } from "next/navigation";
@@ -59,7 +60,7 @@ function ParentExamContent({ programScope }: { programScope: ProgramScope }) {
 
   const loadMetadata = React.useCallback(async () => {
     try {
-      const metaRes = await fetch("/api/admin/exam-metadata");
+      const metaRes = await authFetch("/api/admin/exam-metadata");
       const meta = (await metaRes.json()) as ExamMetadataResponse;
       const released = (meta.exams ?? []).filter((exam) => exam.released === true);
       setExams(released);
@@ -77,7 +78,7 @@ function ParentExamContent({ programScope }: { programScope: ProgramScope }) {
     }
     setLoading(true);
     try {
-      const res = await fetch(`/api/admin/exams?examId=${examId}`);
+      const res = await authFetch(`/api/admin/exams?examId=${examId}`);
       const json = (await res.json()) as ExamSummaryResponse;
       const subjectNames: string[] = Array.isArray(json.subjects) ? json.subjects : [];
 

@@ -1,6 +1,7 @@
 "use client";
 import React from 'react';
 import { JuzTestSession } from '@/types/juzTest';
+import { authFetch } from '@/lib/authFetch';
 
 interface AdminScheduleTestModalProps {
   date: string; // YYYY-MM-DD
@@ -22,7 +23,7 @@ export default function AdminScheduleTestModal({ date, onClose, onScheduled }: A
   React.useEffect(() => {
     async function load() {
       try {
-        const res = await fetch('/api/admin/students');
+        const res = await authFetch('/api/admin/students');
         const list: unknown = await res.json();
         if (Array.isArray(list)) {
           setStudents(list.map((s) => ({ id: String((s as Record<string, unknown>).id), name: String((s as Record<string, unknown>).name || '') })));

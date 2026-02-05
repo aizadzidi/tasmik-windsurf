@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
 import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
+import { requireAdminPermission } from "@/lib/adminPermissions";
 
 type AssignmentRow = {
   teacher_id: string;
@@ -10,6 +11,9 @@ type AssignmentRow = {
 
 export async function GET(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ["admin:users"]);
+    if (!guard.ok) return guard.response;
+
     const data = await adminOperationSimple(async (client) => {
       const tenantId = await resolveTenantIdFromRequest(request, client);
       if (!tenantId) {
@@ -50,6 +54,9 @@ export async function GET(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ["admin:users"]);
+    if (!guard.ok) return guard.response;
+
     const body = await request.json();
     const { teacher_id, program_types } = body as {
       teacher_id?: string;

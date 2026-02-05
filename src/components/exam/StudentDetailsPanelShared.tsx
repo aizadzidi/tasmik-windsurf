@@ -13,6 +13,7 @@ import {
 } from '@/data/exams';
 import { rpcGetConductSummary, type ConductSummary } from '@/data/conduct';
 import { supabase } from '@/lib/supabaseClient';
+import { authFetch } from '@/lib/authFetch';
 import { useWeightedAverages } from '@/hooks/useWeightedAverages';
 import { computeGrade, getGradingScale, type GradingScale } from '@/lib/gradingUtils';
 
@@ -269,7 +270,7 @@ export default function StudentDetailsPanelShared({
     (async () => {
       try {
         if (!examId) { setConductWeightagePct(null); return; }
-        const res = await fetch('/api/admin/exam-metadata');
+        const res = await authFetch('/api/admin/exam-metadata');
         const meta = await res.json();
         const exams = Array.isArray(meta?.exams) ? (meta.exams as Array<{ id?: string | number; exam_classes?: Array<{ conduct_weightage?: number; classes?: { id: string } }> }>) : [];
         const exam = exams.find((e) => String(e?.id) === String(examId));

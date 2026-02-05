@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
+import { requireAdminPermission } from '@/lib/adminPermissions';
 
 type AdjustmentPayload = {
   parentId: string;
@@ -25,11 +26,14 @@ function normalizeMonthKey(input: string | null | undefined): string {
   return `${match[1]}-${match[2]}-01`;
 }
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const limit = Math.min(Math.max(Number(searchParams.get('limit')) || 50, 1), 200);
 
   try {
+    const guard = await requireAdminPermission(request, ['admin:payments']);
+    if (!guard.ok) return guard.response;
+
     const adjustments = await adminOperationSimple(async client => {
       const { data, error } = await client
         .from('parent_balance_adjustments')
@@ -59,8 +63,11 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ['admin:payments']);
+    if (!guard.ok) return guard.response;
+
     const payload = (await request.json()) as AdjustmentPayload;
 
     if (!payload.parentId) {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
+import { requireAdminPermission } from '@/lib/adminPermissions';
 
 const DEFAULT_CATEGORY = 'tuition';
 const DEFAULT_BILLING = 'monthly';
@@ -12,8 +13,11 @@ function slugify(value: string) {
     .slice(0, 60);
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ['admin:payments']);
+    if (!guard.ok) return guard.response;
+
     const fees = await adminOperationSimple(async client => {
       const { data, error } = await client
         .from('payment_fee_catalog')
@@ -38,6 +42,9 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ['admin:payments']);
+    if (!guard.ok) return guard.response;
+
     const body = await request.json();
     const {
       name,

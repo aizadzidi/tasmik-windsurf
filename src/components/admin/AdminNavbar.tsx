@@ -7,6 +7,7 @@ import SignOutButton from "@/components/SignOutButton";
 import NotificationPanel from "./NotificationPanel";
 import { notificationService } from "@/lib/notificationService";
 import { AnimatePresence, motion } from "framer-motion";
+import { useAdminPermissions } from "@/hooks/useAdminPermissions";
 
 const AdminNavbar = () => {
   const pathname = usePathname();
@@ -14,11 +15,14 @@ const AdminNavbar = () => {
   const [showNotifications, setShowNotifications] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const { loading, isAdmin, role, permissions } = useAdminPermissions();
+  const showTeacherLink = role === "teacher";
 
   const navItems = [
     { 
       href: "/admin", 
       label: "Dashboard", 
+      permission: "admin:dashboard",
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
@@ -28,6 +32,7 @@ const AdminNavbar = () => {
     {
       href: "/admin/crm",
       label: "CRM",
+      permission: "admin:crm",
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
@@ -37,6 +42,7 @@ const AdminNavbar = () => {
     { 
       href: "/admin/reports", 
       label: "Reports", 
+      permission: "admin:reports",
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
@@ -46,6 +52,7 @@ const AdminNavbar = () => {
     { 
       href: "/admin/payments",
       label: "Payments",
+      permission: "admin:payments",
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-2m4-3H9m8-4l4 4-4 4" />
@@ -55,6 +62,7 @@ const AdminNavbar = () => {
     { 
       href: "/admin/attendance", 
       label: "Attendance", 
+      permission: "admin:attendance",
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <rect x="3" y="4" width="18" height="18" rx="2" ry="2" strokeWidth={2} />
@@ -66,6 +74,7 @@ const AdminNavbar = () => {
     { 
       href: "/admin/exam", 
       label: "Exams", 
+      permission: "admin:exam",
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -75,6 +84,7 @@ const AdminNavbar = () => {
     {
       href: "/admin/certificates",
       label: "Certificates",
+      permission: "admin:certificates",
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4h7l4 4v12a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2z" />
@@ -86,6 +96,7 @@ const AdminNavbar = () => {
     { 
       href: "/admin/historical", 
       label: "Historical Entry", 
+      permission: "admin:historical",
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
@@ -95,6 +106,7 @@ const AdminNavbar = () => {
     {
       href: "/admin/users",
       label: "User Roles",
+      permission: "admin:users",
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0z" />
@@ -103,6 +115,10 @@ const AdminNavbar = () => {
       )
     },
   ];
+
+  const visibleNavItems = navItems.filter(
+    (item) => !loading && (isAdmin || permissions.has(item.permission))
+  );
 
   const isActive = (href: string) => {
     if (href === "/admin") {
@@ -254,7 +270,7 @@ const AdminNavbar = () => {
           </div>
 
           <div className="mt-6 flex-1 space-y-2 overflow-y-auto pr-2">
-            {navItems.map((item) => {
+            {visibleNavItems.map((item) => {
               const active = isActive(item.href);
               return (
                 <Link
@@ -295,6 +311,28 @@ const AdminNavbar = () => {
           </div>
 
           <div className="mt-auto space-y-4 pt-4">
+            {showTeacherLink && (
+              <Link
+                href="/teacher"
+                className={`group relative flex w-full items-center ${
+                  iconOnly ? "justify-center px-3 py-3" : "justify-between px-4 py-3"
+                } rounded-2xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm transition-all duration-200 transform-gpu hover:scale-[1.02] hover:shadow-lg hover:border-slate-200/90`}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600 shadow-sm">
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                  </span>
+                  {!iconOnly && (
+                    <div className="text-left">
+                      <p className="text-xs text-slate-500">Teacher</p>
+                      <p className="text-sm font-bold text-slate-900">Back to Class</p>
+                    </div>
+                  )}
+                </div>
+              </Link>
+            )}
             <button
               onClick={handleNotificationClick}
               className={`group relative flex w-full items-center ${iconOnly ? "justify-center px-3 py-3" : "justify-between px-4 py-3"} rounded-2xl border border-slate-200 bg-white text-sm font-semibold text-slate-800 shadow-sm transition-all duration-200 transform-gpu hover:scale-[1.02] hover:shadow-lg hover:border-slate-200/90 hover:bg-white`}
@@ -353,7 +391,7 @@ const AdminNavbar = () => {
             </div>
 
             <div className="mt-4 flex-1 space-y-2 overflow-y-auto pr-2">
-              {navItems.map((item) => {
+              {visibleNavItems.map((item) => {
                 const active = isActive(item.href);
                 return (
                 <Link
@@ -380,6 +418,22 @@ const AdminNavbar = () => {
             </div>
 
             <div className="mt-auto space-y-3">
+              {showTeacherLink && (
+                <Link
+                  href="/teacher"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition-all duration-200 transform-gpu hover:scale-[1.02] hover:shadow-md hover:border-slate-200/90"
+                >
+                  <span className="flex items-center gap-3">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
+                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                      </svg>
+                    </span>
+                    <span>Back to Teacher</span>
+                  </span>
+                </Link>
+              )}
               <button
                 onClick={() => {
                   handleNotificationClick();

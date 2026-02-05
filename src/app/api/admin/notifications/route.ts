@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
 import { ok } from '@/types/http';
+import { requireAdminPermission } from '@/lib/adminPermissions';
 
 type NotificationRow = {
   id: string;
@@ -19,8 +20,11 @@ type LookupRow = {
 };
 
 // GET - Fetch juz test notifications with resolved names (service role)
-export async function GET(_request: NextRequest) {
+export async function GET(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ['admin:dashboard']);
+    if (!guard.ok) return guard.response;
+
     const data = await adminOperationSimple(async (client) => {
       // 1) Fetch notifications base data (no joins to avoid edge-cases)
       const { data: notifications, error } = await client

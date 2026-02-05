@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
 import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
+import { requireAdminPermission } from "@/lib/adminPermissions";
 
 const adminErrorDetails = (error: unknown, fallback: string) => {
   const message = error instanceof Error ? error.message : fallback;
@@ -32,6 +33,9 @@ const toNullableText = (value?: string | null) => {
 // GET - Fetch CRM stages (admin only)
 export async function GET(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ["admin:crm"]);
+    if (!guard.ok) return guard.response;
+
     const tenantId = await resolveTenantIdOrThrow(request);
     const recordType = new URL(request.url).searchParams.get("record_type");
 
@@ -65,6 +69,9 @@ export async function GET(request: NextRequest) {
 // POST - Create CRM stage (admin only)
 export async function POST(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ["admin:crm"]);
+    if (!guard.ok) return guard.response;
+
     const body = await request.json();
     const {
       record_type,
@@ -119,6 +126,9 @@ export async function POST(request: NextRequest) {
 // PUT - Update CRM stage (admin only)
 export async function PUT(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ["admin:crm"]);
+    if (!guard.ok) return guard.response;
+
     const body = await request.json();
     const {
       id,
@@ -169,6 +179,9 @@ export async function PUT(request: NextRequest) {
 // DELETE - Delete CRM stage (admin only)
 export async function DELETE(request: NextRequest) {
   try {
+    const guard = await requireAdminPermission(request, ["admin:crm"]);
+    if (!guard.ok) return guard.response;
+
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
     const tenantId = await resolveTenantIdOrThrow(request);
