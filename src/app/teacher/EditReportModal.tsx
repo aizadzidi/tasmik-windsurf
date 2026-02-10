@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import type { Report } from "@/types/teacher";
-import { getJuzFromPageRange, getPageWithinJuz, isPagesInSameJuz } from "@/lib/quranMapping";
+import { getJuzFromPageRange, getPageWithinJuz } from "@/lib/quranMapping";
 
 interface EditReportModalProps {
   report: Report;
@@ -9,6 +9,96 @@ interface EditReportModalProps {
   grades: string[];
   surahs: string[];
 }
+
+const OLD_MURAJAAH_SURAH_LABEL = "PMMM";
+const OLD_MURAJAAH_TEST_PASS_THRESHOLD = 60;
+type OldMurajaahMode = "recitation" | "test";
+type OldMurajaahScoreCategory =
+  | "memorization"
+  | "middle_verse"
+  | "last_words"
+  | "reversal_reading"
+  | "verse_position";
+
+interface OldMurajaahSection2Scores {
+  memorization: Record<string, number>;
+  middle_verse: Record<string, number>;
+  last_words: Record<string, number>;
+  reversal_reading: Record<string, number>;
+  verse_position: Record<string, number>;
+}
+
+const OLD_MURAJAAH_TEST_QUESTION_CONFIG: Record<
+  OldMurajaahScoreCategory,
+  { title: string; questionNumbers: number[] }
+> = {
+  memorization: { title: "Repeat and Continue", questionNumbers: [1, 2] },
+  middle_verse: { title: "Middle of the Verse", questionNumbers: [1] },
+  last_words: { title: "Last of the Verse", questionNumbers: [1] },
+  reversal_reading: { title: "Reversal Reading", questionNumbers: [1] },
+  verse_position: { title: "Position of the Verse", questionNumbers: [1] }
+};
+
+const buildOldMurajaahTestInitialScores = (): OldMurajaahSection2Scores => ({
+  memorization: { "1": 0, "2": 0 },
+  middle_verse: { "1": 0 },
+  last_words: { "1": 0 },
+  reversal_reading: { "1": 0 },
+  verse_position: { "1": 0 }
+});
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const clampScore = (value: unknown) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(5, Math.round(parsed)));
+};
+
+const getInitialOldMurajaahMode = (readingProgress: unknown): OldMurajaahMode => {
+  if (!isObject(readingProgress)) return "recitation";
+  return readingProgress.murajaah_mode === "test" ? "test" : "recitation";
+};
+
+const getInitialSection2Scores = (readingProgress: unknown): OldMurajaahSection2Scores => {
+  if (!isObject(readingProgress)) return buildOldMurajaahTestInitialScores();
+  const assessment = isObject(readingProgress.test_assessment)
+    ? readingProgress.test_assessment
+    : null;
+  const section2 = assessment && isObject(assessment.section2_scores)
+    ? assessment.section2_scores
+    : null;
+  const fallback = buildOldMurajaahTestInitialScores();
+  if (!section2) return fallback;
+
+  return (Object.keys(OLD_MURAJAAH_TEST_QUESTION_CONFIG) as OldMurajaahScoreCategory[]).reduce(
+    (acc, category) => {
+      const rawCategory = isObject(section2[category]) ? section2[category] : {};
+      const mappedScores = OLD_MURAJAAH_TEST_QUESTION_CONFIG[category].questionNumbers.reduce(
+        (scores, questionNum) => ({
+          ...scores,
+          [String(questionNum)]: clampScore(rawCategory[String(questionNum)])
+        }),
+        {} as Record<string, number>
+      );
+      return {
+        ...acc,
+        [category]: mappedScores
+      };
+    },
+    fallback
+  );
+};
+
+const getInitialAssessmentScore = (readingProgress: unknown, key: string): number => {
+  if (!isObject(readingProgress)) return 0;
+  const assessment = isObject(readingProgress.test_assessment)
+    ? readingProgress.test_assessment
+    : null;
+  if (!assessment) return 0;
+  return clampScore(assessment[key]);
+};
 
 export default function EditReportModal(
   { report, onSave, onCancel, grades, surahs, loading = false, error = "" }:
@@ -21,6 +111,17 @@ export default function EditReportModal(
     if (!surahs.includes(from) || !surahs.includes(to)) return null;
     return { from, to };
   })();
+  const [oldMurajaahMode, setOldMurajaahMode] = useState<OldMurajaahMode>(
+    getInitialOldMurajaahMode(report.reading_progress)
+  );
+  const [oldMurajaahSection2Scores, setOldMurajaahSection2Scores] =
+    useState<OldMurajaahSection2Scores>(getInitialSection2Scores(report.reading_progress));
+  const [oldMurajaahReadVerseNoScore, setOldMurajaahReadVerseNoScore] = useState(
+    getInitialAssessmentScore(report.reading_progress, "read_verse_no_score")
+  );
+  const [oldMurajaahUnderstandingScore, setOldMurajaahUnderstandingScore] = useState(
+    getInitialAssessmentScore(report.reading_progress, "understanding_score")
+  );
   const isNewMurajaah = form.type === "New Murajaah";
   const isOldMurajaah = form.type === "Old Murajaah" || form.type === "Murajaah";
   const [isMultiSurah, setIsMultiSurah] = useState(Boolean(initialSurahRange));
@@ -37,6 +138,34 @@ export default function EditReportModal(
     const size = Math.abs(form.page_to - form.page_from) + 1;
     return size >= 1 && size <= 20 ? String(size) : "3";
   });
+
+  const oldMurajaahTestTotalPercentage = useMemo(() => {
+    if (!isOldMurajaah || oldMurajaahMode !== "test") return 0;
+    const section2Total = Object.values(oldMurajaahSection2Scores).reduce(
+      (sum, categoryScores) =>
+        sum + Object.values(categoryScores).reduce<number>(
+          (categorySum, score) => categorySum + (Number(score) || 0),
+          0
+        ),
+      0
+    );
+    const maxSection2Score = Object.values(OLD_MURAJAAH_TEST_QUESTION_CONFIG).reduce(
+      (sum, config) => sum + config.questionNumbers.length * 5,
+      0
+    );
+    const totalScore = section2Total + oldMurajaahReadVerseNoScore + oldMurajaahUnderstandingScore;
+    const maxTotalScore = maxSection2Score + 10;
+    if (maxTotalScore <= 0) return 0;
+    return Math.round((totalScore / maxTotalScore) * 100);
+  }, [
+    isOldMurajaah,
+    oldMurajaahMode,
+    oldMurajaahSection2Scores,
+    oldMurajaahReadVerseNoScore,
+    oldMurajaahUnderstandingScore
+  ]);
+  const oldMurajaahTestPassed = oldMurajaahTestTotalPercentage >= OLD_MURAJAAH_TEST_PASS_THRESHOLD;
+
   const oldMurajaahPreview = useMemo(() => {
     if (!isOldMurajaah) return null;
     const fromValue = form.page_from ? Number(form.page_from) : null;
@@ -44,13 +173,7 @@ export default function EditReportModal(
     if (!fromValue) return null;
     const endValue = isWithinRange ? toValue : fromValue;
     if (!endValue) return null;
-    if (
-      fromValue < 1 || fromValue > 604 ||
-      endValue < 1 || endValue > 604
-    ) {
-      return null;
-    }
-    if (isWithinRange && !isPagesInSameJuz(fromValue, endValue)) {
+    if (fromValue < 1 || fromValue > 604 || endValue < 1 || endValue > 604) {
       return null;
     }
     const juzValue = getJuzFromPageRange(fromValue, endValue);
@@ -63,6 +186,7 @@ export default function EditReportModal(
       to: Math.max(fromValue, endValue)
     };
   }, [form.page_from, form.page_to, isOldMurajaah, isWithinRange]);
+
   const reviewRangePreview = useMemo(() => {
     const anchorValue = parseInt(reviewAnchorPage, 10);
     const countValue = parseInt(reviewCount, 10);
@@ -71,17 +195,15 @@ export default function EditReportModal(
     return { from, to: anchorValue, count: countValue };
   }, [reviewAnchorPage, reviewCount]);
 
-
-  // Auto-fill Juz based on page input
   useEffect(() => {
     if (isNewMurajaah || isOldMurajaah) return;
     const pageFrom = form.page_from;
     const pageTo = form.page_to;
-    
+
     if (pageFrom && pageFrom >= 1 && pageFrom <= 604) {
       const juz = getJuzFromPageRange(pageFrom, pageTo || undefined);
       if (juz && juz !== form.juzuk) {
-        setForm(f => ({ ...f, juzuk: juz }));
+        setForm((f) => ({ ...f, juzuk: juz }));
       }
     }
   }, [form.page_from, form.page_to, form.juzuk, isNewMurajaah, isOldMurajaah]);
@@ -91,35 +213,67 @@ export default function EditReportModal(
     setForm((f: Report) => ({ ...f, [name]: value }));
   }
 
+  const updateOldMurajaahScore = (
+    category: OldMurajaahScoreCategory,
+    question: string,
+    score: number
+  ) => {
+    setOldMurajaahSection2Scores((prev) => ({
+      ...prev,
+      [category]: {
+        ...prev[category],
+        [question]: score
+      }
+    }));
+  };
+
+  const emitValidationError = (message: string) => {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("edit-modal-error", {
+          detail: message
+        })
+      );
+    }
+  };
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    // Basic validation
-    const hasSurah = isMultiSurah ? Boolean(surahFrom && surahTo) : Boolean(form.surah);
-    if (!form.type || !hasSurah || !form.grade || !form.ayat_from || !form.ayat_to) {
-      // Set error via parent
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("edit-modal-error", {
-          detail: "Please fill in all required fields."
-        }));
-      }
+
+    const requiredPageValidation = isNewMurajaah
+      ? (!reviewAnchorPage || !reviewCount)
+      : isOldMurajaah
+        ? (!form.page_from || (isWithinRange && !form.page_to))
+        : !form.page_from;
+    const requiresSurahAndAyat = !isOldMurajaah;
+    const hasSurah = requiresSurahAndAyat
+      ? (isMultiSurah ? Boolean(surahFrom && surahTo) : Boolean(form.surah))
+      : true;
+    const hasAyatRange = requiresSurahAndAyat
+      ? Boolean(form.ayat_from) && Boolean(form.ayat_to)
+      : true;
+    const requiresGrade = !(isOldMurajaah && oldMurajaahMode === "test");
+
+    if (!form.type || !hasSurah || !hasAyatRange || requiredPageValidation || (requiresGrade && !form.grade)) {
+      emitValidationError("Please fill in all required fields.");
       return;
     }
+
     let surahLabel = form.surah;
-    if (isMultiSurah) {
+    if (isOldMurajaah) {
+      surahLabel = OLD_MURAJAAH_SURAH_LABEL;
+    } else if (isMultiSurah) {
       const startIdx = surahs.indexOf(surahFrom);
       const endIdx = surahs.indexOf(surahTo);
       if (startIdx === -1 || endIdx === -1) {
-        if (typeof window !== "undefined") {
-          window.dispatchEvent(new CustomEvent("edit-modal-error", {
-            detail: "Invalid surah range selected."
-          }));
-        }
+        emitValidationError("Invalid surah range selected.");
         return;
       }
       const from = Math.min(startIdx, endIdx);
       const to = Math.max(startIdx, endIdx);
       surahLabel = `${surahs[from]} - ${surahs[to]}`;
     }
+
     let resolvedPageFrom = form.page_from ? Number(form.page_from) : null;
     let resolvedPageTo = form.page_to ? Number(form.page_to) : null;
     let resolvedJuz = form.juzuk ? Number(form.juzuk) : null;
@@ -128,30 +282,11 @@ export default function EditReportModal(
       const toValue = form.page_to ? Number(form.page_to) : null;
       const endValue = isWithinRange ? toValue : fromValue;
       if (!fromValue || !endValue) {
-        if (typeof window !== "undefined") {
-          window.dispatchEvent(new CustomEvent("edit-modal-error", {
-            detail: "Please fill in all required fields."
-          }));
-        }
+        emitValidationError("Please fill in all required fields.");
         return;
       }
-      if (
-        fromValue < 1 || fromValue > 604 ||
-        endValue < 1 || endValue > 604
-      ) {
-        if (typeof window !== "undefined") {
-          window.dispatchEvent(new CustomEvent("edit-modal-error", {
-            detail: "Page must be between 1 and 604."
-          }));
-        }
-        return;
-      }
-      if (isWithinRange && !isPagesInSameJuz(fromValue, endValue)) {
-        if (typeof window !== "undefined") {
-          window.dispatchEvent(new CustomEvent("edit-modal-error", {
-            detail: "Page range must be within the same Juz."
-          }));
-        }
+      if (fromValue < 1 || fromValue > 604 || endValue < 1 || endValue > 604) {
+        emitValidationError("Page must be between 1 and 604.");
         return;
       }
       resolvedPageFrom = Math.min(fromValue, endValue);
@@ -161,26 +296,52 @@ export default function EditReportModal(
       const anchorValue = parseInt(reviewAnchorPage, 10);
       const countValue = parseInt(reviewCount, 10);
       if (!anchorValue || !countValue) {
-        if (typeof window !== "undefined") {
-          window.dispatchEvent(new CustomEvent("edit-modal-error", {
-            detail: "Please fill in all required fields."
-          }));
-        }
+        emitValidationError("Please fill in all required fields.");
         return;
       }
       const fromValue = Math.max(1, anchorValue - countValue + 1);
       resolvedPageFrom = fromValue;
       resolvedPageTo = anchorValue;
       resolvedJuz = getJuzFromPageRange(anchorValue, anchorValue);
+    } else {
+      resolvedPageFrom = form.page_from ? Number(form.page_from) : null;
+      resolvedPageTo = form.page_to ? Number(form.page_to) : resolvedPageFrom;
+      resolvedJuz = form.juzuk ? Number(form.juzuk) : null;
     }
+
+    const resolvedAyatFrom = isOldMurajaah ? 1 : Number(form.ayat_from);
+    const resolvedAyatTo = isOldMurajaah ? 1 : Number(form.ayat_to);
+    if (!isOldMurajaah && (!Number.isFinite(resolvedAyatFrom) || !Number.isFinite(resolvedAyatTo))) {
+      emitValidationError("Please fill in all required fields.");
+      return;
+    }
+
+    const readingProgress = isOldMurajaah
+      ? oldMurajaahMode === "test"
+        ? {
+            murajaah_mode: "test" as const,
+            test_assessment: {
+              section2_scores: oldMurajaahSection2Scores,
+              read_verse_no_score: oldMurajaahReadVerseNoScore,
+              understanding_score: oldMurajaahUnderstandingScore,
+              total_percentage: oldMurajaahTestTotalPercentage,
+              passed: oldMurajaahTestPassed,
+              pass_threshold: OLD_MURAJAAH_TEST_PASS_THRESHOLD
+            }
+          }
+        : { murajaah_mode: "recitation" as const }
+      : (form.reading_progress ?? null);
+
     onSave({
       ...form,
       surah: surahLabel,
       juzuk: resolvedJuz,
-      ayat_from: Number(form.ayat_from),
-      ayat_to: Number(form.ayat_to),
+      ayat_from: resolvedAyatFrom,
+      ayat_to: resolvedAyatTo,
       page_from: resolvedPageFrom,
       page_to: resolvedPageTo,
+      grade: isOldMurajaah && oldMurajaahMode === "test" ? null : form.grade,
+      reading_progress: readingProgress
     });
   }
 
@@ -189,7 +350,7 @@ export default function EditReportModal(
       <div className="bg-white/95 backdrop-blur-xl border border-white/40 rounded-2xl shadow-2xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-lg font-bold text-gray-900">Edit Report</h3>
-          <button 
+          <button
             onClick={onCancel}
             className="text-gray-400 hover:text-gray-600 transition-colors"
           >
@@ -204,10 +365,36 @@ export default function EditReportModal(
             <div className="sm:col-span-2 rounded-xl border border-amber-100 bg-amber-50/70 p-4">
               <div className="flex items-center justify-between mb-3">
                 <div>
-                  <div className="text-sm font-semibold text-amber-700">Old Murajaah (Juz-based)</div>
-                  <div className="text-xs text-amber-600">Enter actual page (1-604), auto converts to xx/20</div>
+                  <div className="text-sm font-semibold text-amber-700">Old Murajaah (PMMM within page range)</div>
                 </div>
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Old</span>
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">PMMM</span>
+              </div>
+              <div className="mb-3 inline-flex rounded-full bg-white/80 p-1 border border-amber-200">
+                <button
+                  type="button"
+                  onClick={() => setOldMurajaahMode("recitation")}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
+                    oldMurajaahMode === "recitation"
+                      ? "bg-amber-600 text-white"
+                      : "text-amber-700 hover:text-amber-800"
+                  }`}
+                >
+                  Recitation
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOldMurajaahMode("test");
+                    setForm((f) => ({ ...f, grade: null }));
+                  }}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
+                    oldMurajaahMode === "test"
+                      ? "bg-amber-600 text-white"
+                      : "text-amber-700 hover:text-amber-800"
+                  }`}
+                >
+                  Test
+                </button>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {!isWithinRange ? (
@@ -287,6 +474,104 @@ export default function EditReportModal(
                     : "Enter page"}
                 </span>
               </div>
+
+              {oldMurajaahMode === "test" && (
+                <div className="mt-4 rounded-lg border border-amber-200 bg-white/70 p-3">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className="text-xs font-semibold text-amber-700">
+                      Test Mode: 6 core questions + 2 additional criteria
+                    </div>
+                    <span className="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-[11px] font-semibold">
+                      Pass Mark: {OLD_MURAJAAH_TEST_PASS_THRESHOLD}%
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {(Object.entries(OLD_MURAJAAH_TEST_QUESTION_CONFIG) as Array<
+                      [OldMurajaahScoreCategory, { title: string; questionNumbers: number[] }]
+                    >).map(([category, config]) => (
+                      <div key={category} className="border border-amber-200 rounded-lg p-3 bg-white">
+                        <h4 className="text-xs font-medium text-gray-700 mb-2">{config.title}</h4>
+                        <div className="flex flex-wrap gap-2">
+                          {config.questionNumbers.map((questionNum) => (
+                            <div key={questionNum} className="w-14">
+                              <div className="text-[10px] text-center text-gray-500 mb-1">{questionNum}</div>
+                              <select
+                                value={oldMurajaahSection2Scores[category][String(questionNum)] || 0}
+                                onChange={(e) =>
+                                  updateOldMurajaahScore(
+                                    category,
+                                    String(questionNum),
+                                    parseInt(e.target.value, 10) || 0
+                                  )
+                                }
+                                className="w-full border border-gray-300 rounded px-1 py-1 text-xs text-center"
+                              >
+                                {[0, 1, 2, 3, 4, 5].map((score) => (
+                                  <option key={score} value={score}>{score}</option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+
+                    <div className="border border-amber-200 rounded-lg p-3 bg-white">
+                      <h4 className="text-xs font-medium text-gray-700 mb-2">Read Verse Number</h4>
+                      <div className="w-14">
+                        <div className="text-[10px] text-center text-gray-500 mb-1">1</div>
+                        <select
+                          value={oldMurajaahReadVerseNoScore}
+                          onChange={(e) => setOldMurajaahReadVerseNoScore(parseInt(e.target.value, 10) || 0)}
+                          className="w-full border border-gray-300 rounded px-1 py-1 text-xs text-center"
+                        >
+                          {[0, 1, 2, 3, 4, 5].map((score) => (
+                            <option key={score} value={score}>{score}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="border border-amber-200 rounded-lg p-3 bg-white">
+                      <h4 className="text-xs font-medium text-gray-700 mb-2">Understanding</h4>
+                      <div className="w-14">
+                        <div className="text-[10px] text-center text-gray-500 mb-1">1</div>
+                        <select
+                          value={oldMurajaahUnderstandingScore}
+                          onChange={(e) => setOldMurajaahUnderstandingScore(parseInt(e.target.value, 10) || 0)}
+                          className="w-full border border-gray-300 rounded px-1 py-1 text-xs text-center"
+                        >
+                          {[0, 1, 2, 3, 4, 5].map((score) => (
+                            <option key={score} value={score}>{score}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 rounded-lg border border-amber-300 bg-amber-100/70 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-xs font-medium text-amber-900">Overall Score (100%)</div>
+                        <div className="text-[11px] text-amber-800">Auto-calculated from all criteria</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl font-bold text-amber-700">{oldMurajaahTestTotalPercentage}%</div>
+                        <div className={`text-xs font-semibold ${oldMurajaahTestPassed ? "text-green-700" : "text-red-700"}`}>
+                          {oldMurajaahTestPassed ? "PASSED" : "FAILED"}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-2 h-2 rounded-full bg-amber-200/80 overflow-hidden">
+                      <div
+                        className={`h-full ${oldMurajaahTestPassed ? "bg-green-500" : "bg-amber-500"}`}
+                        style={{ width: `${Math.min(100, Math.max(0, oldMurajaahTestTotalPercentage))}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -342,106 +627,110 @@ export default function EditReportModal(
             </div>
           )}
 
-          <div className="sm:col-span-2">
-            <label className="block text-sm font-medium mb-1 text-gray-700">
-              {isNewMurajaah && isMultiSurah ? "Surah Range *" : "Surah *"}
-            </label>
-            {isMultiSurah ? (
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">From</label>
+          {!isOldMurajaah && (
+            <>
+              <div className="sm:col-span-2">
+                <label className="block text-sm font-medium mb-1 text-gray-700">
+                  {isNewMurajaah && isMultiSurah ? "Surah Range *" : "Surah *"}
+                </label>
+                {isMultiSurah ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">From</label>
+                      <select
+                        value={surahFrom}
+                        onChange={(e) => setSurahFrom(e.target.value)}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
+                      >
+                        <option value="">Select</option>
+                        {surahs.map((surah) => (
+                          <option key={surah} value={surah}>{surah}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">To</label>
+                      <select
+                        value={surahTo}
+                        onChange={(e) => setSurahTo(e.target.value)}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
+                      >
+                        <option value="">Select</option>
+                        {surahs.map((surah) => (
+                          <option key={surah} value={surah}>{surah}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                ) : (
                   <select
-                    value={surahFrom}
-                    onChange={(e) => setSurahFrom(e.target.value)}
+                    name="surah"
+                    value={form.surah}
+                    onChange={(e) => setForm((f) => ({ ...f, surah: e.target.value }))}
+                    required
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
                   >
-                    <option value="">Select</option>
+                    <option value="">Select a surah</option>
                     {surahs.map((surah) => (
                       <option key={surah} value={surah}>{surah}</option>
                     ))}
                   </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">To</label>
-                  <select
-                    value={surahTo}
-                    onChange={(e) => setSurahTo(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
-                  >
-                    <option value="">Select</option>
-                    {surahs.map((surah) => (
-                      <option key={surah} value={surah}>{surah}</option>
-                    ))}
-                  </select>
+                )}
+                <div className="flex items-center mt-2">
+                  <input
+                    type="checkbox"
+                    id="editMultiSurah"
+                    checked={isMultiSurah}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setIsMultiSurah(checked);
+                      if (checked) {
+                        setSurahFrom((prev) => prev || form.surah || "");
+                        setSurahTo((prev) => prev || form.surah || "");
+                      } else {
+                        if (surahFrom) setForm((f) => ({ ...f, surah: surahFrom }));
+                        setSurahFrom("");
+                        setSurahTo("");
+                      }
+                    }}
+                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                  />
+                  <label htmlFor="editMultiSurah" className="ml-2 text-sm text-gray-600">
+                    Multiple surahs (surah range)
+                  </label>
                 </div>
               </div>
-            ) : (
-              <select
-                name="surah"
-                value={form.surah}
-                onChange={(e) => setForm((f) => ({ ...f, surah: e.target.value }))}
-                required
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
-              >
-                <option value="">Select a surah</option>
-                {surahs.map((surah) => (
-                  <option key={surah} value={surah}>{surah}</option>
-                ))}
-              </select>
-            )}
-            <div className="flex items-center mt-2">
-              <input
-                type="checkbox"
-                id="editMultiSurah"
-                checked={isMultiSurah}
-                onChange={(e) => {
-                  const checked = e.target.checked;
-                  setIsMultiSurah(checked);
-                  if (checked) {
-                    setSurahFrom((prev) => prev || form.surah || "");
-                    setSurahTo((prev) => prev || form.surah || "");
-                  } else {
-                    if (surahFrom) setForm((f) => ({ ...f, surah: surahFrom }));
-                    setSurahFrom("");
-                    setSurahTo("");
-                  }
-                }}
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-              />
-              <label htmlFor="editMultiSurah" className="ml-2 text-sm text-gray-600">
-                Multiple surahs (surah range)
-              </label>
-            </div>
-          </div>
 
-          <div className="sm:col-span-2">
-            <label className="block text-sm font-medium mb-1 text-gray-700">Ayat Range *</label>
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                name="ayat_from"
-                type="number"
-                required
-                value={form.ayat_from}
-                onChange={handleChange}
-                placeholder="From"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
-              />
-              <input
-                name="ayat_to"
-                type="number"
-                required
-                value={form.ayat_to}
-                onChange={handleChange}
-                placeholder="To"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
-              />
-            </div>
-          </div>
+              <div className="sm:col-span-2">
+                <label className="block text-sm font-medium mb-1 text-gray-700">Ayat Range *</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    name="ayat_from"
+                    type="number"
+                    required
+                    value={form.ayat_from}
+                    onChange={handleChange}
+                    placeholder="From"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
+                  />
+                  <input
+                    name="ayat_to"
+                    type="number"
+                    required
+                    value={form.ayat_to}
+                    onChange={handleChange}
+                    placeholder="To"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
+                  />
+                </div>
+              </div>
+            </>
+          )}
 
           {!isNewMurajaah && !isOldMurajaah && (
             <>
               <div className="sm:col-span-2">
-                <label className="block text-sm font-medium mb-1 text-gray-700">Page</label>
+                <label className="block text-sm font-medium mb-1 text-gray-700">Page *</label>
                 <div className="grid grid-cols-2 gap-2">
                   <input
                     name="page_from"
@@ -479,22 +768,24 @@ export default function EditReportModal(
             </>
           )}
 
-          <div>
-            <label className="block text-sm font-medium mb-1 text-gray-700">Grade *</label>
-            <select
-              name="grade"
-              value={form.grade ?? ""}
-              onChange={handleChange}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
-            >
-              <option value="">Select a grade</option>
-              {grades.map((g) => (
-                <option key={g} value={g}>{g.charAt(0).toUpperCase() + g.slice(1)}</option>
-              ))}
-            </select>
-          </div>
+          {!(isOldMurajaah && oldMurajaahMode === "test") && (
+            <div>
+              <label className="block text-sm font-medium mb-1 text-gray-700">Grade *</label>
+              <select
+                name="grade"
+                value={form.grade ?? ""}
+                onChange={handleChange}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-400 text-sm"
+              >
+                <option value="">Select a grade</option>
+                {grades.map((g) => (
+                  <option key={g} value={g}>{g.charAt(0).toUpperCase() + g.slice(1)}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
-          <div>
+          <div className={isOldMurajaah && oldMurajaahMode === "test" ? "sm:col-span-2" : ""}>
             <label className="block text-sm font-medium mb-1 text-gray-700">Date</label>
             <input
               name="date"

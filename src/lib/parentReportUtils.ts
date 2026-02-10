@@ -1,5 +1,10 @@
 import type { Report } from "@/types/teacher";
 import { calculateAverageGrade, getWeekBoundaries } from "@/lib/gradeUtils";
+import {
+  getMurajaahModeFromReport,
+  getMurajaahModeLabel,
+  getMurajaahTestAssessmentFromReport
+} from "@/lib/murajaahMode";
 
 export interface WeeklyReportSummary {
   weekKey: string;
@@ -7,6 +12,7 @@ export interface WeeklyReportSummary {
   weekRange: string;
   monthLabel: string;
   typeLabel: string;
+  modeDisplay: string;
   surahDisplay: string;
   juzDisplay: string;
   ayatDisplay: string;
@@ -49,6 +55,10 @@ export const formatWeekRange = (date: Date | string) => {
 
 export const formatGradeLabel = (grade: string | null) => {
   if (!grade) return "-";
+  const normalized = grade.trim();
+  if (/^\d+%\s+(PASS|FAIL)$/i.test(normalized)) {
+    return normalized.toUpperCase();
+  }
   return grade
     .split(" ")
     .map((word) => (word ? word[0].toUpperCase() + word.slice(1) : word))
@@ -82,6 +92,7 @@ export const summarizeReportsByWeek = (
   });
 
   const summaries = Array.from(grouped.values()).map((group) => {
+    const TEST_PASS_THRESHOLD_DEFAULT = 60;
     const sorted = [...group.items].sort(
       (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
     );
@@ -89,10 +100,29 @@ export const summarizeReportsByWeek = (
     const surahSet = new Set(
       sorted.map((report) => report.surah).filter(Boolean)
     );
+    const modeValues = sorted
+      .map((report) => getMurajaahModeFromReport(report))
+      .filter((value): value is "recitation" | "test" => value !== null);
+    const modeDisplay = (() => {
+      if (modeValues.length === 0) return "-";
+      const unique = Array.from(new Set(modeValues));
+      if (unique.length === 1) return getMurajaahModeLabel(unique[0]);
+      return "Mixed";
+    })();
+    const testAssessments = sorted
+      .map((report) => (
+        getMurajaahModeFromReport(report) === "test"
+          ? getMurajaahTestAssessmentFromReport(report)
+          : null
+      ))
+      .filter((assessment): assessment is NonNullable<typeof assessment> => Boolean(assessment));
+    const isAllTestRecords = sorted.length > 0 && testAssessments.length === sorted.length;
     const firstReport = sorted[0];
     const lastReport = sorted[sorted.length - 1];
     const surahDisplay =
-      surahSet.size === 0
+      isAllTestRecords
+        ? "-"
+        : surahSet.size === 0
         ? "-"
         : surahSet.size === 1
           ? firstReport?.surah ?? "-"
@@ -116,7 +146,9 @@ export const summarizeReportsByWeek = (
           : `${minJuz}-${maxJuz}`;
 
     let ayatDisplay = "-";
-    if (surahSet.size === 1 && sorted.length > 0) {
+    if (isAllTestRecords) {
+      ayatDisplay = "-";
+    } else if (surahSet.size === 1 && sorted.length > 0) {
       const ayatValues = sorted.flatMap((report) => [
         report.ayat_from,
         report.ayat_to
@@ -140,7 +172,21 @@ export const summarizeReportsByWeek = (
       pageDisplay = minPage === maxPage ? String(minPage) : `${minPage}-${maxPage}`;
     }
 
-    const grade = calculateAverageGrade(sorted.map((report) => report.grade));
+    const grade = isAllTestRecords
+      ? (() => {
+          const percentages = testAssessments
+            .map((assessment) => assessment.total_percentage)
+            .filter((value): value is number => typeof value === "number");
+          if (percentages.length === 0) return "-";
+          const average = Math.round(
+            percentages.reduce((sum, value) => sum + value, 0) / percentages.length
+          );
+          const threshold = testAssessments.find(
+            (assessment) => typeof assessment.pass_threshold === "number"
+          )?.pass_threshold ?? TEST_PASS_THRESHOLD_DEFAULT;
+          return `${average}% ${average >= threshold ? "PASS" : "FAIL"}`;
+        })()
+      : calculateAverageGrade(sorted.map((report) => report.grade));
     const mondayDate = new Date(group.monday);
     const fridayDate = new Date(group.friday);
     const weekLabel = formatWeekLabelFromMonday(mondayDate);
@@ -156,6 +202,7 @@ export const summarizeReportsByWeek = (
       weekRange,
       monthLabel,
       typeLabel,
+      modeDisplay,
       surahDisplay,
       juzDisplay,
       ayatDisplay,

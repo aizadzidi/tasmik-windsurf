@@ -17,6 +17,11 @@ describe("formatMurajaahDisplay", () => {
     expect(formatMurajaahDisplay(118, 122)).toBe("Juz 7 - 1/20");
   });
 
+  it("uses ending page juz and position for 19-23 range", () => {
+    // Page 23 is in Juz 2 and is the 2nd page inside that juz
+    expect(formatMurajaahDisplay(19, 23)).toBe("Juz 2 - 2/20");
+  });
+
   it("returns null for invalid page numbers", () => {
     expect(formatMurajaahDisplay(0, 0)).toBeNull();
   });

@@ -409,6 +409,7 @@ export default function ParentFullRecordsModal({
                     <thead className="bg-gray-50">
                       <tr>
                         <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b text-sm">Type</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Mode</th>
                         <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b text-sm">Surah</th>
                         <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Juz</th>
                         <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Ayat</th>
@@ -424,6 +425,9 @@ export default function ParentFullRecordsModal({
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                               {summary.typeLabel}
                             </span>
+                          </td>
+                          <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100 text-xs font-medium">
+                            {summary.modeDisplay}
                           </td>
                           <td className="px-4 py-3 text-gray-800 font-medium border-b border-gray-100 text-sm">{summary.surahDisplay}</td>
                           <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
@@ -444,6 +448,8 @@ export default function ParentFullRecordsModal({
                               summary.grade === 'mumtaz' ? 'bg-green-100 text-green-800' :
                               summary.grade === 'jayyid jiddan' ? 'bg-yellow-100 text-yellow-800' :
                               summary.grade === 'jayyid' ? 'bg-orange-100 text-orange-800' :
+                              summary.grade?.includes('PASS') ? 'bg-green-100 text-green-800' :
+                              summary.grade?.includes('FAIL') ? 'bg-red-100 text-red-700' :
                               'bg-gray-100 text-gray-800'
                             }`}>
                               {formatGradeLabel(summary.grade)}

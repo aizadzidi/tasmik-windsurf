@@ -20,6 +20,7 @@ export interface Report {
   page_to: number | null;
   grade: string | null;
   date: string;
+  reading_progress?: unknown;
   student_name?: string;
 }
 

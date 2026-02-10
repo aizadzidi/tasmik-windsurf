@@ -62,6 +62,7 @@ export async function POST(request: NextRequest) {
       page_from: payload?.page_from ?? null,
       page_to: payload?.page_to ?? null,
       grade: payload?.grade ?? null,
+      reading_progress: payload?.reading_progress ?? null,
       date: payload?.date ?? null,
     };
 
@@ -113,6 +114,7 @@ export async function PATCH(request: NextRequest) {
       page_from: payload?.page_from,
       page_to: payload?.page_to,
       grade: payload?.grade,
+      reading_progress: payload?.reading_progress,
       date: payload?.date,
     };
 

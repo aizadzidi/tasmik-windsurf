@@ -2,6 +2,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getWeekBoundaries } from "@/lib/gradeUtils";
 import { authFetch } from "@/lib/authFetch";
+import {
+  getMurajaahModeFromReport,
+  getMurajaahModeLabel,
+  getMurajaahTestAssessmentFromReport
+} from "@/lib/murajaahMode";
 
 interface Report {
   id: string;
@@ -16,6 +21,7 @@ interface Report {
   page_to: number | null;
   grade: string | null;
   date: string;
+  reading_progress?: unknown;
 }
 
 interface AdminViewRecordsModalProps {
@@ -149,6 +155,7 @@ export default function AdminViewRecordsModal({
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b text-sm">Type</th>
+                    <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Mode</th>
                     <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b text-sm">Surah</th>
                     <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Juz</th>
                     <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Ayat</th>
@@ -159,53 +166,81 @@ export default function AdminViewRecordsModal({
                   </tr>
                 </thead>
                 <tbody className="bg-white">
-                  {filteredReports.map((report, index) => (
-                    <tr key={report.id} className={`transition-colors hover:bg-gray-50 ${index % 2 === 0 ? 'bg-white' : 'bg-gray-25'}`}>
-                      <td className="px-4 py-3 text-gray-700 border-b border-gray-100">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                          {report.type}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-gray-800 font-medium border-b border-gray-100 text-sm">{report.surah}</td>
-                      <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
-                        <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-purple-100 text-purple-800 text-xs font-semibold">
-                          {report.juzuk}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
-                        <span className="text-xs font-mono">{report.ayat_from}-{report.ayat_to}</span>
-                      </td>
-                      <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
-                        <span className="text-xs font-mono">
-                          {report.page_from && report.page_to ? 
-                            `${Math.min(report.page_from, report.page_to)}-${Math.max(report.page_from, report.page_to)}` : 
-                            '-'
-                          }
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-center border-b border-gray-100">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                          report.grade === 'mumtaz' ? 'bg-green-100 text-green-800' :
-                          report.grade === 'jayyid jiddan' ? 'bg-yellow-100 text-yellow-800' :
-                          report.grade === 'jayyid' ? 'bg-orange-100 text-orange-800' :
-                          'bg-gray-100 text-gray-800'
-                        }`}>
-                          {report.grade ? report.grade.charAt(0).toUpperCase() + report.grade.slice(1) : ""}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100 text-sm">
-                        {(report as Report & { users?: { name: string } }).users?.name || 'Unknown'}
-                      </td>
-                      <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
-                        <div className="text-xs">
-                          <div className="font-medium">{report.date}</div>
-                          <div className="text-gray-500">
-                            {getWeekBoundaries(report.date).weekRange}
+                  {filteredReports.map((report, index) => {
+                    const mode = getMurajaahModeFromReport(report);
+                    const modeLabel = getMurajaahModeLabel(mode);
+                    const testAssessment = getMurajaahTestAssessmentFromReport(report);
+                    const isTestRecord = mode === "test";
+                    const hasTestScore = typeof testAssessment?.total_percentage === "number";
+                    const testResultLabel = hasTestScore
+                      ? `${testAssessment.total_percentage}% ${testAssessment.passed ? "PASS" : "FAIL"}`
+                      : "-";
+
+                    return (
+                      <tr key={report.id} className={`transition-colors hover:bg-gray-50 ${index % 2 === 0 ? 'bg-white' : 'bg-gray-25'}`}>
+                        <td className="px-4 py-3 text-gray-700 border-b border-gray-100">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                            {report.type}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                          <div className="text-xs">
+                            <div className="font-semibold">{modeLabel}</div>
                           </div>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="px-4 py-3 text-gray-800 font-medium border-b border-gray-100 text-sm">
+                          {isTestRecord ? '-' : (report.surah || '-')}
+                        </td>
+                        <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-purple-100 text-purple-800 text-xs font-semibold">
+                            {report.juzuk}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                          <span className="text-xs font-mono">
+                            {isTestRecord ? '-' : `${report.ayat_from}-${report.ayat_to}`}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                          <span className="text-xs font-mono">
+                            {report.page_from && report.page_to ? 
+                              `${Math.min(report.page_from, report.page_to)}-${Math.max(report.page_from, report.page_to)}` : 
+                              '-'
+                            }
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-center border-b border-gray-100">
+                          {isTestRecord ? (
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                              testAssessment?.passed ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-700'
+                            }`}>
+                              {testResultLabel}
+                            </span>
+                          ) : (
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                              report.grade === 'mumtaz' ? 'bg-green-100 text-green-800' :
+                              report.grade === 'jayyid jiddan' ? 'bg-yellow-100 text-yellow-800' :
+                              report.grade === 'jayyid' ? 'bg-orange-100 text-orange-800' :
+                              'bg-gray-100 text-gray-800'
+                            }`}>
+                              {report.grade ? report.grade.charAt(0).toUpperCase() + report.grade.slice(1) : "-"}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100 text-sm">
+                          {(report as Report & { users?: { name: string } }).users?.name || 'Unknown'}
+                        </td>
+                        <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                          <div className="text-xs">
+                            <div className="font-medium">{report.date}</div>
+                            <div className="text-gray-500">
+                              {getWeekBoundaries(report.date).weekRange}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

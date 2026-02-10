@@ -655,6 +655,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
         page_from: updated.page_from,
         page_to: updated.page_to,
         grade: updated.grade,
+        reading_progress: updated.reading_progress ?? null,
         date: updated.date
       })
     });
