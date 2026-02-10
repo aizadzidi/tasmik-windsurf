@@ -1572,17 +1572,18 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
                               {isOpen ? <div className="mt-2 h-px bg-gray-100 dark:bg-slate-700/60" /> : null}
                               <div
                                 id={bodyId}
-                                className={`overflow-hidden transition-[max-height,opacity] duration-200 ease-out ${
-                                  isOpen ? "max-h-[800px] opacity-100" : "max-h-0 opacity-0"
+                                className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${
+                                  isOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
                                 }`}
                                 aria-hidden={!isOpen}
                                 data-open={isOpen ? "true" : "false"}
                               >
-                                <div className="mt-2 pl-8">
-                                  <div className="space-y-2 border-l border-gray-100 pl-4 dark:border-slate-700/60">
-	                                    {subtopics.map((sub, index) => {
-	                                      const progressEntry = topic.subTopicProgress.find((p) => p.subtopic_index === index);
-	                                      const taughtDate = toDateInput(progressEntry?.taught_on ?? null);
+                                <div className="min-h-0 overflow-hidden">
+                                  <div className="mt-2 pl-8">
+                                    <div className="space-y-2 border-l border-gray-100 pl-4 dark:border-slate-700/60">
+		                                    {subtopics.map((sub, index) => {
+		                                      const progressEntry = topic.subTopicProgress.find((p) => p.subtopic_index === index);
+		                                      const taughtDate = toDateInput(progressEntry?.taught_on ?? null);
 	                                      const subComplete = Boolean(progressEntry?.taught_on);
 	                                      const remarkKey = makeRemarkKey(topic.id, index);
 	                                      const existingRemark = progressEntry?.remark ?? "";
@@ -1751,10 +1752,11 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
 	                                          </div>
 	                                        </div>
 	                                      );
-	                                    })}
-                                  </div>
-                                </div>
-                              </div>
+		                                    })}
+	                                    </div>
+	                                  </div>
+	                                </div>
+	                              </div>
                             </>
                           ) : null}
                         </div>
