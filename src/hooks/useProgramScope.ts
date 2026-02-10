@@ -67,6 +67,7 @@ const fetchProgramTypesForStudents = async (studentIds: string[]) => {
   const { data, error } = await supabase
     .from("enrollments")
     .select("programs(type)")
+    .in("status", ["active", "paused", "pending_payment"])
     .in("student_id", studentIds);
 
   if (isMissingTableError(error, "enrollments") || isMissingTableError(error, "programs")) {

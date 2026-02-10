@@ -9,7 +9,9 @@ import { ChevronsUpDown, Check, Plus, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ClassDistributionChart from "@/components/admin/ClassDistributionChart";
 import TeacherAssignmentChart from "@/components/admin/TeacherAssignmentChart";
+import AdminScopeSwitch from "@/components/admin/AdminScopeSwitch";
 import { authFetch } from "@/lib/authFetch";
+import type { ProgramType } from "@/types/programs";
 
 interface Student {
   id: string;
@@ -49,12 +51,17 @@ interface Class {
   level?: string | null;
 }
 
+type StudentProgramRow = {
+  student_id?: string | null;
+  program_types?: ProgramType[] | null;
+};
 
 export default function AdminPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [parents, setParents] = useState<Parent[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [classes, setClasses] = useState<Class[]>([]);
+  const [studentProgramTypes, setStudentProgramTypes] = useState<Record<string, ProgramType[]>>({});
   const [loading, setLoading] = useState(false);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [error, setError] = useState("");
@@ -95,6 +102,7 @@ export default function AdminPage() {
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState("");
   const [editParentOpen, setEditParentOpen] = useState(false);
+  const [movingStudentId, setMovingStudentId] = useState<string | null>(null);
   const studentListRef = useRef<HTMLDivElement | null>(null);
 
   // Dev log helper
@@ -106,7 +114,9 @@ export default function AdminPage() {
       const ct = res.headers.get('content-type') || '';
       if (ct.includes('application/json')) {
         const j = await res.json();
-        return j?.error || res.statusText || 'Request failed';
+        const base = j?.error || res.statusText || 'Request failed';
+        const requestId = typeof j?.request_id === "string" ? j.request_id : null;
+        return requestId ? `${base} (Ref: ${requestId})` : base;
       }
       const t = await res.text();
       return t || res.statusText || 'Request failed';
@@ -115,15 +125,56 @@ export default function AdminPage() {
     }
   }, []);
 
+  const normalizeProgramTypes = useCallback((value: unknown): ProgramType[] => {
+    if (!Array.isArray(value)) return [];
+    return value.filter((type): type is ProgramType => (
+      type === "campus" || type === "online" || type === "hybrid"
+    ));
+  }, []);
+
+  const mapEnrollmentsToProgramTypes = useCallback((enrollmentsData: unknown) => {
+    const nextMap: Record<string, ProgramType[]> = {};
+    if (!Array.isArray(enrollmentsData)) return nextMap;
+    enrollmentsData.forEach((row: StudentProgramRow) => {
+      if (!row?.student_id) return;
+      nextMap[row.student_id] = normalizeProgramTypes(row.program_types);
+    });
+    return nextMap;
+  }, [normalizeProgramTypes]);
+
+  const refreshStudentsAndEnrollments = useCallback(async () => {
+    const [studentsRes, enrollmentsRes] = await Promise.all([
+      authFetch('/api/admin/students'),
+      authFetch('/api/admin/enrollments'),
+    ]);
+
+    if (!studentsRes.ok) {
+      throw new Error(`Failed to refresh students: ${await parseError(studentsRes)}`);
+    }
+
+    if (!enrollmentsRes.ok) {
+      throw new Error(`Failed to refresh enrollments: ${await parseError(enrollmentsRes)}`);
+    }
+
+    const [studentsData, enrollmentsData] = await Promise.all([
+      studentsRes.json(),
+      enrollmentsRes.json(),
+    ]);
+
+    setStudents(Array.isArray(studentsData) ? studentsData : []);
+    setStudentProgramTypes(mapEnrollmentsToProgramTypes(enrollmentsData));
+  }, [mapEnrollmentsToProgramTypes, parseError]);
+
   useEffect(() => {
     async function fetchData() {
       try {
         if (isDev) console.log('Admin page: Starting parallel data fetch...');
-        const [studentsRes, parentsRes, teachersRes, classesRes] = await Promise.all([
+        const [studentsRes, parentsRes, teachersRes, classesRes, enrollmentsRes] = await Promise.all([
           authFetch('/api/admin/students'),
           authFetch('/api/admin/users?role=parent'),
           authFetch('/api/admin/users?role=teacher'),
           authFetch('/api/admin/classes'),
+          authFetch('/api/admin/enrollments'),
         ]);
 
         if (studentsRes.ok) {
@@ -159,6 +210,16 @@ export default function AdminPage() {
         } else if (isDev) {
           console.error('Classes fetch failed:', classesRes.status, await parseError(classesRes));
         }
+
+        if (enrollmentsRes.ok) {
+          const enrollmentsData = await enrollmentsRes.json();
+          setStudentProgramTypes(mapEnrollmentsToProgramTypes(enrollmentsData));
+        } else {
+          if (isDev) {
+            console.error('Enrollments fetch failed:', enrollmentsRes.status, await parseError(enrollmentsRes));
+          }
+          setStudentProgramTypes({});
+        }
       } catch (error) {
         console.error('Failed to fetch admin data:', error);
         setError('Failed to load admin data. Please refresh the page.');
@@ -167,21 +228,61 @@ export default function AdminPage() {
       }
     }
     fetchData();
-  }, [isDev, parseError]);
+  }, [isDev, mapEnrollmentsToProgramTypes, parseError]);
 
   const studentRoster = useMemo(
     () => students.filter(student => student.record_type !== "prospect"),
     [students]
   );
 
+  const onlineStudentIds = useMemo(() => {
+    const ids = new Set<string>();
+    Object.entries(studentProgramTypes).forEach(([studentId, types]) => {
+      if (types.includes("online") || types.includes("hybrid")) {
+        ids.add(studentId);
+      }
+    });
+    return ids;
+  }, [studentProgramTypes]);
+
+  const campusStudents = useMemo(
+    () => studentRoster.filter((student) => !onlineStudentIds.has(student.id)),
+    [onlineStudentIds, studentRoster]
+  );
+
+  const campusTeacherIds = useMemo(() => {
+    const ids = new Set<string>();
+    campusStudents.forEach((student) => {
+      if (student.assigned_teacher_id) {
+        ids.add(student.assigned_teacher_id);
+      }
+    });
+    return ids;
+  }, [campusStudents]);
+
+  const campusTeachers = useMemo(
+    () => teachers.filter((teacher) => campusTeacherIds.has(teacher.id)),
+    [campusTeacherIds, teachers]
+  );
+
+  const campusAssignedClassCount = useMemo(
+    () => campusStudents.filter((student) => Boolean(student.class_id)).length,
+    [campusStudents]
+  );
+
+  const campusCompletedCount = useMemo(
+    () => campusStudents.filter((student) => student.memorization_completed).length,
+    [campusStudents]
+  );
+
   const classStudentCounts = useMemo(() => {
     const counts = new Map<string, number>();
-    studentRoster.forEach((student) => {
+    campusStudents.forEach((student) => {
       if (!student.class_id) return;
       counts.set(student.class_id, (counts.get(student.class_id) || 0) + 1);
     });
     return counts;
-  }, [studentRoster]);
+  }, [campusStudents]);
 
   const handleAddStudent = async () => {
     if (!newStudentName.trim()) return;
@@ -468,15 +569,71 @@ export default function AdminPage() {
     }
   };
 
-  const filteredStudents = useMemo(() => studentRoster.filter(s => 
-    s.name.toLowerCase().includes(searchTerm.toLowerCase()) &&
-    (filterClass === "" || 
-     (filterClass === "unassigned" && !s.class_id) || 
-     s.class_id === filterClass) &&
-    (filterTeacher === "" || 
-     (filterTeacher === "unassigned" && !s.assigned_teacher_id) || 
-     s.assigned_teacher_id === filterTeacher)
-  ).sort((a, b) => a.name.localeCompare(b.name)), [studentRoster, searchTerm, filterClass, filterTeacher]);
+  const handleMoveToOnline = async (student: Student) => {
+    const confirmed = window.confirm(
+      `Move ${student.name} to the Online program now? This will transfer the student immediately.`
+    );
+    if (!confirmed) return;
+
+    setMovingStudentId(student.id);
+    setError("");
+
+    try {
+      const response = await authFetch("/api/admin/students/move-online", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          student_id: student.id,
+          transition_mode: "switch",
+          close_previous_status: "paused",
+          clear_class_on_online_switch: true,
+          reason: "Moved from campus UI quick action",
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await parseError(response);
+        setError(`Failed to move student to online: ${err}`);
+        return;
+      }
+
+      await refreshStudentsAndEnrollments();
+      setSuccess(`${student.name} moved to Online successfully.`);
+      setTimeout(() => setSuccess(""), 3000);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Network error";
+      setError(`Failed to move student to online: ${message}`);
+    } finally {
+      setMovingStudentId(null);
+    }
+  };
+
+  const filteredStudents = useMemo(() => {
+    const term = searchTerm.toLowerCase();
+    return campusStudents
+      .filter((student) => {
+        if (!student.name.toLowerCase().includes(term)) return false;
+
+        if (filterClass !== "") {
+          if (filterClass === "unassigned") {
+            if (student.class_id) return false;
+          } else if (student.class_id !== filterClass) {
+            return false;
+          }
+        }
+
+        if (filterTeacher !== "") {
+          if (filterTeacher === "unassigned") {
+            if (student.assigned_teacher_id) return false;
+          } else if (student.assigned_teacher_id !== filterTeacher) {
+            return false;
+          }
+        }
+
+        return true;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [campusStudents, filterClass, filterTeacher, searchTerm]);
 
   // Precompute quick lookups
   const parentById = useMemo(() => new Map(parents.map((p) => [p.id, p])), [parents]);
@@ -504,37 +661,40 @@ export default function AdminPage() {
       <AdminNavbar />
       <div className="relative p-4 sm:p-6">
         <header className="mb-6">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-800">Student Management</h1>
-            <p className="text-gray-600">Manage students, assign parents, teachers, and classes.</p>
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-800">Student Management</h1>
+              <p className="text-gray-600">Manage students, assign parents, teachers, and classes.</p>
+            </div>
+            <AdminScopeSwitch />
           </div>
         </header>
 
         {/* Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
           <Card className="p-4">
-            <div className="text-2xl font-bold">{studentRoster.length}</div>
-            <div className="text-sm text-gray-600">Total Students</div>
+            <div className="text-2xl font-bold">{campusStudents.length}</div>
+            <div className="text-sm text-gray-600">Total Campus Students</div>
           </Card>
           <Card className="p-4">
             <div className="text-2xl font-bold text-green-600">
-              {studentRoster.filter(s => s.class_id).length}
+              {campusAssignedClassCount}
             </div>
-            <div className="text-sm text-gray-600">In a Class</div>
+            <div className="text-sm text-gray-600">Assigned to Class</div>
           </Card>
           <Card className="p-4">
             <div className="text-2xl font-bold text-orange-600">
-              {studentRoster.filter(s => s.assigned_teacher_id).length}
+              {campusTeachers.length}
             </div>
-            <div className="text-sm text-gray-600">With a Teacher</div>
+            <div className="text-sm text-gray-600">Teachers with Campus Students</div>
           </Card>
           <Card className="p-4">
             <div className="text-2xl font-bold text-purple-600">
-              {studentRoster.filter(s => s.memorization_completed).length}
+              {campusCompletedCount}
             </div>
             <div className="text-sm text-gray-600">Completed Memorization</div>
           </Card>
-          {filteredStudents.length !== studentRoster.length ? (
+          {filteredStudents.length !== campusStudents.length ? (
             <Card className="p-4">
               <div className="text-2xl font-bold text-blue-600">{filteredStudents.length}</div>
               <div className="text-sm text-gray-600">Filtered Results</div>
@@ -542,7 +702,7 @@ export default function AdminPage() {
           ) : (
             <Card className="p-4">
               <div className="text-2xl font-bold text-purple-600">
-                {studentRoster.filter(s => !s.memorization_completed).length}
+                {campusStudents.filter((student) => !student.memorization_completed).length}
               </div>
               <div className="text-sm text-gray-600">Still Memorizing</div>
             </Card>
@@ -552,18 +712,18 @@ export default function AdminPage() {
         {/* Charts Section */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
           <Card className="p-6">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4">Class Distribution</h3>
+            <h3 className="text-lg font-semibold text-gray-800 mb-4">Campus Class Distribution</h3>
             <ClassDistributionChart
-              students={studentRoster}
+              students={campusStudents}
               classes={classes}
               onSelectClass={handleClassChartSelect}
             />
           </Card>
           <Card className="p-6">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4">Halaqah</h3>
+            <h3 className="text-lg font-semibold text-gray-800 mb-4">Campus Halaqah</h3>
             <TeacherAssignmentChart
-              students={studentRoster}
-              teachers={teachers}
+              students={campusStudents}
+              teachers={campusTeachers}
               onSelectTeacher={handleTeacherChartSelect}
             />
           </Card>
@@ -592,9 +752,9 @@ export default function AdminPage() {
       <Card className="p-4" ref={studentListRef}>
         <div className="flex items-baseline justify-between mb-4">
           <h2 className="text-xl font-semibold text-gray-900">Students List</h2>
-          {filteredStudents.length !== studentRoster.length && (
+          {filteredStudents.length !== campusStudents.length && (
             <span className="text-sm text-gray-500">
-              {filteredStudents.length} of {studentRoster.length} students
+              {filteredStudents.length} of {campusStudents.length} students
             </span>
           )}
         </div>
@@ -624,7 +784,7 @@ export default function AdminPage() {
           >
             <option value="">All Teachers</option>
             <option value="unassigned">Unassigned</option>
-            {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            {campusTeachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
         </div>
 
@@ -791,6 +951,13 @@ export default function AdminPage() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col gap-2">
+                          <button
+                            onClick={() => handleMoveToOnline(s)}
+                            disabled={Boolean(movingStudentId)}
+                            className="bg-emerald-600 text-white px-3 py-1 rounded text-xs hover:bg-emerald-700 disabled:opacity-50"
+                          >
+                            {movingStudentId === s.id ? "Moving..." : "Move Online"}
+                          </button>
                           <button 
                             onClick={() => handleEditStudent(s)} 
                             className="bg-blue-600 text-white px-3 py-1 rounded text-xs hover:bg-blue-700"

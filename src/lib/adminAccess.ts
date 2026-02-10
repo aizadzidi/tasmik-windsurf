@@ -7,6 +7,7 @@ export type AdminPagePermission = {
 
 export const ADMIN_PAGE_PERMISSIONS: AdminPagePermission[] = [
   { key: "admin:dashboard", label: "Dashboard", path: "/admin", exact: true },
+  { key: "admin:online", label: "Online", path: "/admin/online" },
   { key: "admin:crm", label: "CRM", path: "/admin/crm" },
   { key: "admin:reports", label: "Reports", path: "/admin/reports" },
   { key: "admin:payments", label: "Payments", path: "/admin/payments" },

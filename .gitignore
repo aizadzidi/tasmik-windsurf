@@ -41,3 +41,7 @@ yarn-error.log*
 next-env.d.ts
 tasmik-windsurf.zip
 .next/
+
+# local migration artifacts with sensitive student data
+data_online_students.csv
+2026-02-09_online_students_from_csv.sql

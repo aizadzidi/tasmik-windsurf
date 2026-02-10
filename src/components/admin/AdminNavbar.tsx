@@ -17,8 +17,9 @@ const AdminNavbar = () => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const { loading, isAdmin, role, permissions } = useAdminPermissions();
   const showTeacherLink = role === "teacher";
+  const isOnlineScope = pathname.startsWith("/admin/online");
 
-  const navItems = [
+  const campusNavItems = [
     { 
       href: "/admin", 
       label: "Dashboard", 
@@ -115,6 +116,22 @@ const AdminNavbar = () => {
       )
     },
   ];
+
+  const onlineNavItems = [
+    {
+      href: "/admin/online",
+      label: "Online Dashboard",
+      permission: "admin:online",
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h16M4 17h16" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 7a6 6 0 0112 0" />
+        </svg>
+      )
+    },
+  ];
+
+  const navItems = isOnlineScope ? onlineNavItems : campusNavItems;
 
   const visibleNavItems = navItems.filter(
     (item) => !loading && (isAdmin || permissions.has(item.permission))

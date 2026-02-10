@@ -36,11 +36,12 @@ insert into public.enrollments (tenant_id, student_id, program_id, status, start
 select s.tenant_id, s.id, cp.id, 'active', current_date
 from public.students s
 join campus_program cp on cp.tenant_id = s.tenant_id
-where s.record_type is null or s.record_type <> 'prospect'
+where (s.record_type is null or s.record_type <> 'prospect')
   and not exists (
     select 1
     from public.enrollments e
     where e.student_id = s.id and e.program_id = cp.id and e.tenant_id = s.tenant_id
-  );
+  )
+on conflict (student_id, program_id, tenant_id) do nothing;
 
 commit;
