@@ -25,6 +25,7 @@ import {
   Check,
   ChevronDown,
   ChevronsUpDown,
+  Copy,
   Edit2,
   GripVertical,
   List,
@@ -66,6 +67,20 @@ type EditorState = {
   subtopics: string[];
   orderIndex: number;
   topicType: TopicType;
+};
+
+type PostgresErrorLike = {
+  code?: string;
+};
+
+const isPostgresUniqueViolation = (error: unknown) =>
+  typeof error === "object" && error !== null && (error as PostgresErrorLike).code === "23505";
+
+const buildTopicDuplicateMessage = (topicType: TopicType, title: string) => {
+  const safeTitle = title.trim();
+  const topicTypeLabel = topicType === "revision" ? "Revision" : "New";
+  const quotedTitle = safeTitle ? `"${safeTitle}" ` : "";
+  return `${quotedTitle}already exists in ${topicTypeLabel} for this class and subject.`;
 };
 
 const toDateInput = (date: string | null) => {
@@ -936,11 +951,12 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
     setSavingEditor(true);
     setInlineError(null);
     try {
+      const trimmedTitle = editorState.title.trim();
       const subtopics = editorState.subtopics.map((item) => item.trim()).filter(Boolean);
       const payload = {
         class_id: editorState.classId,
         subject_id: editorState.subjectId,
-        title: editorState.title.trim(),
+        title: trimmedTitle,
         sub_topics: subtopics.length ? subtopics : null,
         order_index: Number(editorState.orderIndex) || 0,
         topic_type: editorState.topicType,
@@ -962,11 +978,53 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
       }
     } catch (error) {
       console.error("Failed to save topic", error);
-      setInlineError("Unable to save topic. Check for duplicates or try again.");
+      if (isPostgresUniqueViolation(error)) {
+        setInlineError(buildTopicDuplicateMessage(editorState.topicType, editorState.title));
+      } else {
+        setInlineError("Unable to save topic. Try again.");
+      }
     } finally {
       setSavingEditor(false);
     }
   };
+
+  const handleCopyTopicToRevision = React.useCallback(
+    async (topic: TopicWithProgress) => {
+      if (topic.topic_type !== "new") return;
+      setSavingTopicId(topic.id);
+      setInlineError(null);
+      setActionMessage(null);
+      try {
+        const payload = {
+          class_id: topic.class_id,
+          subject_id: topic.subject_id,
+          title: topic.title.trim(),
+          sub_topics: topic.subtopics.length ? topic.subtopics : null,
+          order_index: Number(topic.order_index) || 0,
+          topic_type: "revision" as TopicType,
+          created_by: userId,
+        };
+        const { error } = await supabase.from("lesson_topics").insert(payload);
+        if (error) throw error;
+
+        fetchTopics({ classId: manageClassId, subjectId: manageSubjectId, target: "manage" });
+        if (manageClassId === trackerClassId && manageSubjectId === trackerSubjectId) {
+          fetchTopics({ classId: trackerClassId, subjectId: trackerSubjectId, target: "tracker" });
+        }
+        setActionMessage(`"${topic.title}" copied to Revision.`);
+      } catch (error) {
+        console.error("Failed to copy topic to revision", error);
+        if (isPostgresUniqueViolation(error)) {
+          setInlineError(buildTopicDuplicateMessage("revision", topic.title));
+        } else {
+          setInlineError("Unable to copy topic to revision right now.");
+        }
+      } finally {
+        setSavingTopicId(null);
+      }
+    },
+    [fetchTopics, manageClassId, manageSubjectId, trackerClassId, trackerSubjectId, userId]
+  );
 
   const handleDeleteTopic = async (topicId: string) => {
     if (!topicId) return;
@@ -1947,6 +2005,10 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
                     );
                   })}
                 </div>
+                <p className="mt-2 text-xs text-gray-500">
+                  Tip: click <span className="font-semibold text-amber-700">Copy to Revision</span> on a New topic to reuse
+                  the same title and subtopics instantly.
+                </p>
               </CardHeader>
               <CardContent className="px-0">
                 {loadingManageTopics ? (
@@ -1960,8 +2022,8 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
                   </div>
                 ) : (
                   <div className="divide-y divide-gray-100">
-	                    {filteredManageTopics.map((topic) => (
-	                      <div key={topic.id} className="flex items-center justify-between gap-3 px-2 py-3">
+                    {filteredManageTopics.map((topic) => (
+                      <div key={topic.id} className="flex items-center justify-between gap-3 px-2 py-3">
 	                        <div>
 	                          <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
                               {topic.title}
@@ -1974,6 +2036,21 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
 	                          ) : null}
                         </div>
                         <div className="flex items-center gap-2">
+                          {topic.topic_type === "new" ? (
+                            <button
+                              className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700 transition hover:bg-amber-100 disabled:opacity-60"
+                              onClick={() => void handleCopyTopicToRevision(topic)}
+                              aria-label="Copy topic to revision"
+                              disabled={savingTopicId === topic.id}
+                            >
+                              {savingTopicId === topic.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Copy className="h-3.5 w-3.5" />
+                              )}
+                              Copy to Revision
+                            </button>
+                          ) : null}
                           <button
                             className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100"
                             onClick={() => openEditor("edit", topic)}
