@@ -1,7 +1,16 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import NewMurajaahRangeSection from "@/components/teacher/NewMurajaahRangeSection";
 import { getJuzFromPageRange, getPageWithinJuz } from "@/lib/quranMapping";
+import {
+  computeNewMurajaahRange,
+  DEFAULT_NEW_MURAJAAH_LAST_N,
+  MAX_NEW_MURAJAAH_LAST_N,
+  MAX_NEW_MURAJAAH_SPAN,
+  parseNullableInt,
+  type NewMurajaahRangeMode
+} from "@/lib/murajaahRange";
 
 interface QuickReportModalProps {
   student: {
@@ -36,6 +45,7 @@ interface QuickReportModalProps {
 const GRADES = ["mumtaz", "jayyid jiddan", "jayyid"];
 const OLD_MURAJAAH_SURAH_LABEL = "PMMM";
 const OLD_MURAJAAH_TEST_PASS_THRESHOLD = 60;
+const NEW_MURAJAAH_PREF_KEY = "teacher:new-murajaah-range-prefs:v1";
 type OldMurajaahMode = "recitation" | "test";
 type OldMurajaahScoreCategory =
   | "memorization"
@@ -130,6 +140,7 @@ export default function QuickReportModal({
   const isNewMurajaah = normalizedReportType === "New Murajaah";
   const isOldMurajaah = normalizedReportType === "Old Murajaah";
   const modalTitle = isOldMurajaah ? "Old Murajaah" : `Add ${normalizedReportType} Report`;
+  const suggestedLatestTasmiPage = suggestions?.pageTo ?? suggestions?.pageFrom ?? null;
 
   const [form, setForm] = useState({
     surah: suggestions?.surah || "",
@@ -153,9 +164,13 @@ export default function QuickReportModal({
   const [isWithinRange, setIsWithinRange] = useState(() => (
     Boolean(suggestions?.pageFrom && suggestions?.pageTo && suggestions.pageFrom !== suggestions.pageTo)
   ));
-  const recentAnchor = suggestions?.pageTo ?? suggestions?.pageFrom ?? null;
-  const [reviewAnchorPage, setReviewAnchorPage] = useState(recentAnchor ? String(recentAnchor) : "");
-  const [reviewCount, setReviewCount] = useState("3");
+  const [newMurajaahRangeMode, setNewMurajaahRangeMode] =
+    useState<NewMurajaahRangeMode>("last_n");
+  const [newMurajaahLastN, setNewMurajaahLastN] = useState(
+    String(DEFAULT_NEW_MURAJAAH_LAST_N)
+  );
+  const [newMurajaahManualFrom, setNewMurajaahManualFrom] = useState("");
+  const [newMurajaahManualTo, setNewMurajaahManualTo] = useState("");
   const [oldMurajaahMode, setOldMurajaahMode] = useState<OldMurajaahMode>("recitation");
   const [oldMurajaahSection2Scores, setOldMurajaahSection2Scores] =
     useState<OldMurajaahSection2Scores>(buildOldMurajaahTestInitialScores());
@@ -214,17 +229,86 @@ export default function QuickReportModal({
     };
   }, [form.page_from, form.page_to, isOldMurajaah, isWithinRange]);
 
-  const reviewRangePreview = useMemo(() => {
-    const anchorValue = parseInt(reviewAnchorPage, 10);
-    const countValue = parseInt(reviewCount, 10);
-    if (!anchorValue || !countValue) return null;
-    const from = Math.max(1, anchorValue - countValue + 1);
-    return { from, to: anchorValue, count: countValue };
-  }, [reviewAnchorPage, reviewCount]);
+  const latestTasmiPage = useMemo(() => {
+    const isSuggestedPageValid = suggestedLatestTasmiPage &&
+      suggestedLatestTasmiPage >= 1 &&
+      suggestedLatestTasmiPage <= 604;
+    if (isSuggestedPageValid) return suggestedLatestTasmiPage;
+    if (!tasmiReports?.length) return null;
+
+    const latestTasmi = tasmiReports
+      .filter((r) => r.student_id === student.id && r.type === "Tasmi")
+      .filter((r) => r.page_from !== null || r.page_to !== null)
+      .sort((a, b) => {
+        const dateDiff = new Date(b.date).getTime() - new Date(a.date).getTime();
+        if (dateDiff !== 0) return dateDiff;
+        const aAnchor = Math.max(a.page_to ?? 0, a.page_from ?? 0);
+        const bAnchor = Math.max(b.page_to ?? 0, b.page_from ?? 0);
+        return bAnchor - aAnchor;
+      })[0];
+
+    if (!latestTasmi) return null;
+    return latestTasmi.page_to ?? latestTasmi.page_from ?? null;
+  }, [suggestedLatestTasmiPage, tasmiReports, student.id]);
+
+  const newMurajaahRange = useMemo(() => (
+    computeNewMurajaahRange({
+      sourceMode: newMurajaahRangeMode === "last_n" ? "latest_tasmi" : "specific_page",
+      rangeMode: newMurajaahRangeMode,
+      latestTasmiPage,
+      specificPage: null,
+      lastN: parseNullableInt(newMurajaahLastN),
+      manualFrom: parseNullableInt(newMurajaahManualFrom),
+      manualTo: parseNullableInt(newMurajaahManualTo),
+      maxLastN: MAX_NEW_MURAJAAH_LAST_N,
+      maxSpan: MAX_NEW_MURAJAAH_SPAN
+    })
+  ), [
+    latestTasmiPage,
+    newMurajaahRangeMode,
+    newMurajaahLastN,
+    newMurajaahManualFrom,
+    newMurajaahManualTo
+  ]);
 
   useEffect(() => {
-    if (!isNewMurajaah || !reviewRangePreview || !tasmiReports?.length) return;
+    if (!isNewMurajaah || typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(NEW_MURAJAAH_PREF_KEY);
+    if (!raw) return;
+
+    try {
+      const parsed = JSON.parse(raw) as {
+        rangeMode?: NewMurajaahRangeMode;
+        lastN?: string;
+      };
+      if (parsed.rangeMode === "last_n" || parsed.rangeMode === "manual_range") {
+        setNewMurajaahRangeMode(parsed.rangeMode);
+      }
+      if (typeof parsed.lastN === "string" && parsed.lastN.trim().length > 0) {
+        setNewMurajaahLastN(parsed.lastN);
+      }
+    } catch {
+      // Ignore corrupted local preference values.
+    }
+  }, [isNewMurajaah]);
+
+  useEffect(() => {
+    if (!isNewMurajaah || typeof window === "undefined") return;
+    window.localStorage.setItem(
+      NEW_MURAJAAH_PREF_KEY,
+      JSON.stringify({
+        rangeMode: newMurajaahRangeMode,
+        lastN: newMurajaahLastN
+      })
+    );
+  }, [isNewMurajaah, newMurajaahRangeMode, newMurajaahLastN]);
+
+  useEffect(() => {
+    if (!isNewMurajaah || !newMurajaahRange.isValid || !tasmiReports?.length) return;
     if (surahTouched || ayatTouched) return;
+    if (newMurajaahRange.pageFrom === null || newMurajaahRange.pageTo === null) return;
+    const rangeFrom = newMurajaahRange.pageFrom;
+    const rangeTo = newMurajaahRange.pageTo;
 
     const overlapping = tasmiReports
       .filter((r) => {
@@ -233,7 +317,7 @@ export default function QuickReportModal({
         if (r.page_from === null || r.page_to === null) return false;
         const reportFrom = Math.min(r.page_from, r.page_to);
         const reportTo = Math.max(r.page_from, r.page_to);
-        return reportFrom <= reviewRangePreview.to && reportTo >= reviewRangePreview.from;
+        return reportFrom <= rangeTo && reportTo >= rangeFrom;
       });
 
     if (overlapping.length === 0) return;
@@ -241,13 +325,13 @@ export default function QuickReportModal({
     const first = overlapping.find((r) => {
       const rFrom = Math.min(r.page_from!, r.page_to!);
       const rTo = Math.max(r.page_from!, r.page_to!);
-      return rFrom <= reviewRangePreview.from && rTo >= reviewRangePreview.from;
+      return rFrom <= rangeFrom && rTo >= rangeFrom;
     }) ?? null;
 
     const last = overlapping.find((r) => {
       const rFrom = Math.min(r.page_from!, r.page_to!);
       const rTo = Math.max(r.page_from!, r.page_to!);
-      return rFrom <= reviewRangePreview.to && rTo >= reviewRangePreview.to;
+      return rFrom <= rangeTo && rTo >= rangeTo;
     }) ?? null;
 
     if (!first || !last) return;
@@ -273,7 +357,14 @@ export default function QuickReportModal({
         ayat_to: String(last.ayat_to)
       }));
     }
-  }, [isNewMurajaah, reviewRangePreview, tasmiReports, student.id, surahTouched, ayatTouched]);
+  }, [
+    isNewMurajaah,
+    newMurajaahRange,
+    tasmiReports,
+    student.id,
+    surahTouched,
+    ayatTouched
+  ]);
 
   // Auto-fill Juz based on page input
   useEffect(() => {
@@ -303,6 +394,28 @@ export default function QuickReportModal({
     }));
   };
 
+  const handleNewMurajaahRangeModeChange = (mode: NewMurajaahRangeMode) => {
+    setNewMurajaahRangeMode(mode);
+    if (mode !== "manual_range") return;
+    if (newMurajaahManualFrom && newMurajaahManualTo) return;
+
+    const prefill = computeNewMurajaahRange({
+      sourceMode: "latest_tasmi",
+      rangeMode: "last_n",
+      latestTasmiPage,
+      specificPage: null,
+      lastN: parseNullableInt(newMurajaahLastN),
+      manualFrom: null,
+      manualTo: null,
+      maxLastN: MAX_NEW_MURAJAAH_LAST_N,
+      maxSpan: MAX_NEW_MURAJAAH_SPAN
+    });
+
+    if (!prefill.isValid || prefill.pageFrom === null || prefill.pageTo === null) return;
+    if (!newMurajaahManualFrom) setNewMurajaahManualFrom(String(prefill.pageFrom));
+    if (!newMurajaahManualTo) setNewMurajaahManualTo(String(prefill.pageTo));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -312,7 +425,7 @@ export default function QuickReportModal({
     }
     
     const requiredPageValidation = isNewMurajaah
-      ? (!reviewAnchorPage || !reviewCount)
+      ? !newMurajaahRange.isValid
       : isOldMurajaah
         ? (!form.page_from || (isWithinRange && !form.page_to))
       : isPageRange 
@@ -329,7 +442,9 @@ export default function QuickReportModal({
     const requiresGrade = !(isOldMurajaah && oldMurajaahMode === "test");
 
     if (!hasSurah || !hasAyatRange || requiredPageValidation || (requiresGrade && !form.grade)) {
-      setError("Please fill in all required fields");
+      setError(isNewMurajaah && !newMurajaahRange.isValid
+        ? newMurajaahRange.error ?? "Please fill in all required fields"
+        : "Please fill in all required fields");
       return;
     }
 
@@ -376,17 +491,18 @@ export default function QuickReportModal({
         resolvedPageTo = Math.max(fromValue, endValue);
         resolvedJuz = getJuzFromPageRange(resolvedPageFrom, resolvedPageTo);
       } else if (isNewMurajaah) {
-        const anchorValue = parseInt(reviewAnchorPage, 10);
-        const countValue = parseInt(reviewCount, 10);
-        if (!anchorValue || !countValue) {
-          setError("Please fill in all required fields");
+        if (
+          !newMurajaahRange.isValid ||
+          newMurajaahRange.pageFrom === null ||
+          newMurajaahRange.pageTo === null
+        ) {
+          setError(newMurajaahRange.error ?? "Please fill in all required fields");
           setIsSubmitting(false);
           return;
         }
-        const fromValue = Math.max(1, anchorValue - countValue + 1);
-        resolvedPageFrom = fromValue;
-        resolvedPageTo = anchorValue;
-        resolvedJuz = getJuzFromPageRange(anchorValue, anchorValue);
+        resolvedPageFrom = newMurajaahRange.pageFrom;
+        resolvedPageTo = newMurajaahRange.pageTo;
+        resolvedJuz = newMurajaahRange.juz;
       } else {
         const newPageFromValue = form.page_from ? parseInt(form.page_from) : null;
         const newPageToValue = form.page_to ? parseInt(form.page_to) : null;
@@ -411,6 +527,24 @@ export default function QuickReportModal({
               }
             }
           : { murajaah_mode: "recitation" }
+        : isNewMurajaah
+          ? {
+              murajaah_selection: {
+                source: newMurajaahRangeMode === "last_n" ? "auto_latest_tasmi" : "specific_page",
+                builder: newMurajaahRangeMode,
+                input: {
+                  latest_tasmi_page: latestTasmiPage,
+                  specific_page: null,
+                  last_n: parseNullableInt(newMurajaahLastN),
+                  manual_from: parseNullableInt(newMurajaahManualFrom),
+                  manual_to: parseNullableInt(newMurajaahManualTo)
+                },
+                resolved_range: {
+                  page_from: resolvedPageFrom,
+                  page_to: resolvedPageTo
+                }
+              }
+            }
         : null;
 
       const baseRow = {
@@ -510,57 +644,18 @@ export default function QuickReportModal({
           </div>
 
           {isNewMurajaah && (
-            <div className="sm:col-span-2 rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <div className="text-sm font-semibold text-emerald-700">New Murajaah (Recent pages)</div>
-                  <div className="text-xs text-emerald-600">Review latest pages from current Juz</div>
-                </div>
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">New</span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-emerald-700 mb-1">
-                    {recentAnchor ? "Latest Tasmi Page" : "Anchor Page"}
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="604"
-                    placeholder="Page"
-                    value={reviewAnchorPage}
-                    onChange={(e) => setReviewAnchorPage(e.target.value)}
-                    className="w-full border border-emerald-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-400"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-emerald-700 mb-1">Review Size *</label>
-                  <select
-                    value={reviewCount}
-                    onChange={(e) => setReviewCount(e.target.value)}
-                    className="w-full border border-emerald-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-400 text-sm bg-white"
-                  >
-                    {Array.from({ length: 20 }, (_, index) => index + 1).map((count) => (
-                      <option key={count} value={count}>
-                        Last {count} pages
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-700">
-                <span className="rounded-full bg-white px-3 py-1 border border-emerald-200">
-                  {reviewRangePreview
-                    ? `Pages ${reviewRangePreview.from}-${reviewRangePreview.to}`
-                    : "Select recent pages"}
-                </span>
-                <span className="text-emerald-600">
-                  {reviewRangePreview
-                    ? `Juz ${getJuzFromPageRange(reviewRangePreview.to, reviewRangePreview.to) ?? "-"}`
-                    : "Juz auto"}
-                </span>
-              </div>
-            </div>
+            <NewMurajaahRangeSection
+              latestTasmiPage={latestTasmiPage}
+              rangeMode={newMurajaahRangeMode}
+              lastNInput={newMurajaahLastN}
+              manualFromInput={newMurajaahManualFrom}
+              manualToInput={newMurajaahManualTo}
+              result={newMurajaahRange}
+              onRangeModeChange={handleNewMurajaahRangeModeChange}
+              onLastNChange={setNewMurajaahLastN}
+              onManualFromChange={setNewMurajaahManualFrom}
+              onManualToChange={setNewMurajaahManualTo}
+            />
           )}
 
           {!isOldMurajaah && (
@@ -1009,7 +1104,7 @@ export default function QuickReportModal({
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-2 rounded-lg text-gray-700 bg-gray-200 hover:bg-gray-300 transition-colors"
+              className="flex-1 px-4 py-2 rounded-lg text-gray-600 bg-white border border-gray-300 hover:bg-gray-50 transition-colors"
               disabled={isSubmitting}
             >
               Cancel

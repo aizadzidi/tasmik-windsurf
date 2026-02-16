@@ -1256,6 +1256,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
             onSave={editReport}
             surahs={SURAHS}
             grades={GRADES}
+            tasmiReports={reports}
           />
         )}
 
