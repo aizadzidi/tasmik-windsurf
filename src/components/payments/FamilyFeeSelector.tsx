@@ -57,6 +57,17 @@ export function FamilyFeeSelector({
   const [openChild, setOpenChild] = useState<string | null>(families[0]?.[0] ?? null);
 
   useEffect(() => {
+    if (!families.length) {
+      setOpenChild(null);
+      return;
+    }
+    const hasCurrentOpenChild = families.some(([childId]) => childId === openChild);
+    if (!hasCurrentOpenChild) {
+      setOpenChild(families[0][0]);
+    }
+  }, [families, openChild]);
+
+  useEffect(() => {
     if (focusChildId) {
       setOpenChild(focusChildId);
     }
@@ -66,6 +77,14 @@ export function FamilyFeeSelector({
     const current = selections[assignmentId] ?? { include: false, months: [], quantity: 1 };
     onSelectionChange(assignmentId, { ...current, ...partial });
   };
+
+  if (families.length === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-center text-sm text-slate-600">
+        Tiada yuran tersedia buat masa ini. Sila hubungi admin untuk semakan yuran anak.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

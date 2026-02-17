@@ -45,6 +45,50 @@ interface EditExamModalProps {
 
 type ExamFormErrors = Partial<Record<keyof ExamFormData, string>>;
 
+const pruneStudentSubjectExceptions = (
+  exceptionsByClass: ExamFormData['studentSubjectExceptionsByClass'],
+  classIds: string[],
+  subjectConfigByClass: ExamFormData['subjectConfigByClass'],
+  fallbackSubjects: string[]
+): ExamFormData['studentSubjectExceptionsByClass'] => {
+  const next: ExamFormData['studentSubjectExceptionsByClass'] = {};
+  classIds.forEach((classId) => {
+    const allowedSubjects = new Set(
+      Array.isArray(subjectConfigByClass[classId]) && subjectConfigByClass[classId].length > 0
+        ? subjectConfigByClass[classId]
+        : fallbackSubjects
+    );
+    const existingByStudent = exceptionsByClass[classId] || {};
+    const classExceptions: Record<string, string[]> = {};
+    Object.entries(existingByStudent).forEach(([studentId, subjectNames]) => {
+      const filtered = Array.from(new Set(subjectNames || [])).filter((name) => allowedSubjects.has(name));
+      if (filtered.length > 0) {
+        classExceptions[studentId] = filtered;
+      }
+    });
+    next[classId] = classExceptions;
+  });
+  return next;
+};
+
+const removeExcludedStudentExceptions = (
+  exceptionsByClass: ExamFormData['studentSubjectExceptionsByClass'],
+  excludedByClass: ExamFormData['excludedStudentIdsByClass']
+): ExamFormData['studentSubjectExceptionsByClass'] => {
+  const next: ExamFormData['studentSubjectExceptionsByClass'] = {};
+  Object.entries(exceptionsByClass || {}).forEach(([classId, byStudent]) => {
+    const excludedSet = new Set(excludedByClass[classId] || []);
+    const filtered: Record<string, string[]> = {};
+    Object.entries(byStudent || {}).forEach(([studentId, subjectNames]) => {
+      if (excludedSet.has(studentId)) return;
+      const dedupedSubjects = Array.from(new Set(subjectNames || []));
+      if (dedupedSubjects.length > 0) filtered[studentId] = dedupedSubjects;
+    });
+    next[classId] = filtered;
+  });
+  return next;
+};
+
 export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subjects, exam }: EditExamModalProps) {
   const [formData, setFormData] = useState<ExamFormData>({
     title: '',
@@ -55,6 +99,7 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
     gradingSystemId: '',
     excludedStudentIdsByClass: {},
     subjectConfigByClass: {},
+    studentSubjectExceptionsByClass: {},
   });
 
   const [gradingSystems, setGradingSystems] = useState<GradingSystem[]>([]);
@@ -132,6 +177,7 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
         gradingSystemId: exam.grading_system_id || '',
         excludedStudentIdsByClass: {},
         subjectConfigByClass,
+        studentSubjectExceptionsByClass: {},
       });
     }
   }, [exam, isOpen]);
@@ -167,6 +213,104 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
       }
     };
     loadExclusions();
+  }, [exam, isOpen]);
+
+  useEffect(() => {
+    const loadSubjectExceptions = async () => {
+      if (!exam || !isOpen) return;
+      try {
+        const { data: optOutRows, error: optOutError } = await supabase
+          .from('subject_opt_outs')
+          .select('student_id, subject_id')
+          .eq('exam_id', exam.id);
+
+        if (optOutError) {
+          const msg = String(optOutError.message || '').toLowerCase();
+          const code = (optOutError as { code?: string }).code;
+          if (code === '42P01' || (msg.includes('relation') && msg.includes('does not exist'))) {
+            return;
+          }
+          throw optOutError;
+        }
+
+        const typedRows = (optOutRows ?? []) as Array<{ student_id: string | null; subject_id: string | null }>;
+        if (!typedRows.length) {
+          setFormData((prev) => ({
+            ...prev,
+            studentSubjectExceptionsByClass: pruneStudentSubjectExceptions(
+              {},
+              prev.classIds,
+              prev.subjectConfigByClass,
+              prev.subjects
+            ),
+          }));
+          return;
+        }
+
+        const studentIds = Array.from(
+          new Set(
+            typedRows
+              .map((row) => (row.student_id ? String(row.student_id) : null))
+              .filter((id): id is string => Boolean(id))
+          )
+        );
+        const subjectIds = Array.from(
+          new Set(
+            typedRows
+              .map((row) => (row.subject_id ? String(row.subject_id) : null))
+              .filter((id): id is string => Boolean(id))
+          )
+        );
+
+        const [studentsRes, subjectsRes] = await Promise.all([
+          supabase.from('students').select('id, class_id').in('id', studentIds),
+          supabase.from('subjects').select('id, name').in('id', subjectIds),
+        ]);
+
+        if (studentsRes.error) throw studentsRes.error;
+        if (subjectsRes.error) throw subjectsRes.error;
+
+        const classByStudentId = new Map<string, string>();
+        (studentsRes.data ?? []).forEach((row) => {
+          const sid = row?.id ? String(row.id) : null;
+          const cid = row?.class_id ? String(row.class_id) : null;
+          if (sid && cid) classByStudentId.set(sid, cid);
+        });
+
+        const subjectNameById = new Map<string, string>();
+        (subjectsRes.data ?? []).forEach((row) => {
+          const sid = row?.id ? String(row.id) : null;
+          const name = row?.name ? String(row.name) : null;
+          if (sid && name) subjectNameById.set(sid, name);
+        });
+
+        const grouped: ExamFormData['studentSubjectExceptionsByClass'] = {};
+        typedRows.forEach((row) => {
+          const studentId = row?.student_id ? String(row.student_id) : null;
+          const subjectId = row?.subject_id ? String(row.subject_id) : null;
+          if (!studentId || !subjectId) return;
+          const classId = classByStudentId.get(studentId);
+          const subjectName = subjectNameById.get(subjectId);
+          if (!classId || !subjectName) return;
+          if (!grouped[classId]) grouped[classId] = {};
+          if (!grouped[classId][studentId]) grouped[classId][studentId] = [];
+          grouped[classId][studentId].push(subjectName);
+        });
+
+        setFormData((prev) => ({
+          ...prev,
+          studentSubjectExceptionsByClass: pruneStudentSubjectExceptions(
+            grouped,
+            prev.classIds,
+            prev.subjectConfigByClass,
+            prev.subjects
+          ),
+        }));
+      } catch (e) {
+        console.error('Failed to load subject exceptions', e || '');
+      }
+    };
+    loadSubjectExceptions();
   }, [exam, isOpen]);
 
   // Load students for the selected classes
@@ -256,6 +400,7 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
         const updatedWeightages = { ...prev.conductWeightages };
         const updatedExclusions = { ...prev.excludedStudentIdsByClass };
         const updatedSubjectConfig = { ...prev.subjectConfigByClass };
+        const updatedSubjectExceptions = { ...prev.studentSubjectExceptionsByClass };
         
         if (isChecked) {
           // Set default weightage for newly selected class (default to 20%)
@@ -268,19 +413,30 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
           if (!updatedSubjectConfig[value]) {
             updatedSubjectConfig[value] = [...prev.subjects];
           }
+          if (!updatedSubjectExceptions[value]) {
+            updatedSubjectExceptions[value] = {};
+          }
         } else {
           // Remove weightage for deselected class
           delete updatedWeightages[value];
           delete updatedExclusions[value];
           delete updatedSubjectConfig[value];
+          delete updatedSubjectExceptions[value];
         }
+        const prunedSubjectExceptions = pruneStudentSubjectExceptions(
+          updatedSubjectExceptions,
+          updatedField,
+          updatedSubjectConfig,
+          prev.subjects
+        );
         
         return {
           ...prev,
           [field]: updatedField,
           conductWeightages: updatedWeightages,
           excludedStudentIdsByClass: updatedExclusions,
-          subjectConfigByClass: updatedSubjectConfig
+          subjectConfigByClass: updatedSubjectConfig,
+          studentSubjectExceptionsByClass: prunedSubjectExceptions,
         };
       }
       
@@ -293,10 +449,17 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
           const allowed = new Set(updatedField as string[]);
           updatedSubjectConfig[cid] = Array.from(set).filter(s => allowed.has(s));
         });
+        const prunedSubjectExceptions = pruneStudentSubjectExceptions(
+          prev.studentSubjectExceptionsByClass,
+          prev.classIds,
+          updatedSubjectConfig,
+          updatedField as string[]
+        );
         return {
           ...prev,
           [field]: updatedField,
           subjectConfigByClass: updatedSubjectConfig,
+          studentSubjectExceptionsByClass: prunedSubjectExceptions,
         };
       }
 
@@ -326,12 +489,14 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
         const updatedWeightages = { ...prev.conductWeightages };
         const updatedExclusions = { ...prev.excludedStudentIdsByClass };
         const updatedSubjectConfig = { ...prev.subjectConfigByClass };
+        const updatedSubjectExceptions = { ...prev.studentSubjectExceptionsByClass };
         
         if (isAllSelected) {
           // Remove all weightages when deselecting all
           items.forEach(classId => delete updatedWeightages[classId]);
           items.forEach(classId => delete updatedExclusions[classId]);
           items.forEach(classId => delete updatedSubjectConfig[classId]);
+          items.forEach(classId => delete updatedSubjectExceptions[classId]);
         } else {
           // Set default weightage for all selected classes
           items.forEach(classId => {
@@ -344,15 +509,25 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
             if (!updatedSubjectConfig[classId]) {
               updatedSubjectConfig[classId] = [...prev.subjects];
             }
+            if (!updatedSubjectExceptions[classId]) {
+              updatedSubjectExceptions[classId] = {};
+            }
           });
         }
+        const prunedSubjectExceptions = pruneStudentSubjectExceptions(
+          updatedSubjectExceptions,
+          updatedField,
+          updatedSubjectConfig,
+          prev.subjects
+        );
         
         return {
           ...prev,
           [field]: updatedField,
           conductWeightages: updatedWeightages,
           excludedStudentIdsByClass: updatedExclusions,
-          subjectConfigByClass: updatedSubjectConfig
+          subjectConfigByClass: updatedSubjectConfig,
+          studentSubjectExceptionsByClass: prunedSubjectExceptions,
         };
       }
       
@@ -361,10 +536,17 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
         Object.keys(updatedSubjectConfig).forEach(cid => {
           updatedSubjectConfig[cid] = isAllSelected ? [] : [...items];
         });
+        const prunedSubjectExceptions = pruneStudentSubjectExceptions(
+          prev.studentSubjectExceptionsByClass,
+          prev.classIds,
+          updatedSubjectConfig,
+          updatedField as string[]
+        );
         return {
           ...prev,
           [field]: updatedField,
           subjectConfigByClass: updatedSubjectConfig,
+          studentSubjectExceptionsByClass: prunedSubjectExceptions,
         };
       }
 
@@ -387,12 +569,17 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
     setFormData(prev => {
       const current = prev.excludedStudentIdsByClass[classId] || [];
       const next = isChecked ? Array.from(new Set([...current, studentId])) : current.filter(id => id !== studentId);
+      const nextExcludedByClass = {
+        ...prev.excludedStudentIdsByClass,
+        [classId]: next,
+      };
       return {
         ...prev,
-        excludedStudentIdsByClass: {
-          ...prev.excludedStudentIdsByClass,
-          [classId]: next,
-        }
+        excludedStudentIdsByClass: nextExcludedByClass,
+        studentSubjectExceptionsByClass: removeExcludedStudentExceptions(
+          prev.studentSubjectExceptionsByClass,
+          nextExcludedByClass
+        ),
       };
     });
   };
@@ -400,12 +587,52 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
   const handleExcludeSelectAll = (classId: string) => {
     const students = studentsByClass[classId] || [];
     const isAllSelected = students.length > 0 && students.every((s) => formData.excludedStudentIdsByClass[classId]?.includes(s.id));
-    setFormData(prev => ({
-      ...prev,
-      excludedStudentIdsByClass: {
+    setFormData(prev => {
+      const nextExcludedByClass = {
         ...prev.excludedStudentIdsByClass,
         [classId]: isAllSelected ? [] : students.map(s => s.id)
+      };
+      return {
+        ...prev,
+        excludedStudentIdsByClass: nextExcludedByClass,
+        studentSubjectExceptionsByClass: removeExcludedStudentExceptions(
+          prev.studentSubjectExceptionsByClass,
+          nextExcludedByClass
+        ),
+      };
+    });
+  };
+
+  const handleSubjectExceptionToggle = (classId: string, studentId: string, subjectName: string, isChecked: boolean) => {
+    setFormData((prev) => {
+      const classMap = { ...(prev.studentSubjectExceptionsByClass[classId] || {}) };
+      const current = new Set(classMap[studentId] || []);
+      if (isChecked) current.add(subjectName);
+      else current.delete(subjectName);
+
+      if (current.size > 0) {
+        classMap[studentId] = Array.from(current);
+      } else {
+        delete classMap[studentId];
       }
+
+      return {
+        ...prev,
+        studentSubjectExceptionsByClass: {
+          ...prev.studentSubjectExceptionsByClass,
+          [classId]: classMap,
+        },
+      };
+    });
+  };
+
+  const clearSubjectExceptionsForClass = (classId: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      studentSubjectExceptionsByClass: {
+        ...prev.studentSubjectExceptionsByClass,
+        [classId]: {},
+      },
     }));
   };
 
@@ -477,6 +704,7 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
       gradingSystemId: '',
       excludedStudentIdsByClass: {},
       subjectConfigByClass: {},
+      studentSubjectExceptionsByClass: {},
     });
     setErrors({});
     setIsSubjectDropdownOpen(false);
@@ -487,8 +715,8 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
   if (!isOpen || !exam) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[10001] flex items-start justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full my-8 max-h-[calc(100vh-4rem)] overflow-hidden flex flex-col">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[10001] flex items-start justify-center overflow-y-auto p-4">
+      <div className="my-8 flex max-h-[calc(100dvh-4rem)] min-h-0 w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200 flex-shrink-0">
           <div className="flex items-center gap-3">
@@ -509,8 +737,8 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
         </div>
 
         {/* Form Content */}
-        <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
-          <div className="p-6 space-y-6 overflow-y-auto flex-1">
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="flex-1 min-h-0 space-y-6 overflow-y-auto overscroll-y-contain p-6">
           {/* Basic Information */}
           <div className="space-y-4">
             <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
@@ -648,6 +876,11 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
                 </div>
               )}
               {errors.classIds && <p className="text-red-500 text-xs mt-1">{errors.classIds}</p>}
+              {formData.classIds.length === 0 && (
+                <p className="mt-2 text-xs text-gray-500">
+                  Select at least one class to configure conduct weightage, excluded students, and student subject exceptions.
+                </p>
+              )}
             </div>
           </div>
 
@@ -846,13 +1079,23 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
                       <button
                         type="button"
                         onClick={() => {
-                          setFormData(prev => ({
-                            ...prev,
-                            subjectConfigByClass: {
+                          setFormData(prev => {
+                            const updatedSubjectConfig = {
                               ...prev.subjectConfigByClass,
                               [classId]: allSelected ? [] : [...prev.subjects]
-                            }
-                          }));
+                            };
+                            const prunedSubjectExceptions = pruneStudentSubjectExceptions(
+                              prev.studentSubjectExceptionsByClass,
+                              prev.classIds,
+                              updatedSubjectConfig,
+                              prev.subjects
+                            );
+                            return {
+                              ...prev,
+                              subjectConfigByClass: updatedSubjectConfig,
+                              studentSubjectExceptionsByClass: prunedSubjectExceptions,
+                            };
+                          });
                         }}
                         className="text-sm text-blue-600 hover:text-blue-700"
                       >
@@ -869,12 +1112,20 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
                               setFormData(prev => {
                                 const current = new Set(prev.subjectConfigByClass[classId] || []);
                                 if (e.target.checked) current.add(subj); else current.delete(subj);
+                                const updatedSubjectConfig = {
+                                  ...prev.subjectConfigByClass,
+                                  [classId]: Array.from(current)
+                                };
+                                const prunedSubjectExceptions = pruneStudentSubjectExceptions(
+                                  prev.studentSubjectExceptionsByClass,
+                                  prev.classIds,
+                                  updatedSubjectConfig,
+                                  prev.subjects
+                                );
                                 return {
                                   ...prev,
-                                  subjectConfigByClass: {
-                                    ...prev.subjectConfigByClass,
-                                    [classId]: Array.from(current)
-                                  }
+                                  subjectConfigByClass: updatedSubjectConfig,
+                                  studentSubjectExceptionsByClass: prunedSubjectExceptions,
                                 };
                               });
                             }}
@@ -890,6 +1141,91 @@ export default function EditExamModal({ isOpen, onClose, onSubmit, classes, subj
               {errors.subjectConfigByClass && (
                 <p className="text-red-500 text-xs">{errors.subjectConfigByClass}</p>
               )}
+            </div>
+          )}
+
+          {/* Student exceptions per subject */}
+          {formData.classIds.length > 0 && formData.subjects.length > 0 && (
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <Users className="w-5 h-5" />
+                Student Exceptions (Not Taking Subject)
+              </h3>
+              <p className="text-sm text-gray-600">
+                Mark subject exceptions for students who do not take certain subjects. These students will be set as N/A for this exam.
+              </p>
+              {loadingStudents && (
+                <div className="text-sm text-gray-500">Loading class rosters…</div>
+              )}
+              {formData.classIds.map((classId) => {
+                const classData = classes.find((c) => c.id === classId);
+                const roster = studentsByClass[classId] || [];
+                const excludedSet = new Set(formData.excludedStudentIdsByClass[classId] || []);
+                const exceptionRoster = roster.filter((student) => !excludedSet.has(student.id));
+                const classSubjects = (formData.subjectConfigByClass[classId] || []).filter((subjectName) =>
+                  formData.subjects.includes(subjectName)
+                );
+                const exceptionMap = formData.studentSubjectExceptionsByClass[classId] || {};
+                const hasAnyException = Object.entries(exceptionMap).some(
+                  ([studentId, subjectNames]) =>
+                    !excludedSet.has(studentId) && Array.isArray(subjectNames) && subjectNames.length > 0
+                );
+                return (
+                  <div key={`exceptions-${classId}`} className="border border-gray-200 rounded-lg">
+                    <div className="flex items-center justify-between p-3 bg-gray-50 rounded-t-lg">
+                      <div className="font-semibold text-gray-700">{classData?.name}</div>
+                      <button
+                        type="button"
+                        onClick={() => clearSubjectExceptionsForClass(classId)}
+                        className="text-sm text-blue-600 hover:text-blue-700 disabled:text-gray-400"
+                        disabled={!hasAnyException}
+                      >
+                        Clear Exceptions
+                      </button>
+                    </div>
+                    <div className="max-h-56 overflow-y-auto p-3 space-y-2">
+                      {roster.length === 0 ? (
+                        <div className="text-sm text-gray-500">No students in this class.</div>
+                      ) : exceptionRoster.length === 0 ? (
+                        <div className="text-sm text-gray-500">
+                          All students in this class are excluded from this exam.
+                        </div>
+                      ) : classSubjects.length === 0 ? (
+                        <div className="text-sm text-gray-500">
+                          No subjects configured for this class. Configure subjects per class first.
+                        </div>
+                      ) : (
+                        exceptionRoster.map((student) => {
+                          const selectedSubjects = new Set(exceptionMap[student.id] || []);
+                          return (
+                            <div key={`${classId}-${student.id}`} className="border border-gray-100 rounded-md p-2">
+                              <div className="text-sm font-medium text-gray-800 mb-2">{student.name}</div>
+                              <div className="flex flex-wrap gap-3">
+                                {classSubjects.map((subjectName) => (
+                                  <label
+                                    key={`${classId}-${student.id}-${subjectName}`}
+                                    className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedSubjects.has(subjectName)}
+                                      onChange={(e) =>
+                                        handleSubjectExceptionToggle(classId, student.id, subjectName, e.target.checked)
+                                      }
+                                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                    />
+                                    <span>{subjectName}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
 

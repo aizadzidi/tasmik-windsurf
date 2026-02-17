@@ -1,6 +1,15 @@
 import React, { useState, useEffect, useMemo } from "react";
 import type { Report } from "@/types/teacher";
+import NewMurajaahRangeSection from "@/components/teacher/NewMurajaahRangeSection";
 import { getJuzFromPageRange, getPageWithinJuz } from "@/lib/quranMapping";
+import {
+  computeNewMurajaahRange,
+  DEFAULT_NEW_MURAJAAH_LAST_N,
+  MAX_NEW_MURAJAAH_LAST_N,
+  MAX_NEW_MURAJAAH_SPAN,
+  parseNullableInt,
+  type NewMurajaahRangeMode
+} from "@/lib/murajaahRange";
 
 interface EditReportModalProps {
   report: Report;
@@ -8,6 +17,7 @@ interface EditReportModalProps {
   onCancel: () => void;
   grades: string[];
   surahs: string[];
+  tasmiReports?: Report[];
 }
 
 const OLD_MURAJAAH_SURAH_LABEL = "PMMM";
@@ -100,8 +110,49 @@ const getInitialAssessmentScore = (readingProgress: unknown, key: string): numbe
   return clampScore(assessment[key]);
 };
 
+const coerceRangeMode = (value: unknown): NewMurajaahRangeMode | null => {
+  if (value === "last_n" || value === "manual_range") return value;
+  return null;
+};
+
+const getInitialNewMurajaahSelection = (report: Report) => {
+  const fallbackFrom = report.page_from ?? report.page_to ?? null;
+  const fallbackTo = report.page_to ?? report.page_from ?? null;
+  const fallbackCount = fallbackFrom && fallbackTo
+    ? Math.max(1, Math.min(MAX_NEW_MURAJAAH_LAST_N, Math.abs(fallbackTo - fallbackFrom) + 1))
+    : DEFAULT_NEW_MURAJAAH_LAST_N;
+  const fallback = {
+    rangeMode: "manual_range" as NewMurajaahRangeMode,
+    specificPage: fallbackTo ? String(fallbackTo) : "",
+    lastN: String(fallbackCount),
+    manualFrom: fallbackFrom ? String(fallbackFrom) : "",
+    manualTo: fallbackTo ? String(fallbackTo) : ""
+  };
+
+  if (!isObject(report.reading_progress)) return fallback;
+  const selection = isObject(report.reading_progress.murajaah_selection)
+    ? report.reading_progress.murajaah_selection
+    : null;
+  if (!selection) return fallback;
+
+  const input = isObject(selection.input) ? selection.input : {};
+  const rangeMode = coerceRangeMode(selection.builder) ?? fallback.rangeMode;
+  const specificPage = parseNullableInt(input.specific_page);
+  const lastN = parseNullableInt(input.last_n);
+  const manualFrom = parseNullableInt(input.manual_from);
+  const manualTo = parseNullableInt(input.manual_to);
+
+  return {
+    rangeMode,
+    specificPage: specificPage ? String(specificPage) : fallback.specificPage,
+    lastN: lastN ? String(lastN) : fallback.lastN,
+    manualFrom: manualFrom ? String(manualFrom) : fallback.manualFrom,
+    manualTo: manualTo ? String(manualTo) : fallback.manualTo
+  };
+};
+
 export default function EditReportModal(
-  { report, onSave, onCancel, grades, surahs, loading = false, error = "" }:
+  { report, onSave, onCancel, grades, surahs, tasmiReports, loading = false, error = "" }:
   EditReportModalProps & { loading?: boolean; error?: string }
 ) {
   const [form, setForm] = useState<Report>({ ...report });
@@ -124,20 +175,25 @@ export default function EditReportModal(
   );
   const isNewMurajaah = form.type === "New Murajaah";
   const isOldMurajaah = form.type === "Old Murajaah" || form.type === "Murajaah";
+  const initialNewMurajaahSelection = getInitialNewMurajaahSelection(report);
   const [isMultiSurah, setIsMultiSurah] = useState(Boolean(initialSurahRange));
   const [surahFrom, setSurahFrom] = useState(initialSurahRange?.from ?? "");
   const [surahTo, setSurahTo] = useState(initialSurahRange?.to ?? "");
   const [isWithinRange, setIsWithinRange] = useState(
     Boolean(form.page_from && form.page_to && form.page_from !== form.page_to)
   );
-  const [reviewAnchorPage, setReviewAnchorPage] = useState(
-    form.page_to ? String(form.page_to) : form.page_from ? String(form.page_from) : ""
+  const [newMurajaahRangeMode, setNewMurajaahRangeMode] = useState<NewMurajaahRangeMode>(
+    initialNewMurajaahSelection.rangeMode
   );
-  const [reviewCount, setReviewCount] = useState(() => {
-    if (!form.page_from || !form.page_to) return "3";
-    const size = Math.abs(form.page_to - form.page_from) + 1;
-    return size >= 1 && size <= 20 ? String(size) : "3";
-  });
+  const [newMurajaahLastN, setNewMurajaahLastN] = useState(
+    initialNewMurajaahSelection.lastN
+  );
+  const [newMurajaahManualFrom, setNewMurajaahManualFrom] = useState(
+    initialNewMurajaahSelection.manualFrom
+  );
+  const [newMurajaahManualTo, setNewMurajaahManualTo] = useState(
+    initialNewMurajaahSelection.manualTo
+  );
 
   const oldMurajaahTestTotalPercentage = useMemo(() => {
     if (!isOldMurajaah || oldMurajaahMode !== "test") return 0;
@@ -187,13 +243,41 @@ export default function EditReportModal(
     };
   }, [form.page_from, form.page_to, isOldMurajaah, isWithinRange]);
 
-  const reviewRangePreview = useMemo(() => {
-    const anchorValue = parseInt(reviewAnchorPage, 10);
-    const countValue = parseInt(reviewCount, 10);
-    if (!anchorValue || !countValue) return null;
-    const from = Math.max(1, anchorValue - countValue + 1);
-    return { from, to: anchorValue, count: countValue };
-  }, [reviewAnchorPage, reviewCount]);
+  const latestTasmiPage = useMemo(() => {
+    if (!tasmiReports?.length) return null;
+    const latestTasmi = tasmiReports
+      .filter((entry) => entry.student_id === report.student_id && entry.type === "Tasmi")
+      .filter((entry) => entry.page_from !== null || entry.page_to !== null)
+      .sort((a, b) => {
+        const dateDiff = new Date(b.date).getTime() - new Date(a.date).getTime();
+        if (dateDiff !== 0) return dateDiff;
+        const aAnchor = Math.max(a.page_to ?? 0, a.page_from ?? 0);
+        const bAnchor = Math.max(b.page_to ?? 0, b.page_from ?? 0);
+        return bAnchor - aAnchor;
+      })[0];
+    if (!latestTasmi) return null;
+    return latestTasmi.page_to ?? latestTasmi.page_from ?? null;
+  }, [tasmiReports, report.student_id]);
+
+  const newMurajaahRange = useMemo(() => (
+    computeNewMurajaahRange({
+      sourceMode: newMurajaahRangeMode === "last_n" ? "latest_tasmi" : "specific_page",
+      rangeMode: newMurajaahRangeMode,
+      latestTasmiPage,
+      specificPage: null,
+      lastN: parseNullableInt(newMurajaahLastN),
+      manualFrom: parseNullableInt(newMurajaahManualFrom),
+      manualTo: parseNullableInt(newMurajaahManualTo),
+      maxLastN: MAX_NEW_MURAJAAH_LAST_N,
+      maxSpan: MAX_NEW_MURAJAAH_SPAN
+    })
+  ), [
+    latestTasmiPage,
+    newMurajaahRangeMode,
+    newMurajaahLastN,
+    newMurajaahManualFrom,
+    newMurajaahManualTo
+  ]);
 
   useEffect(() => {
     if (isNewMurajaah || isOldMurajaah) return;
@@ -227,6 +311,28 @@ export default function EditReportModal(
     }));
   };
 
+  const handleNewMurajaahRangeModeChange = (mode: NewMurajaahRangeMode) => {
+    setNewMurajaahRangeMode(mode);
+    if (mode !== "manual_range") return;
+    if (newMurajaahManualFrom && newMurajaahManualTo) return;
+
+    const prefill = computeNewMurajaahRange({
+      sourceMode: "latest_tasmi",
+      rangeMode: "last_n",
+      latestTasmiPage,
+      specificPage: null,
+      lastN: parseNullableInt(newMurajaahLastN),
+      manualFrom: null,
+      manualTo: null,
+      maxLastN: MAX_NEW_MURAJAAH_LAST_N,
+      maxSpan: MAX_NEW_MURAJAAH_SPAN
+    });
+
+    if (!prefill.isValid || prefill.pageFrom === null || prefill.pageTo === null) return;
+    if (!newMurajaahManualFrom) setNewMurajaahManualFrom(String(prefill.pageFrom));
+    if (!newMurajaahManualTo) setNewMurajaahManualTo(String(prefill.pageTo));
+  };
+
   const emitValidationError = (message: string) => {
     if (typeof window !== "undefined") {
       window.dispatchEvent(
@@ -241,7 +347,7 @@ export default function EditReportModal(
     e.preventDefault();
 
     const requiredPageValidation = isNewMurajaah
-      ? (!reviewAnchorPage || !reviewCount)
+      ? !newMurajaahRange.isValid
       : isOldMurajaah
         ? (!form.page_from || (isWithinRange && !form.page_to))
         : !form.page_from;
@@ -255,7 +361,11 @@ export default function EditReportModal(
     const requiresGrade = !(isOldMurajaah && oldMurajaahMode === "test");
 
     if (!form.type || !hasSurah || !hasAyatRange || requiredPageValidation || (requiresGrade && !form.grade)) {
-      emitValidationError("Please fill in all required fields.");
+      emitValidationError(
+        isNewMurajaah && !newMurajaahRange.isValid
+          ? newMurajaahRange.error ?? "Please fill in all required fields."
+          : "Please fill in all required fields."
+      );
       return;
     }
 
@@ -293,16 +403,17 @@ export default function EditReportModal(
       resolvedPageTo = Math.max(fromValue, endValue);
       resolvedJuz = getJuzFromPageRange(resolvedPageFrom, resolvedPageTo);
     } else if (isNewMurajaah) {
-      const anchorValue = parseInt(reviewAnchorPage, 10);
-      const countValue = parseInt(reviewCount, 10);
-      if (!anchorValue || !countValue) {
-        emitValidationError("Please fill in all required fields.");
+      if (
+        !newMurajaahRange.isValid ||
+        newMurajaahRange.pageFrom === null ||
+        newMurajaahRange.pageTo === null
+      ) {
+        emitValidationError(newMurajaahRange.error ?? "Please fill in all required fields.");
         return;
       }
-      const fromValue = Math.max(1, anchorValue - countValue + 1);
-      resolvedPageFrom = fromValue;
-      resolvedPageTo = anchorValue;
-      resolvedJuz = getJuzFromPageRange(anchorValue, anchorValue);
+      resolvedPageFrom = newMurajaahRange.pageFrom;
+      resolvedPageTo = newMurajaahRange.pageTo;
+      resolvedJuz = newMurajaahRange.juz;
     } else {
       resolvedPageFrom = form.page_from ? Number(form.page_from) : null;
       resolvedPageTo = form.page_to ? Number(form.page_to) : resolvedPageFrom;
@@ -315,7 +426,6 @@ export default function EditReportModal(
       emitValidationError("Please fill in all required fields.");
       return;
     }
-
     const readingProgress = isOldMurajaah
       ? oldMurajaahMode === "test"
         ? {
@@ -330,6 +440,25 @@ export default function EditReportModal(
             }
           }
         : { murajaah_mode: "recitation" as const }
+      : isNewMurajaah
+        ? {
+            ...(isObject(form.reading_progress) ? form.reading_progress : {}),
+            murajaah_selection: {
+              source: newMurajaahRangeMode === "last_n" ? "auto_latest_tasmi" : "specific_page",
+              builder: newMurajaahRangeMode,
+              input: {
+                latest_tasmi_page: latestTasmiPage,
+                specific_page: null,
+                last_n: parseNullableInt(newMurajaahLastN),
+                manual_from: parseNullableInt(newMurajaahManualFrom),
+                manual_to: parseNullableInt(newMurajaahManualTo)
+              },
+              resolved_range: {
+                page_from: resolvedPageFrom,
+                page_to: resolvedPageTo
+              }
+            }
+          }
       : (form.reading_progress ?? null);
 
     onSave({
@@ -576,55 +705,18 @@ export default function EditReportModal(
           )}
 
           {isNewMurajaah && (
-            <div className="sm:col-span-2 rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <div className="text-sm font-semibold text-emerald-700">New Murajaah (Recent pages)</div>
-                  <div className="text-xs text-emerald-600">Review latest pages from current Juz</div>
-                </div>
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">New</span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-emerald-700 mb-1">Latest Tasmi Page</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="604"
-                    placeholder="Page"
-                    value={reviewAnchorPage}
-                    onChange={(e) => setReviewAnchorPage(e.target.value)}
-                    className="w-full border border-emerald-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-400"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-emerald-700 mb-1">Review Size *</label>
-                  <select
-                    value={reviewCount}
-                    onChange={(e) => setReviewCount(e.target.value)}
-                    className="w-full border border-emerald-200 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-400 text-sm bg-white"
-                  >
-                    {Array.from({ length: 20 }, (_, index) => index + 1).map((count) => (
-                      <option key={count} value={count}>
-                        Last {count} pages
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-700">
-                <span className="rounded-full bg-white px-3 py-1 border border-emerald-200">
-                  {reviewRangePreview
-                    ? `Pages ${reviewRangePreview.from}-${reviewRangePreview.to}`
-                    : "Select recent pages"}
-                </span>
-                <span className="text-emerald-600">
-                  {reviewRangePreview
-                    ? `Juz ${getJuzFromPageRange(reviewRangePreview.to, reviewRangePreview.to) ?? "-"}`
-                    : "Juz auto"}
-                </span>
-              </div>
-            </div>
+            <NewMurajaahRangeSection
+              latestTasmiPage={latestTasmiPage}
+              rangeMode={newMurajaahRangeMode}
+              lastNInput={newMurajaahLastN}
+              manualFromInput={newMurajaahManualFrom}
+              manualToInput={newMurajaahManualTo}
+              result={newMurajaahRange}
+              onRangeModeChange={handleNewMurajaahRangeModeChange}
+              onLastNChange={setNewMurajaahLastN}
+              onManualFromChange={setNewMurajaahManualFrom}
+              onManualToChange={setNewMurajaahManualTo}
+            />
           )}
 
           {!isOldMurajaah && (
@@ -805,7 +897,7 @@ export default function EditReportModal(
           <div className="sm:col-span-2 flex gap-3 pt-4">
             <button
               type="button"
-              className="flex-1 px-4 py-2 rounded-lg text-gray-700 bg-gray-200 hover:bg-gray-300 transition-colors"
+              className="flex-1 px-4 py-2 rounded-lg text-gray-600 bg-white border border-gray-300 hover:bg-gray-50 transition-colors"
               onClick={onCancel}
               disabled={loading}
             >

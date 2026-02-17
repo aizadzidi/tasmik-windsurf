@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getJuzFromPageRange } from "@/lib/quranMapping";
+import {
+  MAX_NEW_MURAJAAH_SPAN,
+  parseNullableInt,
+  QURAN_PAGE_MAX,
+  QURAN_PAGE_MIN
+} from "@/lib/murajaahRange";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -34,6 +41,54 @@ async function getStudentForTeacher(studentId: string, userId: string) {
   return data;
 }
 
+const isNewMurajaahType = (value: unknown) => value === "New Murajaah";
+
+const validateNewMurajaahRange = ({
+  type,
+  pageFrom,
+  pageTo,
+  juz
+}: {
+  type: unknown;
+  pageFrom: unknown;
+  pageTo: unknown;
+  juz: unknown;
+}): string | null => {
+  if (!isNewMurajaahType(type)) return null;
+
+  const fromValue = parseNullableInt(pageFrom);
+  const toValue = parseNullableInt(pageTo);
+  if (fromValue === null || toValue === null) {
+    return "New Murajaah requires both page_from and page_to.";
+  }
+  if (
+    fromValue < QURAN_PAGE_MIN || fromValue > QURAN_PAGE_MAX ||
+    toValue < QURAN_PAGE_MIN || toValue > QURAN_PAGE_MAX
+  ) {
+    return "New Murajaah pages must be between 1 and 604.";
+  }
+  if (fromValue > toValue) {
+    return "New Murajaah page_from must be less than or equal to page_to.";
+  }
+
+  const count = toValue - fromValue + 1;
+  if (count > MAX_NEW_MURAJAAH_SPAN) {
+    return `New Murajaah range cannot exceed ${MAX_NEW_MURAJAAH_SPAN} pages.`;
+  }
+
+  const derivedJuz = getJuzFromPageRange(fromValue, toValue);
+  if (!derivedJuz) {
+    return "Unable to derive juz from New Murajaah page range.";
+  }
+
+  const juzValue = parseNullableInt(juz);
+  if (juzValue !== null && juzValue !== derivedJuz) {
+    return `New Murajaah juz mismatch. Expected Juz ${derivedJuz}.`;
+  }
+
+  return null;
+};
+
 export async function POST(request: NextRequest) {
   try {
     const user = await getUserFromRequest(request);
@@ -48,6 +103,16 @@ export async function POST(request: NextRequest) {
     const student = await getStudentForTeacher(studentId, user.id);
     if (!student) {
       return NextResponse.json({ error: "Not allowed" }, { status: 403 });
+    }
+
+    const newMurajaahValidationError = validateNewMurajaahRange({
+      type: payload?.type,
+      pageFrom: payload?.page_from,
+      pageTo: payload?.page_to,
+      juz: payload?.juzuk
+    });
+    if (newMurajaahValidationError) {
+      return NextResponse.json({ error: newMurajaahValidationError }, { status: 400 });
     }
 
     const row = {
@@ -93,7 +158,7 @@ export async function PATCH(request: NextRequest) {
 
     const { data: reportRow, error: reportError } = await supabaseAdmin
       .from("reports")
-      .select("id, student_id")
+      .select("id, student_id, type, page_from, page_to, juzuk")
       .eq("id", reportId)
       .single();
     if (reportError || !reportRow) {
@@ -103,6 +168,21 @@ export async function PATCH(request: NextRequest) {
     const student = await getStudentForTeacher(String(reportRow.student_id), user.id);
     if (!student) {
       return NextResponse.json({ error: "Not allowed" }, { status: 403 });
+    }
+
+    const effectiveType = payload?.type ?? reportRow.type;
+    const effectivePageFrom = payload?.page_from ?? reportRow.page_from;
+    const effectivePageTo = payload?.page_to ?? reportRow.page_to;
+    const effectiveJuz = payload?.juzuk ?? reportRow.juzuk;
+
+    const newMurajaahValidationError = validateNewMurajaahRange({
+      type: effectiveType,
+      pageFrom: effectivePageFrom,
+      pageTo: effectivePageTo,
+      juz: effectiveJuz
+    });
+    if (newMurajaahValidationError) {
+      return NextResponse.json({ error: newMurajaahValidationError }, { status: 400 });
     }
 
     const updates = {

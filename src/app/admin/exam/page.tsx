@@ -237,6 +237,11 @@ export default function AdminExamPage() {
     return students.filter(student => {
       // Skip invalid students
       if (!student || typeof student.name !== 'string') return false;
+
+      // Subject filter: hide students marked as N/A (opted-out) for selected subject
+      if (selectedSubject && student.subjects?.[selectedSubject]?.optedOut) {
+        return false;
+      }
       
       // Class filter - use pre-computed class name
       if (selectedClass && student.class !== selectedClassName) {
@@ -249,7 +254,7 @@ export default function AdminExamPage() {
       }
       return true;
     });
-  }, [students, selectedClass, selectedClassName, searchQuery]);
+  }, [students, selectedClass, selectedClassName, selectedSubject, searchQuery]);
 
   // Class averages used inside the details panel (per-subject, academic only)
   // Still computed for fallback/display purposes, but we will also compute a blended class overall average
@@ -331,11 +336,12 @@ export default function AdminExamPage() {
         setSelectedExam(result.examId);
       } else {
         console.error('Failed to create exam:', result.error);
-        alert('Failed to create exam. Please try again.');
+        alert(`Failed to create exam: ${result?.error || 'Please try again.'}`);
       }
     } catch (error) {
       console.error('Error creating exam:', error);
-      alert('Error creating exam. Please try again.');
+      const message = error instanceof Error ? error.message : 'Please try again.';
+      alert(`Error creating exam: ${message}`);
     }
   };
 
@@ -383,7 +389,8 @@ export default function AdminExamPage() {
       }
     } catch (error) {
       console.error('Error updating exam:', error);
-      alert('Error updating exam. Please try again.');
+      const message = error instanceof Error ? error.message : 'Please try again.';
+      alert(`Error updating exam: ${message}`);
     }
   };
 

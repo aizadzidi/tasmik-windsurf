@@ -14,20 +14,29 @@ interface CreateExamData {
   gradingSystemId?: string;
   excludedStudentIdsByClass?: { [classId: string]: string[] };
   subjectConfigByClass?: { [classId: string]: string[] };
+  studentSubjectExceptionsByClass?: { [classId: string]: { [studentId: string]: string[] } };
 }
 
 const isValidUuid = (s: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
 
+const hasMissingTenantColumn = (error: unknown) => {
+  const message = String((error as { message?: string })?.message || '');
+  const code = String((error as { code?: string })?.code || '');
+  return code === '42703' || (message.includes('tenant_id') && message.toLowerCase().includes('column'));
+};
+
 const upsertExamRosterSnapshot = async ({
   supabaseAdmin,
   examId,
   classIds,
+  tenantId,
   clearExisting = false
 }: {
   supabaseAdmin: SupabaseClient;
   examId: string;
   classIds: string[];
+  tenantId?: string;
   clearExisting?: boolean;
 }) => {
   if (!examId || !Array.isArray(classIds) || classIds.length === 0) return;
@@ -57,7 +66,7 @@ const upsertExamRosterSnapshot = async ({
     console.warn('Exam roster snapshot exclusion fetch failed:', err);
   }
 
-  const rows = (rosterRows ?? [])
+  const rowsBase = (rosterRows ?? [])
     .filter((row) => row?.id && row.class_id)
     .filter((row) => !excludedSet.has(String(row.id)))
     .map((row) => ({
@@ -66,11 +75,200 @@ const upsertExamRosterSnapshot = async ({
       class_id: String(row.class_id)
     }));
 
-  if (rows.length === 0) return;
-  const { error: upsertErr } = await supabaseAdmin
+  if (rowsBase.length === 0) return;
+  const rows = tenantId
+    ? rowsBase.map((row) => ({
+        ...row,
+        tenant_id: tenantId,
+      }))
+    : rowsBase;
+
+  let { error: upsertErr } = await supabaseAdmin
     .from('exam_roster')
     .upsert(rows, { onConflict: 'exam_id,student_id' });
+  if (upsertErr && tenantId && hasMissingTenantColumn(upsertErr)) {
+    const fallback = await supabaseAdmin
+      .from('exam_roster')
+      .upsert(rowsBase, { onConflict: 'exam_id,student_id' });
+    upsertErr = fallback.error;
+  }
   if (upsertErr) throw upsertErr;
+};
+
+type SubjectExceptionInsertRow = {
+  exam_id: string;
+  subject_id: string;
+  student_id: string;
+};
+
+const buildSubjectExceptionRows = async ({
+  supabaseAdmin,
+  examId,
+  studentSubjectExceptionsByClass,
+  subjectData,
+}: {
+  supabaseAdmin: SupabaseClient;
+  examId: string;
+  studentSubjectExceptionsByClass?: { [classId: string]: { [studentId: string]: string[] } };
+  subjectData: Array<{ id: string; name: string | null }>;
+}): Promise<SubjectExceptionInsertRow[]> => {
+  if (!studentSubjectExceptionsByClass || Object.keys(studentSubjectExceptionsByClass).length === 0) {
+    return [];
+  }
+
+  const subjectIdByName = new Map<string, string>(
+    (subjectData || [])
+      .filter((row) => row?.id && typeof row?.name === 'string')
+      .map((row) => [String(row.name), String(row.id)])
+  );
+
+  const allSubjectNames = Array.from(
+    new Set(
+      Object.values(studentSubjectExceptionsByClass)
+        .flatMap((studentMap) => Object.values(studentMap || {}))
+        .flat()
+        .map((name) => String(name))
+        .filter(Boolean)
+    )
+  );
+
+  const missingSubjectNames = allSubjectNames.filter((name) => !subjectIdByName.has(name));
+  if (missingSubjectNames.length > 0) {
+    const { data: extraSubjects, error: extraSubjectError } = await supabaseAdmin
+      .from('subjects')
+      .select('id, name')
+      .in('name', missingSubjectNames);
+    if (extraSubjectError) throw extraSubjectError;
+    (extraSubjects ?? []).forEach((row) => {
+      const sid = row?.id ? String(row.id) : null;
+      const name = row?.name ? String(row.name) : null;
+      if (sid && name) subjectIdByName.set(name, sid);
+    });
+  }
+
+  const allStudentIds = Array.from(
+    new Set(
+      Object.values(studentSubjectExceptionsByClass)
+        .flatMap((studentMap) => Object.keys(studentMap || {}))
+        .map((id) => String(id))
+        .filter(Boolean)
+    )
+  );
+  if (allStudentIds.length === 0) return [];
+
+  const { data: studentRows, error: studentError } = await supabaseAdmin
+    .from('students')
+    .select('id, class_id')
+    .neq('record_type', 'prospect')
+    .in('id', allStudentIds);
+  if (studentError) throw studentError;
+
+  const classIdByStudentId = new Map<string, string>();
+  (studentRows ?? []).forEach((row) => {
+    const sid = row?.id ? String(row.id) : null;
+    const cid = row?.class_id ? String(row.class_id) : null;
+    if (sid && cid) classIdByStudentId.set(sid, cid);
+  });
+
+  const rows: SubjectExceptionInsertRow[] = [];
+  const dedupe = new Set<string>();
+  Object.entries(studentSubjectExceptionsByClass).forEach(([classId, studentMap]) => {
+    Object.entries(studentMap || {}).forEach(([studentId, subjectNames]) => {
+      const actualClassId = classIdByStudentId.get(String(studentId));
+      if (!actualClassId || actualClassId !== String(classId)) return;
+      (subjectNames || []).forEach((subjectName) => {
+        const subjectId = subjectIdByName.get(String(subjectName));
+        if (!subjectId) return;
+        const key = `${examId}:${subjectId}:${studentId}`;
+        if (dedupe.has(key)) return;
+        dedupe.add(key);
+        rows.push({
+          exam_id: examId,
+          subject_id: subjectId,
+          student_id: String(studentId),
+        });
+      });
+    });
+  });
+
+  return rows;
+};
+
+const replaceExamSubjectExceptions = async ({
+  supabaseAdmin,
+  examId,
+  rows,
+  tenantId,
+}: {
+  supabaseAdmin: SupabaseClient;
+  examId: string;
+  rows: SubjectExceptionInsertRow[];
+  tenantId?: string;
+}) => {
+  if (tenantId) {
+    const { error: tenantDeleteError } = await supabaseAdmin
+      .from('subject_opt_outs')
+      .delete()
+      .eq('exam_id', examId)
+      .eq('tenant_id', tenantId);
+    if (tenantDeleteError && !hasMissingTenantColumn(tenantDeleteError)) {
+      throw tenantDeleteError;
+    }
+    if (!tenantDeleteError) {
+      // deleted with tenant scoped query successfully
+    } else {
+      const { error: fallbackDeleteError } = await supabaseAdmin
+        .from('subject_opt_outs')
+        .delete()
+        .eq('exam_id', examId);
+      if (fallbackDeleteError) throw fallbackDeleteError;
+    }
+  } else {
+    const { error: deleteError } = await supabaseAdmin
+      .from('subject_opt_outs')
+      .delete()
+      .eq('exam_id', examId);
+    if (deleteError) throw deleteError;
+  }
+  if (!rows.length) return;
+
+  const rowsWithTenant = tenantId
+    ? rows.map((row) => ({
+        ...row,
+        tenant_id: tenantId,
+      }))
+    : rows;
+
+  const { error: upsertErrorWithTenant } = await supabaseAdmin
+    .from('subject_opt_outs')
+    .upsert(rowsWithTenant, { onConflict: 'exam_id,subject_id,student_id' });
+  if (upsertErrorWithTenant) {
+    if (!(tenantId && hasMissingTenantColumn(upsertErrorWithTenant))) {
+      throw upsertErrorWithTenant;
+    }
+    const { error: fallbackUpsertError } = await supabaseAdmin
+      .from('subject_opt_outs')
+      .upsert(rows, { onConflict: 'exam_id,subject_id,student_id' });
+    if (fallbackUpsertError) throw fallbackUpsertError;
+  }
+
+  const studentIdsBySubjectId = new Map<string, string[]>();
+  rows.forEach((row) => {
+    const current = studentIdsBySubjectId.get(row.subject_id) || [];
+    current.push(row.student_id);
+    studentIdsBySubjectId.set(row.subject_id, current);
+  });
+
+  for (const [subjectId, studentIds] of studentIdsBySubjectId.entries()) {
+    const dedupedStudentIds = Array.from(new Set(studentIds));
+    const { error: deleteResultError } = await supabaseAdmin
+      .from('exam_results')
+      .delete()
+      .eq('exam_id', examId)
+      .eq('subject_id', subjectId)
+      .in('student_id', dedupedStudentIds);
+    if (deleteResultError) throw deleteResultError;
+  }
 };
 
 // GET - Fetch exam metadata (exams, classes, subjects for dropdowns)
@@ -157,6 +355,7 @@ export async function POST(request: NextRequest) {
   try {
     const guard = await requireAdminPermission(request, ["admin:exam"]);
     if (!guard.ok) return guard.response;
+    const tenantId = guard.tenantId;
 
     // Parse raw text first to ensure we can gracefully handle invalid JSON
     const raw = await request.text();
@@ -168,7 +367,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     }
 
-    const { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId, excludedStudentIdsByClass, subjectConfigByClass } = body;
+    const {
+      title,
+      subjects,
+      classIds,
+      dateRange,
+      conductWeightages,
+      gradingSystemId,
+      excludedStudentIdsByClass,
+      subjectConfigByClass,
+      studentSubjectExceptionsByClass,
+    } = body;
 
     console.log('Received exam creation request:', { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId });
 
@@ -207,18 +416,32 @@ export async function POST(request: NextRequest) {
       created_at: new Date().toISOString()
     });
     
-    const { data: exam, error: examError } = await supabaseAdmin
+    const examInsertBase = {
+      name: title,
+      type: 'formal',
+      exam_start_date: dateRange.from,
+      exam_end_date: dateRange.to || dateRange.from,
+      grading_system_id: gradingSystemId || null,
+      created_at: new Date().toISOString()
+    };
+    const examInsertWithTenant = tenantId
+      ? { ...examInsertBase, tenant_id: tenantId }
+      : examInsertBase;
+
+    let { data: exam, error: examError } = await supabaseAdmin
       .from('exams')
-      .insert({
-        name: title,
-        type: 'formal',
-        exam_start_date: dateRange.from,
-        exam_end_date: dateRange.to || dateRange.from,
-        grading_system_id: gradingSystemId || null,
-        created_at: new Date().toISOString()
-      })
+      .insert(examInsertWithTenant)
       .select()
       .single();
+    if (examError && tenantId && hasMissingTenantColumn(examError)) {
+      const fallback = await supabaseAdmin
+        .from('exams')
+        .insert(examInsertBase)
+        .select()
+        .single();
+      exam = fallback.data;
+      examError = fallback.error;
+    }
 
     if (examError) {
       console.error('Error creating exam:', examError);
@@ -231,10 +454,22 @@ export async function POST(request: NextRequest) {
     }
 
     // Get subject IDs from subject names
-    const { data: subjectData, error: subjectError } = await supabaseAdmin
+    let subjectQuery = supabaseAdmin
       .from('subjects')
       .select('id, name')
       .in('name', subjects);
+    if (tenantId) {
+      subjectQuery = subjectQuery.eq('tenant_id', tenantId);
+    }
+    let { data: subjectData, error: subjectError } = await subjectQuery;
+    if (subjectError && tenantId && hasMissingTenantColumn(subjectError)) {
+      const fallback = await supabaseAdmin
+        .from('subjects')
+        .select('id, name')
+        .in('name', subjects);
+      subjectData = fallback.data;
+      subjectError = fallback.error;
+    }
 
     if (subjectError) {
       console.error('Error fetching subjects:', subjectError);
@@ -242,14 +477,28 @@ export async function POST(request: NextRequest) {
     }
 
     // Create exam_subjects entries
-    const examSubjects = subjectData.map(subject => ({
+    const resolvedSubjectData = (subjectData ?? []) as Array<{ id: string; name: string | null }>;
+    if (resolvedSubjectData.length === 0) {
+      return NextResponse.json({ error: 'No valid subjects found for this exam' }, { status: 400 });
+    }
+
+    const examSubjectsBase = resolvedSubjectData.map(subject => ({
       exam_id: exam.id,
       subject_id: subject.id
     }));
+    const examSubjects = tenantId
+      ? examSubjectsBase.map((row) => ({ ...row, tenant_id: tenantId }))
+      : examSubjectsBase;
 
-    const { error: examSubjectsError } = await supabaseAdmin
+    let { error: examSubjectsError } = await supabaseAdmin
       .from('exam_subjects')
       .insert(examSubjects);
+    if (examSubjectsError && tenantId && hasMissingTenantColumn(examSubjectsError)) {
+      const fallback = await supabaseAdmin
+        .from('exam_subjects')
+        .insert(examSubjectsBase);
+      examSubjectsError = fallback.error;
+    }
 
     if (examSubjectsError) {
       console.error('Error creating exam subjects:', examSubjectsError);
@@ -257,15 +506,24 @@ export async function POST(request: NextRequest) {
     }
 
     // Create exam_classes entries with conduct weightages
-    const examClasses = classIds.map(classId => ({
+    const examClassesBase = classIds.map(classId => ({
       exam_id: exam.id,
       class_id: classId,
       conduct_weightage: conductWeightages[classId] || 0
     }));
+    const examClasses = tenantId
+      ? examClassesBase.map((row) => ({ ...row, tenant_id: tenantId }))
+      : examClassesBase;
 
-    const { error: examClassesError } = await supabaseAdmin
+    let { error: examClassesError } = await supabaseAdmin
       .from('exam_classes')
       .insert(examClasses);
+    if (examClassesError && tenantId && hasMissingTenantColumn(examClassesError)) {
+      const fallback = await supabaseAdmin
+        .from('exam_classes')
+        .insert(examClassesBase);
+      examClassesError = fallback.error;
+    }
 
     if (examClassesError) {
       console.error('Error creating exam classes:', examClassesError);
@@ -277,24 +535,33 @@ export async function POST(request: NextRequest) {
       const map = subjectConfigByClass || {};
       if (map && Object.keys(map).length > 0) {
         // Resolve subject IDs by name used in request
-        const subjectRows = (subjectData ?? []) as Array<{ id: string; name: string | null }>;
+        const subjectRows = resolvedSubjectData;
         const subjectsByName = new Map(
           subjectRows
             .filter((s) => typeof s.name === 'string')
             .map((s) => [String(s.name), String(s.id)])
         );
-        const ecsRows: Array<{ exam_id: string; class_id: string; subject_id: string }> = [];
+        const ecsRowsBase: Array<{ exam_id: string; class_id: string; subject_id: string }> = [];
         for (const [classId, subjectNames] of Object.entries(map)) {
           if (!isValidUuid(classId)) continue;
           (subjectNames || []).forEach((name) => {
             const sid = subjectsByName.get(String(name));
-            if (sid) ecsRows.push({ exam_id: exam.id, class_id: classId, subject_id: sid });
+            if (sid) ecsRowsBase.push({ exam_id: exam.id, class_id: classId, subject_id: sid });
           });
         }
-        if (ecsRows.length > 0) {
-          const { error: ecsErr } = await supabaseAdmin
+        if (ecsRowsBase.length > 0) {
+          const ecsRows = tenantId
+            ? ecsRowsBase.map((row) => ({ ...row, tenant_id: tenantId }))
+            : ecsRowsBase;
+          let { error: ecsErr } = await supabaseAdmin
             .from('exam_class_subjects')
             .insert(ecsRows);
+          if (ecsErr && tenantId && hasMissingTenantColumn(ecsErr)) {
+            const fallback = await supabaseAdmin
+              .from('exam_class_subjects')
+              .insert(ecsRowsBase);
+            ecsErr = fallback.error;
+          }
           if (ecsErr) throw ecsErr;
         }
       }
@@ -305,7 +572,7 @@ export async function POST(request: NextRequest) {
     // Optional: Insert excluded students for this exam
     try {
       const map = excludedStudentIdsByClass || {};
-      const entries: Array<{ exam_id: string; student_id: string; class_id: string | null }> = [];
+      const entriesBase: Array<{ exam_id: string; student_id: string; class_id: string | null }> = [];
       const allIds = Array.from(new Set(Object.values(map).flat().filter(Boolean)));
       if (allIds.length > 0) {
         // Validate students and capture their class_id
@@ -327,15 +594,24 @@ export async function POST(request: NextRequest) {
             // If class was provided, ensure it matches actual class; otherwise allow insert with actual class
             if (!actualClassId) continue; // skip unknown students
             if (klassId && isValidUuid(klassId) && actualClassId !== klassId) continue; // skip if mismatch
-            entries.push({ exam_id: exam.id, student_id: String(sid), class_id: actualClassId });
+            entriesBase.push({ exam_id: exam.id, student_id: String(sid), class_id: actualClassId });
           }
         }
 
-        if (entries.length > 0) {
+        if (entriesBase.length > 0) {
+          const entries = tenantId
+            ? entriesBase.map((row) => ({ ...row, tenant_id: tenantId }))
+            : entriesBase;
           // Use upsert to avoid unique constraint errors if duplicates
-          const { error: exclErr } = await supabaseAdmin
+          let { error: exclErr } = await supabaseAdmin
             .from('exam_excluded_students')
             .upsert(entries, { onConflict: 'exam_id,student_id' });
+          if (exclErr && tenantId && hasMissingTenantColumn(exclErr)) {
+            const fallback = await supabaseAdmin
+              .from('exam_excluded_students')
+              .upsert(entriesBase, { onConflict: 'exam_id,student_id' });
+            exclErr = fallback.error;
+          }
           if (exclErr) throw exclErr;
         }
       }
@@ -345,9 +621,28 @@ export async function POST(request: NextRequest) {
     }
 
     try {
+      const exceptionRows = await buildSubjectExceptionRows({
+        supabaseAdmin,
+        examId: exam.id,
+        studentSubjectExceptionsByClass,
+        subjectData: resolvedSubjectData,
+      });
+      await replaceExamSubjectExceptions({
+        supabaseAdmin,
+        examId: exam.id,
+        rows: exceptionRows,
+        tenantId,
+      });
+    } catch (subjectExceptionError) {
+      console.error('Error inserting subject exceptions:', subjectExceptionError);
+      // Non-fatal
+    }
+
+    try {
       await upsertExamRosterSnapshot({
         supabaseAdmin,
         examId: exam.id,
+        tenantId,
         classIds
       });
     } catch (rosterError) {
@@ -371,6 +666,7 @@ export async function PUT(request: NextRequest) {
   try {
     const guard = await requireAdminPermission(request, ["admin:exam"]);
     if (!guard.ok) return guard.response;
+    const tenantId = guard.tenantId;
 
     const { searchParams } = new URL(request.url);
     const examId = searchParams.get('id');
@@ -391,7 +687,17 @@ export async function PUT(request: NextRequest) {
       console.error('Invalid JSON in exam update request:', raw?.slice(0, 500), err);
       return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
     }
-    const { title, subjects, classIds, dateRange, conductWeightages, gradingSystemId, excludedStudentIdsByClass, subjectConfigByClass } = body;
+    const {
+      title,
+      subjects,
+      classIds,
+      dateRange,
+      conductWeightages,
+      gradingSystemId,
+      excludedStudentIdsByClass,
+      subjectConfigByClass,
+      studentSubjectExceptionsByClass,
+    } = body;
 
     if (!title || !subjects.length || !classIds.length || !dateRange.from) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -418,18 +724,33 @@ export async function PUT(request: NextRequest) {
     );
 
     // Update the exam
-    const { data: exam, error: examError } = await supabaseAdmin
+    const examUpdatePayload = {
+      name: title,
+      exam_start_date: dateRange.from,
+      exam_end_date: dateRange.to || dateRange.from,
+      grading_system_id: gradingSystemId || null,
+      updated_at: new Date().toISOString()
+    };
+    let updateQuery = supabaseAdmin
       .from('exams')
-      .update({
-        name: title,
-        exam_start_date: dateRange.from,
-        exam_end_date: dateRange.to || dateRange.from,
-        grading_system_id: gradingSystemId || null,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', examId)
+      .update(examUpdatePayload)
+      .eq('id', examId);
+    if (tenantId) {
+      updateQuery = updateQuery.eq('tenant_id', tenantId);
+    }
+    let { data: exam, error: examError } = await updateQuery
       .select()
       .single();
+    if (examError && tenantId && hasMissingTenantColumn(examError)) {
+      const fallback = await supabaseAdmin
+        .from('exams')
+        .update(examUpdatePayload)
+        .eq('id', examId)
+        .select()
+        .single();
+      exam = fallback.data;
+      examError = fallback.error;
+    }
 
     if (examError) {
       console.error('Error updating exam:', examError);
@@ -444,10 +765,22 @@ export async function PUT(request: NextRequest) {
     ]);
 
     // Get subject IDs from subject names
-    const { data: subjectData, error: subjectError } = await supabaseAdmin
+    let subjectQuery = supabaseAdmin
       .from('subjects')
       .select('id, name')
       .in('name', subjects);
+    if (tenantId) {
+      subjectQuery = subjectQuery.eq('tenant_id', tenantId);
+    }
+    let { data: subjectData, error: subjectError } = await subjectQuery;
+    if (subjectError && tenantId && hasMissingTenantColumn(subjectError)) {
+      const fallback = await supabaseAdmin
+        .from('subjects')
+        .select('id, name')
+        .in('name', subjects);
+      subjectData = fallback.data;
+      subjectError = fallback.error;
+    }
 
     if (subjectError) {
       console.error('Error fetching subjects:', subjectError);
@@ -455,14 +788,28 @@ export async function PUT(request: NextRequest) {
     }
 
     // Create new exam_subjects entries
-    const examSubjects = subjectData.map(subject => ({
+    const resolvedSubjectData = (subjectData ?? []) as Array<{ id: string; name: string | null }>;
+    if (resolvedSubjectData.length === 0) {
+      return NextResponse.json({ error: 'No valid subjects found for this exam' }, { status: 400 });
+    }
+
+    const examSubjectsBase = resolvedSubjectData.map(subject => ({
       exam_id: examId,
       subject_id: subject.id
     }));
+    const examSubjects = tenantId
+      ? examSubjectsBase.map((row) => ({ ...row, tenant_id: tenantId }))
+      : examSubjectsBase;
 
-    const { error: examSubjectsError } = await supabaseAdmin
+    let { error: examSubjectsError } = await supabaseAdmin
       .from('exam_subjects')
       .insert(examSubjects);
+    if (examSubjectsError && tenantId && hasMissingTenantColumn(examSubjectsError)) {
+      const fallback = await supabaseAdmin
+        .from('exam_subjects')
+        .insert(examSubjectsBase);
+      examSubjectsError = fallback.error;
+    }
 
     if (examSubjectsError) {
       console.error('Error creating exam subjects:', examSubjectsError);
@@ -470,15 +817,24 @@ export async function PUT(request: NextRequest) {
     }
 
     // Create new exam_classes entries with conduct weightages
-    const examClasses = classIds.map(classId => ({
+    const examClassesBase = classIds.map(classId => ({
       exam_id: examId,
       class_id: classId,
       conduct_weightage: conductWeightages[classId] || 0
     }));
+    const examClasses = tenantId
+      ? examClassesBase.map((row) => ({ ...row, tenant_id: tenantId }))
+      : examClassesBase;
 
-    const { error: examClassesError } = await supabaseAdmin
+    let { error: examClassesError } = await supabaseAdmin
       .from('exam_classes')
       .insert(examClasses);
+    if (examClassesError && tenantId && hasMissingTenantColumn(examClassesError)) {
+      const fallback = await supabaseAdmin
+        .from('exam_classes')
+        .insert(examClassesBase);
+      examClassesError = fallback.error;
+    }
 
     if (examClassesError) {
       console.error('Error creating exam classes:', examClassesError);
@@ -490,28 +846,33 @@ export async function PUT(request: NextRequest) {
       const map = subjectConfigByClass || {};
       if (map && Object.keys(map).length > 0) {
         // Lookup all subjects by name
-        const { data: allSubjects, error: subjErr } = await supabaseAdmin
-          .from('subjects')
-          .select('id, name');
-        if (subjErr) throw subjErr;
-        const subjectRows = (allSubjects ?? []) as Array<{ id: string; name: string | null }>;
+        const subjectRows = resolvedSubjectData;
         const byName = new Map(
           subjectRows
             .filter((s) => typeof s.name === 'string')
             .map((s) => [String(s.name), String(s.id)])
         );
-        const ecsRows: Array<{ exam_id: string; class_id: string; subject_id: string }> = [];
+        const ecsRowsBase: Array<{ exam_id: string; class_id: string; subject_id: string }> = [];
         for (const [classId, subjectNames] of Object.entries(map)) {
           if (!isValidUuid(classId)) continue;
           (subjectNames || []).forEach((name) => {
             const sid = byName.get(String(name));
-            if (sid) ecsRows.push({ exam_id: examId, class_id: classId, subject_id: sid });
+            if (sid) ecsRowsBase.push({ exam_id: examId, class_id: classId, subject_id: sid });
           });
         }
-        if (ecsRows.length > 0) {
-          const { error: ecsErr } = await supabaseAdmin
+        if (ecsRowsBase.length > 0) {
+          const ecsRows = tenantId
+            ? ecsRowsBase.map((row) => ({ ...row, tenant_id: tenantId }))
+            : ecsRowsBase;
+          let { error: ecsErr } = await supabaseAdmin
             .from('exam_class_subjects')
             .insert(ecsRows);
+          if (ecsErr && tenantId && hasMissingTenantColumn(ecsErr)) {
+            const fallback = await supabaseAdmin
+              .from('exam_class_subjects')
+              .insert(ecsRowsBase);
+            ecsErr = fallback.error;
+          }
           if (ecsErr) throw ecsErr;
         }
       }
@@ -526,7 +887,7 @@ export async function PUT(request: NextRequest) {
         await supabaseAdmin.from('exam_excluded_students').delete().eq('exam_id', examId);
 
         const map = excludedStudentIdsByClass || {};
-        const entries: Array<{ exam_id: string; student_id: string; class_id: string | null }> = [];
+        const entriesBase: Array<{ exam_id: string; student_id: string; class_id: string | null }> = [];
         const allIds = Array.from(new Set(Object.values(map).flat().filter(Boolean)));
         if (allIds.length > 0) {
           const { data: roster, error: rosterErr } = await supabaseAdmin
@@ -544,13 +905,22 @@ export async function PUT(request: NextRequest) {
               const actualClassId = classByStudent.get(String(sid)) ?? null;
               if (!actualClassId) continue;
               if (klassId && isValidUuid(klassId) && actualClassId !== klassId) continue;
-              entries.push({ exam_id: examId, student_id: String(sid), class_id: actualClassId });
+              entriesBase.push({ exam_id: examId, student_id: String(sid), class_id: actualClassId });
             }
           }
-          if (entries.length > 0) {
-            const { error: exclErr } = await supabaseAdmin
+          if (entriesBase.length > 0) {
+            const entries = tenantId
+              ? entriesBase.map((row) => ({ ...row, tenant_id: tenantId }))
+              : entriesBase;
+            let { error: exclErr } = await supabaseAdmin
               .from('exam_excluded_students')
               .upsert(entries, { onConflict: 'exam_id,student_id' });
+            if (exclErr && tenantId && hasMissingTenantColumn(exclErr)) {
+              const fallback = await supabaseAdmin
+                .from('exam_excluded_students')
+                .upsert(entriesBase, { onConflict: 'exam_id,student_id' });
+              exclErr = fallback.error;
+            }
             if (exclErr) throw exclErr;
           }
         }
@@ -561,10 +931,29 @@ export async function PUT(request: NextRequest) {
     }
 
     try {
+      const exceptionRows = await buildSubjectExceptionRows({
+        supabaseAdmin,
+        examId,
+        studentSubjectExceptionsByClass,
+        subjectData: resolvedSubjectData,
+      });
+      await replaceExamSubjectExceptions({
+        supabaseAdmin,
+        examId,
+        rows: exceptionRows,
+        tenantId,
+      });
+    } catch (subjectExceptionError) {
+      console.error('Error updating subject exceptions:', subjectExceptionError);
+      // Non-fatal
+    }
+
+    try {
       if (!exam.released) {
         await upsertExamRosterSnapshot({
           supabaseAdmin,
           examId,
+          tenantId,
           classIds,
           clearExisting: true
         });
@@ -651,8 +1040,16 @@ export async function DELETE(request: NextRequest) {
     await Promise.all([
       supabaseAdmin.from('exam_roster').delete().eq('exam_id', examId),
       supabaseAdmin.from('exam_subjects').delete().eq('exam_id', examId),
-      supabaseAdmin.from('exam_classes').delete().eq('exam_id', examId)
+      supabaseAdmin.from('exam_classes').delete().eq('exam_id', examId),
+      supabaseAdmin.from('exam_class_subjects').delete().eq('exam_id', examId),
+      supabaseAdmin.from('exam_excluded_students').delete().eq('exam_id', examId)
     ]);
+
+    try {
+      await supabaseAdmin.from('subject_opt_outs').delete().eq('exam_id', examId);
+    } catch (subjectOptOutDeleteError) {
+      console.warn('Failed to delete subject opt-outs during exam deletion:', subjectOptOutDeleteError);
+    }
 
     // Finally delete the exam
     const { error: examError } = await supabaseAdmin

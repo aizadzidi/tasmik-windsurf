@@ -664,10 +664,21 @@ export async function GET(request: Request) {
         const subjectResults = (studentResults || []).filter(
           (r) => String(r.subject_id) === subjId
         );
-        if (subjectResults.length === 0) return;
-
         const studentOptOuts = optOutMap.get(String(student.id));
         const isOptedOut = studentOptOuts?.has(subjId) ?? false;
+        if (subjectResults.length === 0) {
+          if (isOptedOut) {
+            subjectsData[subjectName] = {
+              score: 0,
+              trend: [],
+              grade: 'N/A',
+              exams: [],
+              optedOut: true
+            };
+            subjectsSeen.add(subjectName);
+          }
+          return;
+        }
 
         let currentResult: ExamResultRow | undefined;
         if (examId) {
@@ -691,13 +702,23 @@ export async function GET(request: Request) {
         const markCandidate = currentResult?.final_score ?? currentResult?.mark;
         const numericMark = typeof markCandidate === 'number' ? markCandidate : Number(markCandidate);
         const hasNumericMark = Number.isFinite(numericMark);
-        const hasGrade = grade !== '';
 
-        if (!hasNumericMark && !isTH && !hasGrade) {
+        if (!hasNumericMark && !isTH) {
+          if (isOptedOut) {
+            subjectsData[subjectName] = {
+              score: 0,
+              trend: [],
+              grade: 'N/A',
+              exams: [],
+              optedOut: true
+            };
+            subjectsSeen.add(subjectName);
+          }
           return;
         }
 
         const score = hasNumericMark ? Number(numericMark) : 0;
+        const displayGrade = isTH ? grade : (hasNumericMark ? grade : '');
 
         const examsHistory: ExamHistoryEntry[] = (subjectResults || [])
           .map((r) => {
@@ -727,7 +748,7 @@ export async function GET(request: Request) {
         subjectsData[subjectName] = {
           score,
           trend,
-          grade,
+          grade: displayGrade,
           exams: examsHistory.map(({ name, score }) => ({ name, score })),
           optedOut: isOptedOut || undefined
         };
@@ -834,24 +855,14 @@ export async function GET(request: Request) {
       }
 
       // Calculate overall average: academic average blended with conduct by weight
-      // Only include subjects with numeric scores in the average calculation
+      // Only include subjects with explicit numeric marks, excluding TH/Absent and N/A.
       const scoredSubjects = Object.values(subjectsData).filter((s) => {
-        // Include in average if it has a numeric score or isn't marked as TH
-        return s.score > 0 || (s.grade && s.grade.toUpperCase() !== 'TH');
+        if (s.optedOut) return false;
+        const grade = String(s.grade || '').toUpperCase();
+        if (grade === 'TH') return false;
+        return typeof s.score === 'number' && Number.isFinite(s.score);
       });
-      const scores = scoredSubjects.map((s: { score: number; grade?: string }) => {
-        // For grade-only entries, estimate a score based on grade
-        if (s.score === 0 && s.grade) {
-          const gradeEstimates: { [key: string]: number } = {
-            'A+': 95, 'A': 85, 'A-': 75,
-            'B+': 67, 'B': 62, 'B-': 57,
-            'C+': 52, 'C': 47, 'C-': 42,
-            'D': 37, 'E': 32, 'F': 25, 'G': 20
-          };
-          return gradeEstimates[s.grade.toUpperCase()] || s.score;
-        }
-        return s.score;
-      });
+      const scores = scoredSubjects.map((s) => s.score);
       const academicAvg = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
       const rosterClassId = rosterClassByStudentId.get(String(student.id)) ?? null;
       const effectiveClassId = rosterClassId || (student.class_id ? String(student.class_id) : null);

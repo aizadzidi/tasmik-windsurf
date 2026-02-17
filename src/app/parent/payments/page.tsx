@@ -28,6 +28,7 @@ import { Input } from "@/components/ui/Input";
 import { Card, CardContent } from "@/components/ui/Card";
 import { CheckCircle2 } from "lucide-react";
 import { useProgramScope } from "@/hooks/useProgramScope";
+import { authFetch } from "@/lib/authFetch";
 
 interface RawAssignment extends ChildFeeAssignment {
   fee?: FeeCatalogItem;
@@ -142,6 +143,7 @@ export default function ParentPaymentsPage() {
   const paymentSectionRef = useRef<HTMLDivElement | null>(null);
   const contactSectionRef = useRef<HTMLLabelElement | null>(null);
   const phoneInputRef = useRef<HTMLInputElement | null>(null);
+  const checkoutIdempotencyRef = useRef<string | null>(null);
   const [outstandingLedger, setOutstandingLedger] = useState<ParentOutstandingBreakdown | null>(null);
   const [outstandingLedgerLoading, setOutstandingLedgerLoading] = useState(false);
   const [outstandingSelection, setOutstandingSelection] = useState<OutstandingTarget | null>(null);
@@ -286,10 +288,10 @@ export default function ParentPaymentsPage() {
     []
   );
 
-  const refreshOutstandingLedger = useCallback(async (parentIdValue: string) => {
+  const refreshOutstandingLedger = useCallback(async () => {
     setOutstandingLedgerLoading(true);
     try {
-      const response = await fetch(`/api/parent/payments/outstanding?parentId=${parentIdValue}`, {
+      const response = await authFetch("/api/parent/payments/outstanding", {
         cache: "no-store",
       });
       const payload = await response.json();
@@ -328,7 +330,7 @@ export default function ParentPaymentsPage() {
       if (childIds.length === 0) {
         setAssignments([]);
         setPayments([]);
-        await refreshOutstandingLedger(parentId);
+        await refreshOutstandingLedger();
         return;
       }
 
@@ -352,16 +354,22 @@ export default function ParentPaymentsPage() {
       if (assignmentError) throw assignmentError;
       if (paymentError) throw paymentError;
 
-      let effectiveAssignments: RawAssignment[] = assignmentRows ?? [];
+      let effectiveAssignments: RawAssignment[] = (assignmentRows ?? []).map((assignment) => ({
+        ...assignment,
+        assignmentKey: assignment.id ?? `${assignment.child_id}_${assignment.fee_id}`,
+      }));
 
       if ((!effectiveAssignments || effectiveAssignments.length === 0) && (childRows?.length ?? 0) > 0) {
-        const { data: feeCatalog } = await supabase
+        const { data: feeCatalog, error: feeCatalogError } = await supabase
           .from("payment_fee_catalog")
           .select("*")
-          .eq("is_active", true);
+          .eq("is_active", true)
+          .order("sort_order", { ascending: true });
+
+        if (feeCatalogError) throw feeCatalogError;
 
         if (feeCatalog && feeCatalog.length > 0) {
-          effectiveAssignments = childRows!.flatMap((child) =>
+          effectiveAssignments = (childRows ?? []).flatMap((child) =>
             feeCatalog.map((fee) => ({
               id: `${child.id}_${fee.id}`,
               assignmentKey: `${child.id}_${fee.id}`,
@@ -373,21 +381,16 @@ export default function ParentPaymentsPage() {
               is_active: true,
               fee,
               child,
-              isSynthetic: true,
+              isSynthetic: true
             }))
           );
         }
-      } else {
-        effectiveAssignments = effectiveAssignments.map((assignment) => ({
-          ...assignment,
-          assignmentKey: assignment.id ?? `${assignment.child_id}_${assignment.fee_id}`,
-        }));
       }
 
       const assignmentsWithCustomAmounts = applyCustomAmounts(effectiveAssignments);
       setAssignments(assignmentsWithCustomAmounts);
       setPayments((paymentRows ?? []) as PaymentWithItems[]);
-      await refreshOutstandingLedger(parentId);
+      await refreshOutstandingLedger();
     } catch (err: unknown) {
       console.error("Failed to load payments data", err);
       setError(err instanceof Error ? err.message : "Failed to load payment data");
@@ -551,6 +554,10 @@ export default function ParentPaymentsPage() {
     });
   }, [familyFeeItems, selections]);
 
+  useEffect(() => {
+    checkoutIdempotencyRef.current = null;
+  }, [cartItems]);
+
   const applyOutstandingSelection = useCallback(
     (target: OutstandingTarget) => {
       setSelections(prev => {
@@ -613,10 +620,6 @@ export default function ParentPaymentsPage() {
       setError("Select at least one fee.");
       return;
     }
-    if (cartItems.some(item => !item.months || item.months.length === 0)) {
-      setError("Sila pilih bulan yuran sebelum meneruskan pembayaran.");
-      return;
-    }
     if (!parentProfile.email || !parentProfile.phone) {
       setError("Add your email and phone number to your profile before paying.");
       focusContactSection();
@@ -626,18 +629,25 @@ export default function ParentPaymentsPage() {
     setError(null);
 
     try {
-      const response = await fetch("/api/billplz/create", {
+      if (!checkoutIdempotencyRef.current) {
+        if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+          checkoutIdempotencyRef.current = crypto.randomUUID();
+        } else {
+          checkoutIdempotencyRef.current = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        }
+      }
+
+      const response = await authFetch("/api/billplz/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          parentId,
           payer: {
             name: parentProfile.name ?? "Parent",
             email: parentProfile.email,
             mobile: parentProfile.phone
           },
           items: cartItems,
-          merchantFeeCents: MERCHANT_FEE_CENTS
+          idempotencyKey: checkoutIdempotencyRef.current
         })
       });
 
@@ -659,7 +669,7 @@ export default function ParentPaymentsPage() {
   const refreshPendingStatus = useCallback(async () => {
     if (!pendingPayment?.billplz_id) return;
     try {
-      await fetch(`/api/payments/${pendingPayment.billplz_id}/refresh`, { method: "GET" });
+      await authFetch(`/api/payments/${pendingPayment.billplz_id}/refresh`, { method: "GET" });
       loadData();
     } catch (err) {
       console.error("refresh error", err);
