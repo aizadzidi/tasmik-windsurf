@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { ChevronsUpDown, Check, Layers, Plus, X } from "lucide-react";
+import { ChevronsUpDown, Check, Layers, Plus, X, Trash2, Edit2 } from "lucide-react";
 import {
   CartesianGrid,
   Line,
@@ -47,6 +47,7 @@ import {
   listBalanceAdjustments,
   updateFee,
   updateBalanceAdjustment,
+  deleteBalanceAdjustment,
 } from "@/lib/payments/adminApi";
 import { formatRinggit } from "@/lib/payments/pricingUtils";
 import type {
@@ -593,6 +594,19 @@ export default function AdminPaymentsPage() {
     }
   }
 
+  async function handleDeleteAdjustment(id: string) {
+    const confirmDelete = window.confirm("Delete this manual adjustment? This action cannot be undone.");
+    if (!confirmDelete) return;
+
+    try {
+      await deleteBalanceAdjustment(id);
+      await reloadLedgerData();
+    } catch (err: unknown) {
+      console.error(err);
+      setError((err as Error)?.message ?? "Failed to delete adjustment.");
+    }
+  }
+
   return (
     <>
       <AdminNavbar />
@@ -720,13 +734,6 @@ export default function AdminPaymentsPage() {
                     {formatRinggit(ledgerSummary?.totalPaidAgainstDueCents ?? 0)} recorded payments and{" "}
                     {formatRinggit(ledgerSummary?.totalAdjustmentsCents ?? 0)} manual adjustments.
                   </p>
-                  <Button
-                    variant="outline"
-                    onClick={() => openAdjustmentForm()}
-                    className="w-full justify-center"
-                  >
-                    Adjust parent balance
-                  </Button>
                 </CardContent>
               </Card>
             </div>
@@ -804,70 +811,117 @@ export default function AdminPaymentsPage() {
             </Card>
 
             <Card>
-              <CardHeader>
+              <CardHeader className="border-b border-slate-100">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <CardTitle>Manual adjustments</CardTitle>
-                    <p className="text-sm text-slate-500">Track off-system credits and debits.</p>
+                    <CardTitle className="text-lg">Manual adjustments</CardTitle>
+                    <p className="text-sm text-slate-500">Track off-system credits and debits</p>
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => openAdjustmentForm()}>
+                  <Button
+                    onClick={() => openAdjustmentForm()}
+                    className="bg-slate-900 text-white hover:bg-slate-800 shadow-sm"
+                    size="sm"
+                  >
+                    <Plus className="h-4 w-4 mr-1.5" />
                     Add adjustment
                   </Button>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="p-0">
                 {adjustments.length ? (
-                  adjustments.map((adjustment) => {
-                    const monthLabel = formatMonthKey(asMonthKey(adjustment.monthKey));
-                    return (
-                      <div
-                        key={adjustment.id}
-                        className="rounded-lg border border-slate-200 bg-white/70 p-3 text-sm text-slate-700"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div>
-                            <p className="font-semibold text-slate-900">{formatRinggit(adjustment.amountCents)}</p>
-                            <p className="text-xs text-slate-500">
-                              {new Date(adjustment.createdAt).toLocaleString("en-MY", {
-                                day: "numeric",
-                                month: "short",
-                                year: "numeric",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </p>
+                  <div className="divide-y divide-slate-100">
+                    {adjustments.map((adjustment) => {
+                      const monthLabel = formatMonthKey(asMonthKey(adjustment.monthKey));
+                      const parentData = parentOptions.find(p => p.id === adjustment.parentId);
+                      const studentData = studentOptions.find(s => s.id === adjustment.childId);
+                      const isDebit = adjustment.amountCents >= 0;
+
+                      return (
+                        <div
+                          key={adjustment.id}
+                          className="group flex items-center gap-4 px-6 py-4 hover:bg-slate-50/50 transition-colors"
+                        >
+                          {/* Amount - Primary Focus */}
+                          <div className="flex flex-col items-end min-w-[120px]">
+                            <div className="flex items-baseline gap-1.5">
+                              <span className={cn(
+                                "text-2xl font-semibold tracking-tight",
+                                isDebit ? "text-rose-600" : "text-emerald-600"
+                              )}>
+                                {isDebit ? "+" : "−"}
+                              </span>
+                              <span className="text-xl font-semibold text-slate-900">
+                                {formatRinggit(Math.abs(adjustment.amountCents)).replace("RM ", "")}
+                              </span>
+                            </div>
+                            <span className="text-xs font-medium uppercase tracking-wide text-slate-400 mt-0.5">
+                              {isDebit ? "Debit" : "Credit"}
+                            </span>
                           </div>
-                          <div className="flex items-center gap-2">
+
+                          {/* Divider */}
+                          <div className="h-12 w-px bg-slate-200" />
+
+                          {/* Details */}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-slate-900 mb-1">
+                              {adjustment.reason || "No reason provided"}
+                            </p>
+                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                              <span>
+                                {parentData?.name || parentData?.email || `Parent ${adjustment.parentId.slice(0, 6)}`}
+                              </span>
+                              {studentData && (
+                                <>
+                                  <span>•</span>
+                                  <span>{studentData.name}</span>
+                                </>
+                              )}
+                              <span>•</span>
+                              <span>{monthLabel}</span>
+                              <span>•</span>
+                              <span className="text-slate-400">
+                                {new Date(adjustment.createdAt).toLocaleDateString("en-MY", {
+                                  day: "numeric",
+                                  month: "short",
+                                })}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Actions - Always Visible on Desktop */}
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                             <Button
                               variant="ghost"
                               size="sm"
                               onClick={() => startEditingAdjustment(adjustment)}
+                              className="h-8 px-3 text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                             >
+                              <Edit2 className="h-3.5 w-3.5 mr-1.5" />
                               Edit
                             </Button>
-                            <span
-                              className={cn(
-                                "rounded-full px-3 py-1 text-xs font-semibold",
-                                adjustment.amountCents >= 0
-                                  ? "bg-rose-100 text-rose-700"
-                                  : "bg-emerald-100 text-emerald-700"
-                              )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDeleteAdjustment(adjustment.id)}
+                              className="h-8 px-3 text-slate-600 hover:text-rose-600 hover:bg-rose-50"
                             >
-                              {adjustment.amountCents >= 0 ? "Add to balance" : "Reduce balance"}
-                            </span>
+                              <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                              Delete
+                            </Button>
                           </div>
                         </div>
-                        <p className="mt-2 text-xs text-slate-500">
-                          Parent: {adjustment.parentId}
-                          {adjustment.childId ? ` · Child: ${adjustment.childId}` : ""}
-                          {adjustment.monthKey ? ` · Month: ${monthLabel}` : ""}
-                        </p>
-                        <p className="mt-2 text-sm text-slate-700">{adjustment.reason}</p>
-                      </div>
-                    );
-                  })
+                      );
+                    })}
+                  </div>
                 ) : (
-                  <p className="text-sm text-slate-600">No adjustments recorded yet.</p>
+                  <div className="flex flex-col items-center justify-center p-12 text-center">
+                    <div className="rounded-full bg-slate-100 p-3 mb-3">
+                      <Layers className="h-6 w-6 text-slate-400" />
+                    </div>
+                    <p className="text-sm font-medium text-slate-700">No adjustments yet</p>
+                    <p className="text-xs text-slate-500 mt-1">Manual adjustments will appear here</p>
+                  </div>
                 )}
               </CardContent>
             </Card>

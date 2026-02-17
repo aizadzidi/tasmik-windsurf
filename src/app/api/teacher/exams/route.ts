@@ -460,7 +460,14 @@ export async function GET(request: NextRequest) {
       });
 
       const conduct = conductByStudent.get(String(student.id));
-      const scores = Object.values(subjectsData).map((s) => s.score).filter((n) => Number.isFinite(n));
+      const scores = Object.values(subjectsData)
+        .filter((s) => {
+          if (s.optedOut) return false;
+          const grade = String(s.grade || '').toUpperCase();
+          if (grade === 'TH') return false;
+          return typeof s.score === 'number' && Number.isFinite(s.score);
+        })
+        .map((s) => s.score);
       const academicAvg = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
       const rosterClassId = rosterClassByStudent.get(String(student.id)) ?? null;
       const effectiveClassId = rosterClassId || (student.class_id ? String(student.class_id) : null);

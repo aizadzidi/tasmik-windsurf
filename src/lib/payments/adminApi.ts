@@ -118,6 +118,13 @@ export async function updateBalanceAdjustment(id: string, payload: BalanceAdjust
   return handleResponse<{ adjustment: ParentBalanceAdjustment }>(response);
 }
 
+export async function deleteBalanceAdjustment(id: string) {
+  const response = await authFetch(`${ADMIN_PAYMENTS_BASE}/adjustments/${id}`, {
+    method: 'DELETE'
+  });
+  return handleResponse<{ success: boolean }>(response);
+}
+
 export async function fetchParentUsers() {
   const response = await authFetch(`${ADMIN_PAYMENTS_BASE}/parents`, { cache: 'no-store' });
   return handleResponse<{ parents: AdminParentUser[] }>(response);

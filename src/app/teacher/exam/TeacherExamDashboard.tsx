@@ -16,6 +16,7 @@ import type { StudentData } from "@/components/admin/exam/StudentTable";
 import { useProgramScope } from "@/hooks/useProgramScope";
 import { useRouter } from "next/navigation";
 import type { ProgramScope } from "@/types/programs";
+import Portal from "@/components/Portal";
 
 // Dynamic conduct criteria from database
 interface ConductCriteria {
@@ -79,6 +80,8 @@ type StudentRow = {
   optedOut?: boolean;
 };
 
+type SaveIndicatorState = 'idle' | 'saving' | 'saved' | 'error';
+
 function TeacherExamDashboardContent({ programScope }: { programScope: ProgramScope }) {
   const [userId, setUserId] = React.useState<string>("");
   const [classes, setClasses] = React.useState<ClassItem[]>([]);
@@ -96,6 +99,7 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
   const [studentRows, setStudentRows] = React.useState<StudentRow[]>([]);
   const [expandedRows, setExpandedRows] = React.useState<number[]>([]);
   const [saving, setSaving] = React.useState(false);
+  const [saveIndicator, setSaveIndicator] = React.useState<SaveIndicatorState>('idle');
   const [searchQuery, setSearchQuery] = React.useState<string>("");
   const [rosterSource, setRosterSource] = React.useState<'snapshot' | 'current'>('current');
   // RPC-backed grade summary per student (filtered to allowed subjects)
@@ -154,6 +158,7 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
   const previousSelectionRef = React.useRef<{classId: string, subjectId: string, examId: string}>({classId: "", subjectId: "", examId: ""});
   // Baseline (initial) rows for accurate dirty detection
   const initialRowsRef = React.useRef<StudentRow[]>([]);
+  const saveIndicatorTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Fetch auth and base metadata
   React.useEffect(() => {
@@ -288,10 +293,13 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
   const selectedClassRoster = React.useMemo(() => {
     if (!selectedClassId || selectedClassId === 'all') return [];
     if (selectedExamId && studentRows.length > 0) {
-      return studentRows.map((student) => ({ id: student.id, name: student.name }));
+      const rowsForRoster = selectedSubjectId
+        ? studentRows.filter((student) => !student.optedOut)
+        : studentRows;
+      return rowsForRoster.map((student) => ({ id: student.id, name: student.name }));
     }
     return classRosterMap.get(selectedClassId) ?? [];
-  }, [classRosterMap, selectedClassId, selectedExamId, studentRows]);
+  }, [classRosterMap, selectedClassId, selectedExamId, selectedSubjectId, studentRows]);
 
   const selectedClassName = React.useMemo(() => {
     if (!selectedClassId || selectedClassId === 'all') return null;
@@ -668,10 +676,10 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
           fetch(`/api/teacher/exam-exclusions?${params.toString()}`),
           selectedSubjectId
             ? supabase.from('exam_results')
-                .select('student_id, mark, grade')
+                .select('student_id, mark, final_score, grade')
                 .eq('exam_id', selectedExamId)
                 .eq('subject_id', selectedSubjectId)
-            : Promise.resolve<{ data: Array<{ student_id: string; mark: number | null; grade: string | null }> }>({
+            : Promise.resolve<{ data: Array<{ student_id: string; mark: number | null; final_score: number | null; grade: string | null }> }>({
                 data: [],
               }),
           userId
@@ -685,7 +693,14 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
               }),
           fetch(`/api/teacher/subject-opt-outs?${optOutQuery.toString()}`)
             .then((r) => r.json())
-            .catch(() => ({ entries: [] as Array<{ student_id: string; subject_id: string }> }))
+            .catch(() => ({
+              entries: [] as Array<{
+                studentId?: string;
+                subjectId?: string;
+                student_id?: string;
+                subject_id?: string;
+              }>
+            }))
         ]);
         // Exclusions
         try {
@@ -696,9 +711,10 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
         } catch {}
         // Marks
         marksByStudent = new Map<string, { mark: number | null; grade: string | null }>();
-        const results = (resultsRes as { data?: Array<{ student_id: string; mark: number | null; grade: string | null }> })?.data || [];
+        const results = (resultsRes as { data?: Array<{ student_id: string; mark: number | null; final_score: number | null; grade: string | null }> })?.data || [];
         (results || []).forEach((r) => {
-          marksByStudent.set(String(r.student_id), { mark: r.mark, grade: r.grade });
+          const markValue = typeof r.final_score === 'number' ? r.final_score : r.mark;
+          marksByStudent.set(String(r.student_id), { mark: markValue, grade: r.grade });
         });
         // Conduct
         conductByStudent = new Map<string, Record<ConductKey, number>>();
@@ -714,12 +730,22 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
           } as Record<ConductKey, number>);
         });
 
-        const optOutEntriesRaw = Array.isArray(optOutJson?.entries) ? optOutJson.entries : [];
+        type OptOutEntry = {
+          studentId?: string | number | null;
+          subjectId?: string | number | null;
+          student_id?: string | number | null;
+          subject_id?: string | number | null;
+        };
+        const optOutEntriesRaw = Array.isArray(optOutJson?.entries)
+          ? (optOutJson.entries as OptOutEntry[])
+          : [];
         const optOutMap = new Map<string, Set<string>>();
-        (optOutEntriesRaw || []).forEach((entry: { student_id?: string; subject_id?: string } | null) => {
+        (optOutEntriesRaw || []).forEach((entry) => {
           if (!entry) return;
-          const sid = entry?.student_id ? String(entry.student_id) : null;
-          const subId = entry?.subject_id ? String(entry.subject_id) : null;
+          const studentIdRaw = entry.student_id ?? entry.studentId;
+          const subjectIdRaw = entry.subject_id ?? entry.subjectId;
+          const sid = studentIdRaw ? String(studentIdRaw) : null;
+          const subId = subjectIdRaw ? String(subjectIdRaw) : null;
           if (!sid || !subId) return;
           if (!optOutMap.has(subId)) optOutMap.set(subId, new Set());
           optOutMap.get(subId)!.add(sid);
@@ -767,6 +793,10 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
       // Build rows
       const rows: StudentRow[] = roster.map((s) => {
         const m = marksByStudent.get(String(s.id));
+        const markValue = typeof m?.mark === 'number' ? m.mark : null;
+        const gradeRaw = (m?.grade || '').trim();
+        const isTH = gradeRaw.toUpperCase() === 'TH' && markValue === null;
+        const displayGrade = isTH ? 'TH' : (markValue !== null ? gradeRaw : '');
         const c = conductByStudent.get(String(s.id));
         const emptyConduct = conductCategories.reduce((acc, cat) => {
           acc[cat.key] = '' as string;
@@ -776,9 +806,9 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
         return {
           id: String(s.id),
           name: s.name,
-          mark: isOptedOut ? '' : (typeof m?.mark === 'number' ? String(m?.mark ?? '') : ''),
-          grade: isOptedOut ? 'N/A' : (m?.grade || ''),
-          isAbsent: isOptedOut ? false : (m?.grade || '').toUpperCase() === 'TH' && (m?.mark === null || m?.mark === undefined),
+          mark: isOptedOut ? '' : (markValue !== null ? String(markValue) : ''),
+          grade: isOptedOut ? 'N/A' : displayGrade,
+          isAbsent: isOptedOut ? false : isTH,
           optedOut: isOptedOut,
           classId: s.class_id ? String(s.class_id) : null,
           conduct: c
@@ -802,12 +832,12 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
         const mergedRows = rows.map(freshRow => {
           const cachedRow = cachedData.find(cached => cached.id === freshRow.id);
           if (cachedRow) {
-            // Keep cached marks and conduct if they exist
+            // Preserve intentional empty values (e.g. absent clears mark to '').
             return {
               ...freshRow,
-              mark: cachedRow.mark || freshRow.mark,
-              grade: cachedRow.grade || freshRow.grade,
-              conduct: cachedRow.conduct,
+              mark: cachedRow.mark !== undefined ? cachedRow.mark : freshRow.mark,
+              grade: cachedRow.grade !== undefined ? cachedRow.grade : freshRow.grade,
+              conduct: cachedRow.conduct ?? freshRow.conduct,
               isAbsent: cachedRow.isAbsent ?? freshRow.isAbsent,
               optedOut: cachedRow.optedOut ?? freshRow.optedOut
             };
@@ -922,12 +952,7 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
       return updated;
     });
 
-    // Save shortly after paste so data isn't lost
-    setTimeout(() => {
-      if (!saving) {
-        handleSaveAll();
-      }
-    }, 150);
+    // Debounced autosave effect will persist pasted values.
   };
 
   const handleMarkPasteFromInput = (e: React.ClipboardEvent<HTMLInputElement>, startDisplayIdx: number) => {
@@ -948,71 +973,8 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
       };
       return updated;
     });
-    // Save immediately so a quick refresh doesn't lose the change
-    setTimeout(() => {
-      handleSaveAll();
-    }, 100);
   };
 
-  const handleOptOutToggle = async (idx: number, checked: boolean) => {
-    if (!selectedExamId || !selectedSubjectId) return;
-    const student = studentRows[idx];
-    if (!student) return;
-    const studentId = student.id;
-    setStudentRows((prev) => {
-      const updated = [...prev];
-      updated[idx] = {
-        ...updated[idx],
-        optedOut: checked,
-        isAbsent: checked ? false : updated[idx].isAbsent,
-        mark: checked ? '' : '',
-        grade: checked ? 'N/A' : '',
-      };
-      return updated;
-    });
-
-    try {
-      if (checked) {
-        await fetch('/api/teacher/subject-opt-outs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ examId: selectedExamId, subjectId: selectedSubjectId, studentId })
-        });
-        await fetch('/api/teacher/exam-results', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ examId: selectedExamId, subjectId: selectedSubjectId, studentIds: [studentId] })
-        });
-      } else {
-        const params = new URLSearchParams({ examId: selectedExamId, subjectId: selectedSubjectId, studentId });
-        await fetch(`/api/teacher/subject-opt-outs?${params.toString()}`, { method: 'DELETE' });
-      }
-
-      setSubjectOptOutMap((prev) => {
-        const next = new Map(prev);
-        const set = next.get(selectedSubjectId) ?? new Set();
-        if (checked) set.add(studentId); else set.delete(studentId);
-        next.set(selectedSubjectId, set);
-        return next;
-      });
-      initialRowsRef.current = initialRowsRef.current.map((row) => (
-        row.id === studentId
-          ? { ...row, optedOut: checked, isAbsent: false, mark: '', grade: checked ? 'N/A' : '' }
-          : row
-      ));
-    } catch (err) {
-      console.error('Subject opt-out toggle failed', err);
-      setStudentRows((prev) => {
-        const updated = [...prev];
-        updated[idx] = {
-          ...updated[idx],
-          optedOut: !checked,
-        };
-        return updated;
-      });
-      showToast('Failed to update N/A status', 'error');
-    }
-  };
   const handleExpand = (idx: number) => {
     setExpandedRows((prev) => (prev.includes(idx) ? prev.filter((i) => i !== idx) : [...prev, idx]));
   };
@@ -1053,8 +1015,6 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
       if (markChanged) return true;
       const statusChanged = Boolean(curr.isAbsent) !== Boolean(init.isAbsent);
       if (statusChanged) return true;
-      const optOutChanged = Boolean(curr.optedOut) !== Boolean(init.optedOut);
-      if (optOutChanged) return true;
       return false;
     });
   }, [studentRows]);
@@ -1062,9 +1022,15 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
   // Save all rows using new single-endpoint API
   const handleSaveAll = React.useCallback(async () => {
     setSaving(true);
+    if (saveIndicatorTimerRef.current) {
+      clearTimeout(saveIndicatorTimerRef.current);
+      saveIndicatorTimerRef.current = null;
+    }
+    setSaveIndicator('saving');
     try {
       if (!selectedExamId || !selectedSubjectId) {
         setSaving(false);
+        setSaveIndicator('idle');
         return;
       }
 
@@ -1096,18 +1062,17 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
             };
           }
           
-          const mark = parseFloat(r.mark);
-          if (isNaN(mark)) {
-            if (statusChanged && init?.isAbsent) {
-              return {
-                studentId: r.id,
-                mark: null,
-                finalScore: null,
-                isAbsent: false
-              };
-            }
-            return null;
+          const trimmedMark = String(r.mark ?? '').trim();
+          if (trimmedMark === '') {
+            return {
+              studentId: r.id,
+              mark: null,
+              finalScore: null,
+              isAbsent: false
+            };
           }
+          const mark = parseFloat(trimmedMark);
+          if (isNaN(mark)) return null;
 
           const finalScore = mark;
           
@@ -1137,14 +1102,21 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
             results: examResults
           })
         });
+        const payload = await response.json().catch(() => null) as
+          | { error?: string; message?: string; details?: { message?: string } }
+          | null;
         if (!response.ok) {
-          throw new Error('Failed to save exam results');
+          const message =
+            payload?.error ||
+            payload?.message ||
+            payload?.details?.message ||
+            'Failed to save exam results';
+          throw new Error(message);
         }
       }
 
       // Update conduct if we have changes for this subject
       const conductChanges = changedRows
-        .filter(r => !r.optedOut)
         .map((r) => ({
           studentId: r.id,
           conduct: r.conduct
@@ -1172,13 +1144,23 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
       });
 
       showToast('Saved', 'success');
+      setSaveIndicator('saved');
+      saveIndicatorTimerRef.current = setTimeout(() => setSaveIndicator('idle'), 1800);
     } catch (error) {
       console.error('Error saving exam data:', error);
       showToast('Failed to save', 'error');
+      setSaveIndicator('error');
+      saveIndicatorTimerRef.current = setTimeout(() => setSaveIndicator('idle'), 2400);
     } finally {
       setSaving(false);
     }
   }, [selectedExamId, selectedSubjectId, selectedClassId, studentRows, showToast]);
+
+  React.useEffect(() => {
+    return () => {
+      if (saveIndicatorTimerRef.current) clearTimeout(saveIndicatorTimerRef.current);
+    };
+  }, []);
 
   // Handle selection changes with unsaved changes warning
   const handleClassChange = async (newClassId: string) => {
@@ -1230,6 +1212,9 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
   const visibleRows: StudentRowWithIndex[] = React.useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     let base: StudentRowWithIndex[] = studentRows.map((r, idx) => ({ ...r, _idx: idx }));
+    if (selectedSubjectId) {
+      base = base.filter((row) => !row.optedOut);
+    }
     if (q) {
       base = base.filter(r => (r.name || '').toLowerCase().includes(q));
     }
@@ -1526,12 +1511,30 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
               )}
             </div>
 
-            {/* Toast */}
-            {toast && (
-              <div className={`fixed top-4 right-4 z-50 px-4 py-2 rounded shadow-md text-sm ${toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
-                {toast.message}
-              </div>
-            )}
+            <Portal>
+              {toast && (
+                <div className="pointer-events-none fixed inset-x-0 bottom-4 z-[100] flex justify-center px-4">
+                  <div className={`rounded-full px-4 py-2 shadow-md text-sm ${toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
+                    {toast.message}
+                  </div>
+                </div>
+              )}
+            </Portal>
+            <Portal>
+              {saveIndicator !== 'idle' && (
+                <div className="pointer-events-none fixed bottom-4 right-4 z-[110]">
+                  <div className={`rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm ${
+                    saveIndicator === 'saving'
+                      ? 'border-slate-300 bg-white text-slate-700'
+                      : saveIndicator === 'saved'
+                        ? 'border-green-200 bg-green-50 text-green-700'
+                        : 'border-red-200 bg-red-50 text-red-700'
+                  }`}>
+                    {saveIndicator === 'saving' ? 'Saving…' : saveIndicator === 'saved' ? 'Saved' : 'Save failed'}
+                  </div>
+                </div>
+              )}
+            </Portal>
             {/* No Students Message */}
             {visibleRows.length === 0 && selectedExamId && selectedSubjectId && (
               <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center mb-4">
@@ -1826,30 +1829,23 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
                             <span className="ml-2">{avgConduct ? avgConduct.toFixed(1) : "-"}%</span>
                           </td>
                           <td className="px-3 py-2">
-                            <div className="flex items-center gap-3 text-sm">
-                              <label className="inline-flex items-center gap-2">
-                                <input
-                                  type="checkbox"
-                                  className="h-4 w-4"
-                                  checked={!!student.isAbsent}
-                                  onChange={(e) => handleAbsentToggle(idx, e.target.checked)}
-                                  onClick={(e) => e.stopPropagation()}
-                                  disabled={!selectedSubjectId || student.optedOut}
-                                />
-                                <span>Absent</span>
-                              </label>
-                              <label className="inline-flex items-center gap-2">
-                                <input
-                                  type="checkbox"
-                                  className="h-4 w-4"
-                                  checked={!!student.optedOut}
-                                  onChange={(e) => handleOptOutToggle(idx, e.target.checked)}
-                                  onClick={(e) => e.stopPropagation()}
-                                  disabled={!selectedSubjectId}
-                                />
-                                <span>N/A</span>
-                              </label>
-                            </div>
+                            {selectedSubjectId ? (
+                              <div className="flex items-center gap-3 text-sm">
+                                <label className="inline-flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    className="h-4 w-4"
+                                    checked={!!student.isAbsent}
+                                    onChange={(e) => handleAbsentToggle(idx, e.target.checked)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    disabled={student.optedOut}
+                                  />
+                                  <span>Absent</span>
+                                </label>
+                              </div>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            )}
                           </td>
                         </tr>
                         {expanded && (

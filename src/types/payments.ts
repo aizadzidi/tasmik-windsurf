@@ -84,7 +84,14 @@ export interface PaymentLineItem {
 
 export interface PaymentRecord {
   id: string;
+  tenant_id?: string | null;
+  provider_id?: string | null;
+  provider_payment_id?: string | null;
+  provider_status?: string | null;
+  provider_metadata?: Record<string, unknown> | null;
+  provider_error?: string | null;
   parent_id: string;
+  idempotency_key?: string | null;
   status: PaymentStatus;
   total_amount_cents: number;
   merchant_fee_cents: number;
@@ -124,6 +131,7 @@ export type BillplzCreateBody = {
 export type BillplzCreateResponse = {
   id: string;
   url: string;
+  collection_id?: string;
   due_at?: string | null;
   reference_1?: string | null;
   amount?: number;
