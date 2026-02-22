@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
@@ -124,9 +124,20 @@ export default function SignupPage() {
   );
   const [slugStatusMessage, setSlugStatusMessage] = useState("");
   const formRef = useRef<HTMLDivElement | null>(null);
-  const baseDomain = (
+  const envBaseDomain = (
     process.env.NEXT_PUBLIC_TENANT_SUBDOMAIN_BASE_DOMAIN ?? "eclazz.com"
   ).trim().toLowerCase() || "eclazz.com";
+  const [baseDomain, setBaseDomain] = useState(envBaseDomain);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const host = window.location.hostname.toLowerCase();
+    if (!host || host === "localhost" || host === "127.0.0.1") {
+      setBaseDomain(envBaseDomain);
+      return;
+    }
+    setBaseDomain(host.replace(/^www\./, ""));
+  }, [envBaseDomain]);
 
   const previewDomain = useMemo(() => {
     const slug = form.schoolSlug || "school-name";
@@ -201,7 +212,6 @@ export default function SignupPage() {
       setSlugStatusMessage("");
       return;
     }
-
     setSlugStatus("checking");
     setSlugStatusMessage("Checking slug availability...");
     try {
