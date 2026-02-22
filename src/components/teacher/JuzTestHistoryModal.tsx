@@ -5,6 +5,16 @@ import { supabase } from '@/lib/supabaseClient';
 import { authFetch } from '@/lib/authFetch';
 import EditJuzTestForm from './EditJuzTestForm';
 import { formatJuzTestLabel, formatJuzTestPageRange, getDisplayHizbNumber } from '@/lib/juzTestUtils';
+import {
+  type NormalModeMeta,
+  calculateNormalModeScore,
+  buildNormalModeMeta,
+  getJuzTestModeLabel,
+  getJuzTestPageRange,
+  getNormalQuestionCount,
+  getPmmmQuestionConfig,
+  normalizeJuzTestMode
+} from '@/lib/juzTestScoring';
 
 interface JuzTest {
   id: string;
@@ -24,6 +34,7 @@ interface JuzTest {
   test_juz?: boolean;
   test_hizb?: boolean;
   hizb_number?: number | null;
+  test_mode?: string | null;
   section2_scores?: {
     memorization?: { [key: string]: number };
     middle_verse?: { [key: string]: number };
@@ -32,6 +43,7 @@ interface JuzTest {
     verse_position?: { [key: string]: number };
     read_verse_no?: { [key: string]: number };
     understanding?: { [key: string]: number };
+    normal_meta?: Partial<NormalModeMeta>;
   };
 }
 
@@ -48,15 +60,8 @@ interface EditJuzTestFormData {
   test_juz: boolean;
   test_hizb: boolean;
   hizb_number?: number | null;
-  section2_scores?: {
-    memorization?: { [key: string]: number };
-    middle_verse?: { [key: string]: number };
-    last_words?: { [key: string]: number };
-    reversal_reading?: { [key: string]: number };
-    verse_position?: { [key: string]: number };
-    read_verse_no?: { [key: string]: number };
-    understanding?: { [key: string]: number };
-  };
+  test_mode: 'pmmm' | 'normal_memorization';
+  section2_scores?: Record<string, unknown>;
   should_repeat?: boolean;
   passed?: boolean;
   total_percentage?: number;
@@ -121,41 +126,68 @@ export default function JuzTestHistoryModal({
     }
   }, [fetchTests, isOpen, studentId]);
 
-  // Function to get question category configuration
-  const getQuestionConfig = (isHizbTest: boolean = false) => {
-    if (isHizbTest) {
-      return {
-        memorization: { title: "Repeat and Continue / الإعادة والمتابعة", questionNumbers: [1, 2, 3] },
-        middle_verse: { title: "Middle of the verse / وسط الآية", questionNumbers: [1] },
-        last_words: { title: "Last of the verse / آخر الآية", questionNumbers: [1] },
-        reversal_reading: { title: "Reversal reading / القراءة بالعكس", questionNumbers: [1, 2] },
-        verse_position: { title: "Position of the verse / موضع الآية", questionNumbers: [1, 2] },
-        read_verse_no: { title: "Read verse number / قراءة رقم الآية", questionNumbers: [1] },
-        understanding: { title: "Understanding of the verse / فهم الآية", questionNumbers: [1] }
-      };
-    } else {
-      return {
-        memorization: { title: "Repeat and Continue / الإعادة والمتابعة", questionNumbers: [1, 2, 3, 4, 5] },
-        middle_verse: { title: "Middle of the verse / وسط الآية", questionNumbers: [1, 2] },
-        last_words: { title: "Last of the verse / آخر الآية", questionNumbers: [1, 2] },
-        reversal_reading: { title: "Reversal reading / القراءة بالعكس", questionNumbers: [1, 2, 3] },
-        verse_position: { title: "Position of the verse / موضع الآية", questionNumbers: [1, 2, 3] },
-        read_verse_no: { title: "Read verse number / قراءة رقم الآية", questionNumbers: [1, 2, 3] },
-        understanding: { title: "Understanding of the verse / فهم الآية", questionNumbers: [1, 2, 3] }
-      };
-    }
-  };
-
   // Function to render detailed scores
   const renderDetailedScores = (test: JuzTest) => {
     if (!test.section2_scores) return null;
 
-    const config = getQuestionConfig(test.test_hizb || false);
+    const mode = normalizeJuzTestMode(test.test_mode);
+    const isHizbTest = test.test_hizb || false;
+    const fallbackRange = getJuzTestPageRange(test.juz_number, isHizbTest, test.hizb_number ?? 1);
+    const pageFrom = test.page_from ?? fallbackRange.from;
+    const pageTo = test.page_to ?? fallbackRange.to;
+
+    if (mode === 'normal_memorization') {
+      const normalMeta = buildNormalModeMeta({
+        pageFrom,
+        pageTo,
+        isHizbTest,
+        existingMeta: test.section2_scores.normal_meta,
+      });
+      const normalScore = calculateNormalModeScore(isHizbTest, normalMeta.breakdown);
+      const questionCount = getNormalQuestionCount(isHizbTest);
+
+      return (
+        <div className="mt-3 grid grid-cols-1 gap-2 text-xs">
+          {Array.from({ length: questionCount }, (_, index) => index + 1).map((question) => {
+            const key = String(question);
+            const questionMap = normalMeta.question_map[key];
+            const breakdown = normalScore.breakdown[key];
+            const timer = normalMeta.timer[key];
+
+            return (
+              <div key={key} className="rounded border border-gray-200 bg-white/70 p-2">
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="font-medium text-gray-700">
+                    Soalan {question} • Page {questionMap?.block_from}-{questionMap?.block_to}
+                  </span>
+                  <span className="font-semibold text-indigo-700">{breakdown?.question_total ?? 0}/5</span>
+                </div>
+                <div className="text-gray-600">
+                  Hafazan: {breakdown?.hafazan ?? 0} • Quality: {breakdown?.quality ?? 0} • Selected
+                  page: {questionMap?.selected_page ?? '-'}
+                </div>
+                <div className="text-gray-500">
+                  Timer elapsed: {timer?.elapsed_seconds ?? 0}s • Extensions: {timer?.extensions ?? 0}
+                  {' '}• Pause: {timer?.pause_count ?? 0}
+                </div>
+              </div>
+            );
+          })}
+          <div className="rounded border border-indigo-200 bg-indigo-50 p-2 text-indigo-700">
+            Total Normal Score: {test.total_percentage}%
+          </div>
+        </div>
+      );
+    }
+
+    const config = getPmmmQuestionConfig(isHizbTest);
     
     return (
       <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
         {Object.entries(config).map(([categoryKey, categoryConfig]) => {
-          const categoryScores = test.section2_scores?.[categoryKey as keyof typeof test.section2_scores] || {};
+          const categoryScores = (test.section2_scores?.[
+            categoryKey as keyof typeof test.section2_scores
+          ] || {}) as Record<string, number>;
           const totalScore = Object.values(categoryScores).reduce((sum, score) => sum + (score || 0), 0);
           const maxScore = categoryConfig.questionNumbers.length * 5;
           const percentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
@@ -293,6 +325,7 @@ export default function JuzTestHistoryModal({
     
     return displayNumber.toString().includes(searchTerm) ||
            displayType.toLowerCase().includes(searchTerm.toLowerCase()) ||
+           getJuzTestModeLabel(test.test_mode).toLowerCase().includes(searchTerm.toLowerCase()) ||
            (test.examiner_name || '').toLowerCase().includes(searchTerm.toLowerCase());
   });
 
@@ -408,6 +441,11 @@ export default function JuzTestHistoryModal({
                         <h3 className="font-bold text-lg text-gray-900">
                           {formatJuzTestLabel(test)}
                         </h3>
+                        <div className="mt-1">
+                          <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                            {getJuzTestModeLabel(test.test_mode)}
+                          </span>
+                        </div>
                         <div className="flex flex-col gap-1">
                           {formatJuzTestPageRange(test) && (
                             <p className="text-xs text-gray-500">

@@ -25,6 +25,7 @@ type JuzTestRow = {
   passed?: boolean | null;
   total_percentage?: number | null;
   examiner_name?: string | null;
+  test_mode?: string | null;
   test_hizb?: boolean | null;
   hizb_number?: number | null;
   page_from?: number | null;
@@ -89,7 +90,7 @@ export async function GET(request: NextRequest) {
           // Get juz test data (if table exists)
           client
             .from('juz_tests')
-            .select('student_id, juz_number, test_date, passed, total_percentage, examiner_name, test_hizb, hizb_number, page_from, page_to')
+            .select('student_id, juz_number, test_date, passed, total_percentage, examiner_name, test_mode, test_hizb, hizb_number, page_from, page_to')
             .in('student_id', studentIds)
             .order('test_date', { ascending: false })
             .order('id', { ascending: false })

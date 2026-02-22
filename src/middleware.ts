@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import { getRequestHost, isLegacySchoolHost } from "@/lib/hostResolution";
 
 export function middleware(request: NextRequest) {
   const { searchParams, pathname } = request.nextUrl
-  const hostHeader = request.headers.get('host') ?? ''
-  const hostname = hostHeader.split(':')[0]
+  const hostname = getRequestHost(request)
 
   // Check if this is an auth-related redirect from Supabase
   const hasAuthCode = searchParams.has('code')
@@ -34,7 +34,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(resetUrl)
   }
 
-  const isClassDomain = hostname === 'class.akademialkhayr.com'
+  const isClassDomain = isLegacySchoolHost(hostname)
   if (isClassDomain && pathname === '/') {
     return NextResponse.redirect(new URL('/login', request.url))
   }

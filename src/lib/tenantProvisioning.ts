@@ -1,5 +1,10 @@
 import type { NextRequest } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  extractTenantSlugFromHost,
+  getRequestHost,
+  normalizeHost as normalizeHostValue,
+} from "@/lib/hostResolution";
 
 type UserRow = {
   name: string | null;
@@ -7,27 +12,34 @@ type UserRow = {
 };
 
 export function normalizeHost(host: string | null) {
-  if (!host) return null;
-  return host.split(":")[0]?.trim().toLowerCase() || null;
+  return normalizeHostValue(host);
 }
 
 export async function resolveTenantIdFromRequest(
   request: NextRequest,
   supabaseAdmin: SupabaseClient
 ) {
-  const host =
-    normalizeHost(request.headers.get("x-forwarded-host")) ||
-    normalizeHost(request.headers.get("host")) ||
-    normalizeHost(new URL(request.url).hostname);
+  const host = getRequestHost(request);
   if (!host) return null;
 
-  const { data, error } = await supabaseAdmin
+  const { data: byDomain, error: domainError } = await supabaseAdmin
     .from("tenant_domains")
     .select("tenant_id")
     .eq("domain", host)
     .maybeSingle();
-  if (error || !data?.tenant_id) return null;
-  return data.tenant_id as string;
+  if (domainError) return null;
+  if (byDomain?.tenant_id) return byDomain.tenant_id as string;
+
+  const slug = extractTenantSlugFromHost(host);
+  if (!slug) return null;
+
+  const { data: bySlug, error: slugError } = await supabaseAdmin
+    .from("tenants")
+    .select("id")
+    .eq("slug", slug)
+    .maybeSingle();
+  if (slugError || !bySlug?.id) return null;
+  return bySlug.id as string;
 }
 
 export function mapUserRoleToProfile(role?: string | null) {
