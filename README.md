@@ -25,6 +25,10 @@ This project uses [`next/font`](https://nextjs.org/docs/app/building-your-applic
 - [ ] All required environment variables are set in the deployment environment:
   - `NEXT_PUBLIC_SUPABASE_URL`
   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+  - `TENANT_SUBDOMAIN_BASE_DOMAIN` (example: `eclazz.com`)
+  - `APP_MARKETING_HOSTS` (comma-separated, include `eclazz.com`)
+  - `ENABLE_LEGACY_LOGIN_SIGNUP` (`false` by default)
 - [ ] Run `npm run build` and ensure the build succeeds with no errors.
 - [ ] Run `npm run lint` and fix any issues.
 - [ ] Check that all dropdowns and forms are accessible and user-friendly.

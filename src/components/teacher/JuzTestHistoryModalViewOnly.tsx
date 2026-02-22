@@ -3,6 +3,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { formatJuzTestLabel, formatJuzTestPageRange, getDisplayHizbNumber } from '@/lib/juzTestUtils';
+import {
+  type NormalModeMeta,
+  buildNormalModeMeta,
+  calculateNormalModeScore,
+  getJuzTestModeLabel,
+  getJuzTestPageRange,
+  getNormalQuestionCount,
+  getPmmmQuestionConfig,
+  normalizeJuzTestMode
+} from '@/lib/juzTestScoring';
 
 interface JuzTest {
   id: string;
@@ -17,6 +27,7 @@ interface JuzTest {
   remarks?: string;
   test_hizb?: boolean;
   hizb_number?: number | null;
+  test_mode?: string | null;
   page_from?: number | null;
   page_to?: number | null;
   section2_scores?: {
@@ -27,6 +38,7 @@ interface JuzTest {
     verse_position?: { [key: string]: number };
     read_verse_no?: { [key: string]: number };
     understanding?: { [key: string]: number };
+    normal_meta?: Partial<NormalModeMeta>;
   };
 }
 
@@ -95,41 +107,65 @@ export default function JuzTestHistoryModalViewOnly({
   const passedCount = tests.filter(t => t.passed).length;
   const totalTests = tests.length;
 
-  // Function to get question category configuration
-  const getQuestionConfig = (isHizbTest: boolean = false) => {
-    if (isHizbTest) {
-      return {
-        memorization: { title: "Repeat and Continue / الإعادة والمتابعة", questionNumbers: [1, 2, 3] },
-        middle_verse: { title: "Middle of the verse / وسط الآية", questionNumbers: [1] },
-        last_words: { title: "Last of the verse / آخر الآية", questionNumbers: [1] },
-        reversal_reading: { title: "Reversal reading / القراءة بالعكس", questionNumbers: [1, 2] },
-        verse_position: { title: "Position of the verse / موضع الآية", questionNumbers: [1, 2] },
-        read_verse_no: { title: "Read verse number / قراءة رقم الآية", questionNumbers: [1] },
-        understanding: { title: "Understanding of the verse / فهم الآية", questionNumbers: [1] }
-      };
-    } else {
-      return {
-        memorization: { title: "Repeat and Continue / الإعادة والمتابعة", questionNumbers: [1, 2, 3, 4, 5] },
-        middle_verse: { title: "Middle of the verse / وسط الآية", questionNumbers: [1, 2] },
-        last_words: { title: "Last of the verse / آخر الآية", questionNumbers: [1, 2] },
-        reversal_reading: { title: "Reversal reading / القراءة بالعكس", questionNumbers: [1, 2, 3] },
-        verse_position: { title: "Position of the verse / موضع الآية", questionNumbers: [1, 2, 3] },
-        read_verse_no: { title: "Read verse number / قراءة رقم الآية", questionNumbers: [1, 2, 3] },
-        understanding: { title: "Understanding of the verse / فهم الآية", questionNumbers: [1, 2, 3] }
-      };
-    }
-  };
-
   // Function to render detailed scores
   const renderDetailedScores = (test: JuzTest) => {
     if (!test.section2_scores) return null;
 
-    const config = getQuestionConfig(test.test_hizb || false);
+    const mode = normalizeJuzTestMode(test.test_mode);
+    const isHizbTest = test.test_hizb || false;
+    const fallbackRange = getJuzTestPageRange(test.juz_number, isHizbTest, test.hizb_number ?? 1);
+    const pageFrom = test.page_from ?? fallbackRange.from;
+    const pageTo = test.page_to ?? fallbackRange.to;
+
+    if (mode === 'normal_memorization') {
+      const normalMeta = buildNormalModeMeta({
+        pageFrom,
+        pageTo,
+        isHizbTest,
+        existingMeta: test.section2_scores.normal_meta
+      });
+      const score = calculateNormalModeScore(isHizbTest, normalMeta.breakdown);
+      const count = getNormalQuestionCount(isHizbTest);
+
+      return (
+        <div className="mt-3 grid grid-cols-1 gap-2 text-xs">
+          {Array.from({ length: count }, (_, index) => index + 1).map((question) => {
+            const key = String(question);
+            const questionMap = normalMeta.question_map[key];
+            const breakdown = score.breakdown[key];
+            const timer = normalMeta.timer[key];
+
+            return (
+              <div key={key} className="bg-white/70 rounded p-2 border border-gray-200">
+                <div className="flex justify-between items-center">
+                  <span className="font-medium text-gray-700">
+                    Soalan {question} • {questionMap?.block_from}-{questionMap?.block_to}
+                  </span>
+                  <span className="font-semibold text-indigo-700">{breakdown?.question_total ?? 0}/5</span>
+                </div>
+                <div className="text-gray-600">
+                  Hafazan: {breakdown?.hafazan ?? 0} • Quality: {breakdown?.quality ?? 0} • Page:{' '}
+                  {questionMap?.selected_page ?? '-'}
+                </div>
+                <div className="text-gray-500">
+                  Elapsed {timer?.elapsed_seconds ?? 0}s • Ext {timer?.extensions ?? 0} • Pause{' '}
+                  {timer?.pause_count ?? 0}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    const config = getPmmmQuestionConfig(isHizbTest);
     
     return (
       <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
         {Object.entries(config).map(([categoryKey, categoryConfig]) => {
-          const categoryScores = test.section2_scores?.[categoryKey as keyof typeof test.section2_scores] || {};
+          const categoryScores = (test.section2_scores?.[
+            categoryKey as keyof typeof test.section2_scores
+          ] || {}) as Record<string, number>;
           const totalScore = Object.values(categoryScores).reduce((sum, score) => sum + (score || 0), 0);
           const maxScore = categoryConfig.questionNumbers.length * 5;
           const percentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
@@ -308,6 +344,11 @@ export default function JuzTestHistoryModalViewOnly({
                         <h3 className="font-bold text-lg text-gray-900">
                           {formatJuzTestLabel(test)}
                         </h3>
+                        <div className="mt-1">
+                          <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                            {getJuzTestModeLabel(test.test_mode)}
+                          </span>
+                        </div>
                         <div className="flex flex-col gap-1">
                           {formatJuzTestPageRange(test) && (
                             <p className="text-xs text-gray-500">

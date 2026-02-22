@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
 import { ensureUserProfile } from '@/lib/tenantProvisioning';
 import { requireAdminPermission } from '@/lib/adminPermissions';
+import {
+  enforceTenantPlanLimit,
+  TenantPlanLimitExceededError,
+} from "@/lib/planLimits";
 
 // GET - Fetch users by role (admin only)
 export async function GET(request: NextRequest) {
@@ -79,6 +83,24 @@ export async function PUT(request: NextRequest) {
         throw new Error(`User profile missing tenant_id for userId=${id}`);
       }
 
+      const { data: currentUserRow, error: currentUserError } = await client
+        .from("users")
+        .select("role")
+        .eq("id", id)
+        .maybeSingle();
+      if (currentUserError) throw currentUserError;
+
+      const wasStaff =
+        currentUserRow?.role === "admin" || currentUserRow?.role === "teacher";
+      const willBeStaff = role === "admin" || role === "teacher";
+      if (!wasStaff && willBeStaff) {
+        await enforceTenantPlanLimit({
+          client,
+          tenantId: profile.tenant_id,
+          addStaff: 1,
+        });
+      }
+
       const { data, error } = await client
         .from('users')
         .update({ role })
@@ -106,6 +128,9 @@ export async function PUT(request: NextRequest) {
     
     return NextResponse.json(data);
   } catch (error: unknown) {
+    if (error instanceof TenantPlanLimitExceededError) {
+      return NextResponse.json(error.payload, { status: error.status });
+    }
     console.error('Admin user update error:', error);
     const message = error instanceof Error ? error.message : 'Failed to update user';
     const status = message.includes('Admin access required') ? 403 : 500;

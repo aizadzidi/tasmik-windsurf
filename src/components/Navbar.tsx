@@ -17,6 +17,7 @@ export default function Navbar({ programScope }: NavbarProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { isAdmin: isAdminUser, permissions } = useAdminPermissions();
   const isOnlineOnly = programScope === "online";
+  const hasOnlineScope = programScope === "online" || programScope === "mixed";
 
   // Determine the user role and dashboard info based on current path
   const isParent = pathname.startsWith('/parent');
@@ -45,6 +46,19 @@ export default function Navbar({ programScope }: NavbarProps) {
               </svg>
             )
           },
+          ...(hasOnlineScope
+            ? [
+                {
+                  href: "/parent/online",
+                  label: "Online Explore",
+                  icon: (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h18M6 9h12M5 13h14M7 17h10" />
+                    </svg>
+                  )
+                },
+              ]
+            : []),
           ...(!isOnlineOnly
             ? [
                 {
@@ -84,6 +98,21 @@ export default function Navbar({ programScope }: NavbarProps) {
               </svg>
             )
           },
+          ...(hasOnlineScope
+            ? [
+                {
+                  href: "/teacher/online-attendance",
+                  label: "Online Attendance",
+                  icon: (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" strokeWidth={2} />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 2v4M8 2v4M3 10h18" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 16l2 2 4-5" />
+                    </svg>
+                  )
+                },
+              ]
+            : []),
           ...(!isOnlineOnly
             ? [
                 {

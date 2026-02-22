@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { adminOperationSimple } from '@/lib/supabaseServiceClientSimple';
 import { resolveTenantIdFromRequest } from '@/lib/tenantProvisioning';
 import { requireAdminPermission } from '@/lib/adminPermissions';
+import {
+  enforceTenantPlanLimit,
+  TenantPlanLimitExceededError,
+} from "@/lib/planLimits";
 
 const adminErrorDetails = (error: unknown, fallback: string) => {
   const message = error instanceof Error ? error.message : fallback;
@@ -139,6 +143,12 @@ export async function POST(request: NextRequest) {
     const resolvedCrmStage = crm_stage || resolveDefaultStage(resolvedRecordType);
 
     const data = await adminOperationSimple(async (client) => {
+      await enforceTenantPlanLimit({
+        client,
+        tenantId,
+        addStudents: 1,
+      });
+
       const today = new Date().toISOString().slice(0, 10);
       const resolvedAdmissionDate =
         toNullableText(admission_date) ?? (resolvedRecordType === 'student' ? today : null);
@@ -191,6 +201,9 @@ export async function POST(request: NextRequest) {
     
     return NextResponse.json(data);
   } catch (error: unknown) {
+    if (error instanceof TenantPlanLimitExceededError) {
+      return NextResponse.json(error.payload, { status: error.status });
+    }
     console.error('Admin student creation error:', error);
     const { message, status } = adminErrorDetails(error, 'Failed to create student');
     return NextResponse.json({ error: message }, { status });

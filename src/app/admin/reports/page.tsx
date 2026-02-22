@@ -26,6 +26,7 @@ import {
 import { formatMurajaahDisplay } from "@/lib/quranMapping";
 import { formatJuzTestLabel, formatJuzTestPageRange } from "@/lib/juzTestUtils";
 import { authFetch } from "@/lib/authFetch";
+import { getJuzTestModeLabel } from "@/lib/juzTestScoring";
 
 type ViewMode = 'tasmik' | 'murajaah' | 'juz_tests';
 type LatestReport = {
@@ -45,6 +46,7 @@ type JuzTestEntry = {
   juz_number: number;
   test_date: string;
   total_percentage?: number;
+  test_mode?: string | null;
   test_hizb?: boolean;
   hizb_number?: number | null;
   page_from?: number | null;
@@ -493,7 +495,7 @@ export default function AdminReportsPage() {
                         const extended = student as StudentProgressData & {
                           highest_memorized_juz?: number;
                           highest_completed_juz?: number;
-                          latest_test_result?: { juz_number: number; test_date: string; passed?: boolean; total_percentage?: number; examiner_name?: string; test_hizb?: boolean; hizb_number?: number | null; page_from?: number | null; page_to?: number | null } | null;
+                          latest_test_result?: { juz_number: number; test_date: string; passed?: boolean; total_percentage?: number; examiner_name?: string; test_mode?: string | null; test_hizb?: boolean; hizb_number?: number | null; page_from?: number | null; page_to?: number | null } | null;
                           juz_test_gap?: number;
                         };
                         const rowClass = viewMode === 'juz_tests'
@@ -551,6 +553,11 @@ export default function AdminReportsPage() {
                                   <div>
                                     <div className="font-medium">
                                       {formatJuzTestLabel(extended.latest_test_result)}
+                                    </div>
+                                    <div className="mt-1">
+                                      <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-medium text-blue-700">
+                                        {getJuzTestModeLabel(extended.latest_test_result.test_mode)}
+                                      </span>
                                     </div>
                                     {formatJuzTestPageRange(extended.latest_test_result) && (
                                       <div className="text-xs text-gray-500">

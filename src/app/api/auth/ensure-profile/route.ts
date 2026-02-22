@@ -41,6 +41,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Missing profile" }, { status: 404 });
     }
 
+    if (profile.role === "school_admin") {
+      const { error: trialError } = await supabaseAdmin.rpc(
+        "start_tenant_trial_on_first_admin_login",
+        {
+          p_tenant_id: profile.tenant_id,
+          p_user_id: user.id,
+        }
+      );
+      if (trialError) {
+        console.warn("Ensure profile: trial start failed", trialError);
+      }
+    }
+
     return NextResponse.json({ ok: true, profile });
   } catch (error: unknown) {
     if (error instanceof Error) {
