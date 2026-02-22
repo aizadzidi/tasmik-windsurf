@@ -115,15 +115,23 @@ export default function SignupPage() {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [submittedDomain, setSubmittedDomain] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+  const [slugStatus, setSlugStatus] = useState<"idle" | "checking" | "available" | "unavailable">(
+    "idle"
+  );
+  const [slugStatusMessage, setSlugStatusMessage] = useState("");
   const formRef = useRef<HTMLDivElement | null>(null);
+  const baseDomain = (
+    process.env.NEXT_PUBLIC_TENANT_SUBDOMAIN_BASE_DOMAIN ?? "eclazz.com"
+  ).trim().toLowerCase() || "eclazz.com";
 
   const previewDomain = useMemo(() => {
     const slug = form.schoolSlug || "school-name";
-    return form.domainType === "custom"
-      ? form.customDomain || "school-domain.com"
-      : `${slug}.eclazz.com`;
-  }, [form.schoolSlug, form.customDomain, form.domainType]);
+    return `${slug}.${baseDomain}`;
+  }, [form.schoolSlug, baseDomain]);
 
   const pricingCopy = useMemo(() => {
     if (form.billingCycle === "monthly") {
@@ -154,6 +162,8 @@ export default function SignupPage() {
       if (!form.schoolSlug.trim()) return "School slug is required.";
       if (!form.country.trim()) return "Country is required.";
       if (!form.timezone.trim()) return "Timezone is required.";
+      if (slugStatus === "checking") return "Please wait for slug availability check.";
+      if (slugStatus === "unavailable") return "School slug is unavailable.";
     }
     if (currentStep === 1) {
       if (!form.adminName.trim()) return "Admin name is required.";
@@ -165,9 +175,6 @@ export default function SignupPage() {
     }
     if (currentStep === 2) {
       if (!form.billingEmail.trim()) return "Billing email is required.";
-      if (form.domainType === "custom" && !form.customDomain.trim()) {
-        return "Please enter your school domain.";
-      }
     }
     return "";
   }
@@ -187,14 +194,100 @@ export default function SignupPage() {
     setStep((prev) => Math.max(prev - 1, 0));
   }
 
-  function handleSubmit() {
+  async function checkSlugAvailability(slug: string) {
+    const normalized = buildSlug(slug);
+    if (!normalized) {
+      setSlugStatus("idle");
+      setSlugStatusMessage("");
+      return;
+    }
+
+    setSlugStatus("checking");
+    setSlugStatusMessage("Checking slug availability...");
+    try {
+      const response = await fetch(
+        `/api/public/tenant/slug-availability?slug=${encodeURIComponent(normalized)}`
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | { available?: boolean; error?: string }
+        | null;
+      if (!response.ok) {
+        setSlugStatus("unavailable");
+        setSlugStatusMessage(payload?.error || "Unable to verify slug right now.");
+        return;
+      }
+      if (payload?.available) {
+        setSlugStatus("available");
+        setSlugStatusMessage("Slug is available.");
+        return;
+      }
+      setSlugStatus("unavailable");
+      setSlugStatusMessage("Slug is already in use.");
+    } catch {
+      setSlugStatus("unavailable");
+      setSlugStatusMessage("Unable to verify slug right now.");
+    }
+  }
+
+  async function handleSubmit() {
     const message = validateStep(step);
     if (message) {
       setError(message);
       return;
     }
-    setSubmitted(true);
+    setSubmitting(true);
     setError("");
+    setSuccessMessage("");
+
+    try {
+      const response = await fetch("/api/public/tenant/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          schoolName: form.schoolName,
+          schoolSlug: form.schoolSlug,
+          country: form.country,
+          timezone: form.timezone,
+          studentCount: form.studentCount,
+          adminName: form.adminName,
+          adminEmail: form.adminEmail,
+          adminPhone: form.adminPhone,
+          adminPassword: form.adminPassword,
+          billingCycle: form.billingCycle,
+          plan: form.plan,
+          paymentProvider: "billplz",
+          billingEmail: form.billingEmail,
+          affiliateCode: form.affiliateCode,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            error?: string;
+            code?: string;
+            tenant?: { domain?: string };
+            request_id?: string;
+          }
+        | null;
+
+      if (!response.ok) {
+        const reference = payload?.request_id ? ` (Ref: ${payload.request_id})` : "";
+        setError((payload?.error || "Failed to submit onboarding request.") + reference);
+        return;
+      }
+
+      const code = payload?.code || "TENANT_REGISTERED";
+      setSubmittedDomain(payload?.tenant?.domain || previewDomain);
+      setSuccessMessage(
+        code === "TENANT_ALREADY_REGISTERED"
+          ? "This signup request already exists. Continue to login on your tenant domain."
+          : "Tenant provisioned successfully. You can now login as school admin."
+      );
+      setSubmitted(true);
+    } catch {
+      setError("Unexpected error while submitting onboarding request.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   function handlePlanSelect(plan: FormState["plan"]) {
@@ -221,8 +314,8 @@ export default function SignupPage() {
               Launch your school in 5 minutes.
             </h1>
             <p className="max-w-lg text-base text-slate-600">
-              This is a demo flow that mirrors the production onboarding
-              experience. Data is not sent to the server yet.
+              Self-serve onboarding with automatic tenant provisioning.
+              Trial starts on first admin login.
             </p>
           </div>
 
@@ -426,13 +519,10 @@ export default function SignupPage() {
 
             {submitted ? (
               <div className="mt-8 space-y-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-6 text-emerald-900">
-                <h3 className="text-xl font-semibold">Request received!</h3>
-                <p className="text-sm">
-                  This is a demo only. We will connect to the backend to store
-                  tenant data later. Your domain will be:
-                </p>
+                <h3 className="text-xl font-semibold">Tenant ready</h3>
+                <p className="text-sm">{successMessage}</p>
                 <p className="rounded-xl bg-white px-4 py-2 font-semibold text-emerald-700">
-                  {previewDomain}
+                  {submittedDomain || previewDomain}
                 </p>
                 <Button
                   className="w-full"
@@ -440,6 +530,10 @@ export default function SignupPage() {
                     setSubmitted(false);
                     setStep(0);
                     setForm(DEFAULT_FORM);
+                    setSubmittedDomain("");
+                    setSuccessMessage("");
+                    setSlugStatus("idle");
+                    setSlugStatusMessage("");
                   }}
                 >
                   Start Over
@@ -466,15 +560,24 @@ export default function SignupPage() {
                     <Field
                       label="School slug"
                       htmlFor="schoolSlug"
-                      helper={`Temporary domain: ${previewDomain}`}
+                      helper={
+                        slugStatusMessage
+                          ? `Temporary domain: ${previewDomain} • ${slugStatusMessage}`
+                          : `Temporary domain: ${previewDomain}`
+                      }
                     >
                       <Input
                         id="schoolSlug"
                         placeholder="e.g., alkhayr"
                         value={form.schoolSlug}
-                        onChange={(event) =>
-                          update("schoolSlug", buildSlug(event.target.value))
-                        }
+                        onChange={(event) => {
+                          update("schoolSlug", buildSlug(event.target.value));
+                          setSlugStatus("idle");
+                          setSlugStatusMessage("");
+                        }}
+                        onBlur={() => {
+                          void checkSlugAvailability(form.schoolSlug);
+                        }}
                       />
                     </Field>
                     <div className="grid gap-4 md:grid-cols-2">
@@ -634,57 +737,25 @@ export default function SignupPage() {
                         id="paymentProvider"
                         className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-300"
                         value={form.paymentProvider}
-                        onChange={(event) => update("paymentProvider", event.target.value)}
+                        onChange={() => update("paymentProvider", "Billplz")}
+                        disabled
                       >
                         <option>Billplz</option>
-                        <option>Stripe</option>
-                        <option>Onpay</option>
-                        <option>Other</option>
                       </select>
                     </Field>
                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                       <p className="text-sm font-semibold text-slate-700">
-                        Domain options
+                        Domain
                       </p>
                       <div className="mt-3 flex flex-wrap gap-3">
                         <button
                           type="button"
-                          className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
-                            form.domainType === "subdomain"
-                              ? "bg-emerald-600 text-white"
-                              : "bg-white text-slate-600"
-                          }`}
+                          className="rounded-full px-4 py-2 text-sm font-semibold transition bg-emerald-600 text-white"
                           onClick={() => update("domainType", "subdomain")}
                         >
                           Eclazz subdomain
                         </button>
-                        <button
-                          type="button"
-                          className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
-                            form.domainType === "custom"
-                              ? "bg-emerald-600 text-white"
-                              : "bg-white text-slate-600"
-                          }`}
-                          onClick={() => update("domainType", "custom")}
-                        >
-                          Custom domain
-                        </button>
                       </div>
-                      {form.domainType === "custom" && (
-                        <Field label="School domain" htmlFor="customDomain">
-                          <Input
-                            id="customDomain"
-                            placeholder="your-school.com"
-                            value={form.customDomain}
-                            onChange={(event) =>
-                              update(
-                                "customDomain",
-                                event.target.value.toLowerCase()
-                              )
-                            }
-                          />
-                        </Field>
-                      )}
                       <p className="mt-3 text-sm text-slate-500">
                         Active domain: <span className="font-semibold">{previewDomain}</span>
                       </p>
@@ -747,8 +818,8 @@ export default function SignupPage() {
                       Next
                     </Button>
                   ) : (
-                    <Button type="button" onClick={handleSubmit}>
-                      Submit request
+                    <Button type="button" onClick={() => void handleSubmit()} disabled={submitting}>
+                      {submitting ? "Submitting..." : "Submit request"}
                     </Button>
                   )}
                 </div>

@@ -26,6 +26,7 @@ import {
 import { formatMurajaahDisplay } from "@/lib/quranMapping";
 import { formatJuzTestLabel, formatJuzTestPageRange } from "@/lib/juzTestUtils";
 import { authFetch } from "@/lib/authFetch";
+import { getJuzTestModeLabel } from "@/lib/juzTestScoring";
 
 type ViewMode = 'tasmik' | 'murajaah' | 'juz_tests';
 type LatestReport = {
@@ -45,6 +46,7 @@ type JuzTestEntry = {
   juz_number: number;
   test_date: string;
   total_percentage?: number;
+  test_mode?: string | null;
   test_hizb?: boolean;
   hizb_number?: number | null;
   page_from?: number | null;
@@ -303,17 +305,24 @@ export default function AdminReportsPage() {
     const ids = filteredStudents.map(s => s.id);
     if (ids.length === 0) { setActiveSchedules({}); return; }
     const run = async () => {
-      const params = new URLSearchParams({ student_ids: ids.join(',') });
-      const res = await fetch(`/api/juz-test-schedule?${params.toString()}`);
-      const raw = await res.json();
-      if (res.ok && raw?.activeByStudent) {
-        const activeByStudent = raw.activeByStudent as Record<string, { scheduled_date: string; slot_number: number }>;
-        const map: Record<string, { scheduled_date: string; slot_number: number }> = {};
-        Object.entries(activeByStudent).forEach(([k, v]) => {
-          map[k] = { scheduled_date: v.scheduled_date, slot_number: v.slot_number };
-        });
-        setActiveSchedules(map);
-      } else {
+      try {
+        const params = new URLSearchParams({ student_ids: ids.join(',') });
+        const res = await fetch(`/api/juz-test-schedule?${params.toString()}`);
+        const text = await res.text();
+        const raw = text ? JSON.parse(text) : null;
+
+        if (res.ok && raw?.activeByStudent) {
+          const activeByStudent = raw.activeByStudent as Record<string, { scheduled_date: string; slot_number: number }>;
+          const map: Record<string, { scheduled_date: string; slot_number: number }> = {};
+          Object.entries(activeByStudent).forEach(([k, v]) => {
+            map[k] = { scheduled_date: v.scheduled_date, slot_number: v.slot_number };
+          });
+          setActiveSchedules(map);
+        } else {
+          setActiveSchedules({});
+        }
+      } catch (scheduleError) {
+        console.warn('Failed to load active juz-test schedules:', scheduleError);
         setActiveSchedules({});
       }
     };
@@ -493,7 +502,7 @@ export default function AdminReportsPage() {
                         const extended = student as StudentProgressData & {
                           highest_memorized_juz?: number;
                           highest_completed_juz?: number;
-                          latest_test_result?: { juz_number: number; test_date: string; passed?: boolean; total_percentage?: number; examiner_name?: string; test_hizb?: boolean; hizb_number?: number | null; page_from?: number | null; page_to?: number | null } | null;
+                          latest_test_result?: { juz_number: number; test_date: string; passed?: boolean; total_percentage?: number; examiner_name?: string; test_mode?: string | null; test_hizb?: boolean; hizb_number?: number | null; page_from?: number | null; page_to?: number | null } | null;
                           juz_test_gap?: number;
                         };
                         const rowClass = viewMode === 'juz_tests'
@@ -551,6 +560,11 @@ export default function AdminReportsPage() {
                                   <div>
                                     <div className="font-medium">
                                       {formatJuzTestLabel(extended.latest_test_result)}
+                                    </div>
+                                    <div className="mt-1">
+                                      <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-medium text-blue-700">
+                                        {getJuzTestModeLabel(extended.latest_test_result.test_mode)}
+                                      </span>
                                     </div>
                                     {formatJuzTestPageRange(extended.latest_test_result) && (
                                       <div className="text-xs text-gray-500">

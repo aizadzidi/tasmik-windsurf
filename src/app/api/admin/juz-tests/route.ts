@@ -3,11 +3,13 @@ import { createClient } from "@supabase/supabase-js";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
 import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
 import { requireAdminPermission } from "@/lib/adminPermissions";
+import { normalizeJuzTestMode } from "@/lib/juzTestScoring";
 
 type JuzTestPayload = {
   id?: string;
   student_id?: string;
   juz_number?: number;
+  test_mode?: unknown;
   [key: string]: unknown;
 };
 
@@ -107,6 +109,7 @@ const resolveStudentIdForTest = async (tenantId: string, testId: string) =>
 export async function POST(request: NextRequest) {
   try {
     const testData = (await request.json()) as JuzTestPayload;
+    const testMode = normalizeJuzTestMode(testData.test_mode);
     const adminGuard = await requireAdminPermission(request, ADMIN_JUZ_PERMISSIONS);
     if (!adminGuard.ok && adminGuard.response.status !== 403) {
       return adminGuard.response;
@@ -138,7 +141,7 @@ export async function POST(request: NextRequest) {
 
     // Insert the juz test record using service-role client (bypasses RLS)
     const insertedRecord = await adminOperationSimple(async (client) => {
-      const payload = { ...testData, tenant_id: tenantId };
+      const payload = { ...testData, test_mode: testMode, tenant_id: tenantId };
       const { data, error } = await client
         .from("juz_tests")
         .insert([payload])
@@ -162,6 +165,7 @@ export async function POST(request: NextRequest) {
           "should_repeat",
           "remarks",
           "examiner_name",
+          "test_mode",
         ] as const;
 
         type PreservedField = (typeof fieldsToPreserve)[number];
@@ -253,7 +257,11 @@ export async function PUT(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const testId = searchParams.get("id");
-    const updateData = await request.json();
+    const updateData = (await request.json()) as Record<string, unknown>;
+    const normalizedUpdateData = { ...updateData };
+    if ("test_mode" in normalizedUpdateData) {
+      normalizedUpdateData.test_mode = normalizeJuzTestMode(normalizedUpdateData.test_mode);
+    }
     const adminGuard = await requireAdminPermission(request, ADMIN_JUZ_PERMISSIONS);
     if (!adminGuard.ok && adminGuard.response.status !== 403) {
       return adminGuard.response;
@@ -290,7 +298,7 @@ export async function PUT(request: NextRequest) {
     const data = await adminOperationSimple(async (client) => {
       const { data, error } = await client
         .from("juz_tests")
-        .update(updateData)
+        .update(normalizedUpdateData)
         .eq("id", testId)
         .eq("tenant_id", tenantId)
         .select();
