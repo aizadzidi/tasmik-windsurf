@@ -7,7 +7,10 @@ import {
   getMurajaahModeLabel,
   getMurajaahTestAssessmentFromReport
 } from "@/lib/murajaahMode";
-import OldMurajaahTestResultsPanel from "@/components/OldMurajaahTestResultsPanel";
+import {
+  canExportOldMurajaahTestPdf,
+  downloadOldMurajaahTestSnapshotPdf
+} from "@/lib/oldMurajaahPdf";
 import type { ViewMode } from "@/types/teacher";
 
 interface Report {
@@ -51,8 +54,35 @@ export default function FullRecordsModal({
   const [deletingReport, setDeletingReport] = useState<Report | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [movingReportId, setMovingReportId] = useState<string | null>(null);
+  const [downloadingReportId, setDownloadingReportId] = useState<string | null>(null);
   const [murajaahTab, setMurajaahTab] = useState<'new' | 'old'>('new');
+  const [teacherName, setTeacherName] = useState<string>("");
   const murajaahTabTouchedRef = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    const fetchTeacherName = async () => {
+      if (!userId) return;
+      try {
+        const { data, error } = await supabase
+          .from("users")
+          .select("name")
+          .eq("id", userId)
+          .single();
+        if (error) return;
+        if (active) {
+          setTeacherName((data?.name ?? "").trim());
+        }
+      } catch {
+        // Keep teacher name optional in PDF when lookup fails.
+      }
+    };
+
+    fetchTeacherName();
+    return () => {
+      active = false;
+    };
+  }, [userId]);
 
   const fetchStudentReports = useCallback(async () => {
     // Only show loading spinner on initial load, not on view mode changes
@@ -229,6 +259,23 @@ export default function FullRecordsModal({
     }
   };
 
+  const handleDownloadOldTestPdf = async (report: Report) => {
+    if (!canExportOldMurajaahTestPdf(report)) return;
+    try {
+      setDownloadingReportId(report.id);
+      await downloadOldMurajaahTestSnapshotPdf(
+        report,
+        student.name,
+        reports,
+        teacherName
+      );
+    } catch (err) {
+      console.error("Failed to download old murajaah test snapshot:", err);
+    } finally {
+      setDownloadingReportId(null);
+    }
+  };
+
   return (
     <>
       <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50 p-4">
@@ -277,14 +324,6 @@ export default function FullRecordsModal({
               </div>
               <div className="text-xs text-gray-500">Separate old vs new murajaah records</div>
             </div>
-          )}
-
-          {viewMode === "murajaah" && murajaahTab === "old" && (
-            <OldMurajaahTestResultsPanel
-              studentName={student.name}
-              reports={oldMurajaahReports}
-              className="mb-4"
-            />
           )}
 
           <div className="overflow-y-auto overscroll-contain max-h-[calc(90vh-120px)]">
@@ -347,6 +386,8 @@ export default function FullRecordsModal({
                         const testResultLabel = hasTestScore
                           ? `${testAssessment.total_percentage}% ${testAssessment.passed ? "PASS" : "FAIL"}`
                           : "-";
+                        const canDownloadOldTestPdf = canExportOldMurajaahTestPdf(report);
+                        const isDownloadingPdf = downloadingReportId === report.id;
                         return (
                         <tr key={report.id} className={`transition-colors hover:bg-gray-50 ${index % 2 === 0 ? 'bg-white' : 'bg-gray-25'}`}>
                           <td className="px-4 py-3 text-gray-700 border-b border-gray-100">
@@ -408,6 +449,21 @@ export default function FullRecordsModal({
                           </td>
                           <td className="px-4 py-3 text-center border-b border-gray-100">
                             <div className="flex items-center justify-center gap-2">
+                              {canDownloadOldTestPdf && (
+                                <button
+                                  onClick={() => handleDownloadOldTestPdf(report)}
+                                  className={`inline-flex items-center justify-center w-8 h-8 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors ${
+                                    isDownloadingPdf ? "opacity-60 cursor-not-allowed" : ""
+                                  }`}
+                                  title="Download Old Test PDF"
+                                  aria-label="Download Old Test PDF"
+                                  disabled={isDownloadingPdf}
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 3v12m0 0l-4-4m4 4l4-4M5 20h14" />
+                                  </svg>
+                                </button>
+                              )}
                               {moveConfig && (
                                 <button
                                   onClick={() => handleMoveMurajaah(report, moveConfig.nextType)}
