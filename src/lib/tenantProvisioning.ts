@@ -11,6 +11,23 @@ type UserRow = {
   role: string | null;
 };
 
+type UserProfileRow = {
+  tenant_id: string | null;
+  role: string | null;
+};
+
+export class TenantReassignmentError extends Error {
+  existingTenantId: string;
+  resolvedTenantId: string;
+
+  constructor(params: { existingTenantId: string; resolvedTenantId: string }) {
+    super("Cross-tenant profile reassignment attempt was blocked.");
+    this.name = "TenantReassignmentError";
+    this.existingTenantId = params.existingTenantId;
+    this.resolvedTenantId = params.resolvedTenantId;
+  }
+}
+
 export function normalizeHost(host: string | null) {
   return normalizeHostValue(host);
 }
@@ -55,6 +72,7 @@ export async function ensureUserProfile(params: {
   supabaseAdmin: SupabaseClient;
 }) {
   const { request, userId, supabaseAdmin } = params;
+  const requestHost = getRequestHost(request);
   const tenantId = await resolveTenantIdFromRequest(request, supabaseAdmin);
   if (!tenantId) return null;
 
@@ -70,6 +88,28 @@ export async function ensureUserProfile(params: {
   if (!userRow) {
     console.error("User row missing for profile provisioning", { userId });
     throw new Error("User profile not found");
+  }
+
+  const { data: existingProfile, error: existingProfileError } = await supabaseAdmin
+    .from("user_profiles")
+    .select("tenant_id, role")
+    .eq("user_id", userId)
+    .maybeSingle<UserProfileRow>();
+  if (existingProfileError) {
+    console.error("Failed to load existing user profile for provisioning", existingProfileError);
+    throw new Error("Failed to validate existing profile");
+  }
+  if (existingProfile?.tenant_id && existingProfile.tenant_id !== tenantId) {
+    console.error("Security event: blocked cross-tenant profile reassignment", {
+      userId,
+      requestHost,
+      existingTenantId: existingProfile.tenant_id,
+      resolvedTenantId: tenantId,
+    });
+    throw new TenantReassignmentError({
+      existingTenantId: existingProfile.tenant_id,
+      resolvedTenantId: tenantId,
+    });
   }
 
   const { data, error } = await supabaseAdmin

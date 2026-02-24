@@ -4,13 +4,72 @@ export const LEGACY_SCHOOL_HOST = "class.akademialkhayr.com";
 const DEFAULT_TENANT_BASE_DOMAIN = "eclazz.com";
 
 function stripPort(value: string): string {
-  return value.split(":")[0]?.trim().toLowerCase() ?? "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("[")) {
+    const closing = trimmed.indexOf("]");
+    if (closing > 0) {
+      return trimmed.slice(1, closing).trim().toLowerCase();
+    }
+  }
+  const firstColon = trimmed.indexOf(":");
+  const lastColon = trimmed.lastIndexOf(":");
+  if (firstColon > -1 && firstColon === lastColon) {
+    return trimmed.slice(0, firstColon).trim().toLowerCase();
+  }
+  return trimmed.toLowerCase();
 }
 
 export function normalizeHost(host: string | null | undefined): string | null {
   if (!host) return null;
-  const normalized = stripPort(host);
+  const normalized = stripPort(host.split(",")[0] ?? "");
   return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeFirstHeaderValue(value: string | null): string | null {
+  return normalizeHost(value?.split(",")[0] ?? null);
+}
+
+function sanitizeIp(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const first = value.split(",")[0]?.trim();
+  if (!first) return null;
+  const withoutPort = first.replace(/^\[?([A-Fa-f0-9:.]+)\]?(:\d+)?$/, "$1");
+  if (!/^[A-Fa-f0-9:.]+$/.test(withoutPort)) return null;
+  if (withoutPort.length > 64) return null;
+  return withoutPort;
+}
+
+function parseTrustedProxyIps(): Set<string> {
+  const trusted = new Set<string>();
+  const raw = process.env.HOST_TRUSTED_PROXY_IPS ?? process.env.TRUSTED_PROXY_IPS ?? "";
+  raw
+    .split(",")
+    .map((value) => sanitizeIp(value))
+    .filter((value): value is string => Boolean(value))
+    .forEach((value) => trusted.add(value));
+  return trusted;
+}
+
+function hasTrustedForwardedProxy(request: NextRequest | Request): boolean {
+  const chainRaw = request.headers.get("x-forwarded-for");
+  if (!chainRaw) return false;
+  const chain = chainRaw
+    .split(",")
+    .map((value) => sanitizeIp(value))
+    .filter((value): value is string => Boolean(value));
+  if (chain.length === 0) return false;
+  const lastHop = chain[chain.length - 1];
+  if (!lastHop) return false;
+  return parseTrustedProxyIps().has(lastHop);
+}
+
+function canTrustForwardedHost(request: NextRequest | Request): boolean {
+  if ((process.env.TRUST_X_FORWARDED_HOST ?? "").toLowerCase() === "true") return true;
+  if (request.headers.get("x-vercel-id")) return true;
+  if (request.headers.get("cf-ray")) return true;
+  if (request.headers.get("fly-region")) return true;
+  return hasTrustedForwardedProxy(request);
 }
 
 function parseHosts(rawValue: string | null | undefined): Set<string> {
@@ -36,13 +95,19 @@ export function getMarketingHosts(): Set<string> {
 }
 
 export function getRequestHost(request: NextRequest | Request): string | null {
-  const forwardedHost = normalizeHost(request.headers.get("x-forwarded-host"));
-  if (forwardedHost) return forwardedHost;
+  if (canTrustForwardedHost(request)) {
+    const forwardedHost = normalizeFirstHeaderValue(request.headers.get("x-forwarded-host"));
+    if (forwardedHost) return forwardedHost;
+  }
 
-  const hostHeader = normalizeHost(request.headers.get("host"));
+  const hostHeader = normalizeFirstHeaderValue(request.headers.get("host"));
   if (hostHeader) return hostHeader;
 
-  return normalizeHost(new URL(request.url).hostname);
+  try {
+    return normalizeHost(new URL(request.url).hostname);
+  } catch {
+    return null;
+  }
 }
 
 export function isLegacySchoolHost(host: string | null): boolean {
@@ -75,4 +140,3 @@ export function isPublicSaasRegistrationHost(host: string | null): boolean {
   if (!host) return false;
   return isMarketingHost(host);
 }
-

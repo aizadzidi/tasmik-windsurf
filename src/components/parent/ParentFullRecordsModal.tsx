@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { formatGradeLabel, summarizeReportsByWeek } from "@/lib/parentReportUtils";
 import { formatJuzTestLabel, formatJuzTestPageRange } from "@/lib/juzTestUtils";
 import type { Report, ViewMode } from "@/types/teacher";
+import OldMurajaahTestResultsPanel from "@/components/OldMurajaahTestResultsPanel";
 import {
   type NormalModeMeta,
   buildNormalModeMeta,
@@ -346,6 +347,16 @@ export default function ParentFullRecordsModal({
               </div>
             </div>
           )}
+
+          {viewMode === "murajaah" && murajaahTab === "old" && !loading && (
+            <div className="px-6 pt-4">
+              <OldMurajaahTestResultsPanel
+                studentName={student.name}
+                reports={oldMurajaahReports}
+              />
+            </div>
+          )}
+
           {loading ? (
             <div className="p-6">
               <div className="animate-pulse space-y-4">

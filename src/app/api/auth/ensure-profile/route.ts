@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { ensureUserProfile } from "@/lib/tenantProvisioning";
+import { ensureUserProfile, TenantReassignmentError } from "@/lib/tenantProvisioning";
 
 function getRequiredEnv(name: string) {
   const value = process.env[name];
@@ -56,6 +56,12 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ ok: true, profile });
   } catch (error: unknown) {
+    if (error instanceof TenantReassignmentError) {
+      return NextResponse.json(
+        { error: "User profile is already assigned to a different tenant." },
+        { status: 409 }
+      );
+    }
     if (error instanceof Error) {
       console.error("Ensure profile failed", error.message, error.stack);
     } else {

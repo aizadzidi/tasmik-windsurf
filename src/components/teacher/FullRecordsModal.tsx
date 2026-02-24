@@ -7,6 +7,7 @@ import {
   getMurajaahModeLabel,
   getMurajaahTestAssessmentFromReport
 } from "@/lib/murajaahMode";
+import OldMurajaahTestResultsPanel from "@/components/OldMurajaahTestResultsPanel";
 import type { ViewMode } from "@/types/teacher";
 
 interface Report {
@@ -276,6 +277,14 @@ export default function FullRecordsModal({
               </div>
               <div className="text-xs text-gray-500">Separate old vs new murajaah records</div>
             </div>
+          )}
+
+          {viewMode === "murajaah" && murajaahTab === "old" && (
+            <OldMurajaahTestResultsPanel
+              studentName={student.name}
+              reports={oldMurajaahReports}
+              className="mb-4"
+            />
           )}
 
           <div className="overflow-y-auto overscroll-contain max-h-[calc(90vh-120px)]">

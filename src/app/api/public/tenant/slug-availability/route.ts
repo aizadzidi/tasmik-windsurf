@@ -5,6 +5,7 @@ import { getSupabaseAdminClient } from "@/lib/supabaseAdminClient";
 import {
   assertPublicRegistrationHost,
   hashForRateLimit,
+  isReservedTenantSlug,
   isValidSlug,
   jsonError,
   normalizeSlug,
@@ -29,6 +30,13 @@ export async function GET(request: NextRequest) {
       error: "slug must be 3-63 chars, lowercase letters, numbers, and hyphens only.",
       code: "VALIDATION_ERROR",
       status: 400,
+    });
+  }
+  if (isReservedTenantSlug(slug)) {
+    return jsonError(requestId, {
+      error: "slug is reserved and unavailable.",
+      code: "SLUG_RESERVED",
+      status: 409,
     });
   }
 
@@ -74,4 +82,3 @@ export async function GET(request: NextRequest) {
     available,
   });
 }
-

@@ -7,6 +7,7 @@ import {
   buildIdempotencyKey,
   enforcePublicRateLimit,
   hashForRateLimit,
+  isReservedTenantSlug,
   isValidEmail,
   isValidPassword,
   isValidSlug,
@@ -14,6 +15,10 @@ import {
   normalizeEmail,
   normalizeSlug,
 } from "@/lib/publicApi";
+import {
+  resolveTenantPlanCode,
+  TENANT_PLAN_CATALOG,
+} from "@/lib/tenantPlans";
 
 type TenantRegisterBody = {
   schoolName?: unknown;
@@ -32,11 +37,32 @@ type TenantRegisterBody = {
   paymentProvider?: unknown;
 };
 
+const MAX_STUDENT_ESTIMATE = 200000;
+const AFFILIATE_CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
 function asOptionalText(value: unknown, maxLength: number): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
   return trimmed.slice(0, maxLength);
+}
+
+function parseStudentEstimate(value: unknown): { value: number | null; error: string | null } {
+  if (value === null || value === undefined || value === "") {
+    return { value: null, error: null };
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return { value: null, error: "studentCount must be a valid number." };
+  }
+  const normalized = Math.trunc(parsed);
+  if (normalized < 0 || normalized > MAX_STUDENT_ESTIMATE) {
+    return {
+      value: null,
+      error: `studentCount must be between 0 and ${MAX_STUDENT_ESTIMATE}.`,
+    };
+  }
+  return { value: normalized, error: null };
 }
 
 function pickUuidScalar(data: unknown): string | null {
@@ -61,6 +87,28 @@ function isAuthUserAlreadyExistsError(message: string): boolean {
   return (
     normalized.includes("already") &&
     (normalized.includes("registered") || normalized.includes("exists"))
+  );
+}
+
+function isSchemaOutdatedError(params: {
+  code?: string | null;
+  message?: string | null;
+  details?: string | null;
+}): boolean {
+  const code = (params.code ?? "").toUpperCase();
+  if (code === "42P01" || code === "42703" || code === "42883" || code === "42702") return true;
+
+  const haystack = `${params.message ?? ""} ${params.details ?? ""}`.toLowerCase();
+  return (
+    haystack.includes('column reference "tenant_id" is ambiguous') ||
+    (haystack.includes("does not exist") &&
+      (haystack.includes("tenant_plan_catalog") ||
+        haystack.includes("tenant_signup_requests") ||
+        haystack.includes("bootstrap_tenant_self_serve") ||
+        haystack.includes("check_tenant_plan_limit"))) ||
+    haystack.includes("undefined table") ||
+    haystack.includes("undefined column") ||
+    haystack.includes("undefined function")
   );
 }
 
@@ -109,17 +157,18 @@ export async function POST(request: NextRequest) {
   const adminPassword = typeof body.adminPassword === "string" ? body.adminPassword : "";
   const billingCycle = body.billingCycle === "annual" ? "annual" : "monthly";
   const paymentProvider = asOptionalText(body.paymentProvider, 32)?.toLowerCase() ?? "billplz";
-  const plan = asOptionalText(body.plan, 32) ?? "enterprise";
+  const plan = resolveTenantPlanCode(body.plan);
   const country = asOptionalText(body.country, 80);
   const timezone = asOptionalText(body.timezone, 80);
   const adminPhone = asOptionalText(body.adminPhone, 32);
-  const billingEmailRaw = asOptionalText(body.billingEmail, 254);
-  const billingEmail = billingEmailRaw ? normalizeEmail(billingEmailRaw) : null;
-  const affiliateCode = asOptionalText(body.affiliateCode, 64);
-  const parsedStudentCount = Number(body.studentCount);
-  const studentCount = Number.isFinite(parsedStudentCount)
-    ? Math.max(0, Math.trunc(parsedStudentCount))
-    : null;
+  const billingEmailInput = typeof body.billingEmail === "string" ? body.billingEmail.trim() : "";
+  const billingEmail = billingEmailInput ? normalizeEmail(billingEmailInput) : null;
+  const affiliateCodeInput =
+    typeof body.affiliateCode === "string" ? body.affiliateCode.trim() : "";
+  const affiliateCode = affiliateCodeInput ? affiliateCodeInput : null;
+  const studentEstimate = parseStudentEstimate(body.studentCount);
+  const studentCount = studentEstimate.value;
+  const userAgent = asOptionalText(request.headers.get("user-agent"), 512);
 
   if (!schoolName) {
     return jsonError(requestId, {
@@ -132,6 +181,13 @@ export async function POST(request: NextRequest) {
     return jsonError(requestId, {
       error: "schoolSlug must be 3-63 chars, lowercase letters, numbers, and hyphens only.",
       code: "VALIDATION_ERROR",
+      status: 400,
+    });
+  }
+  if (isReservedTenantSlug(schoolSlug)) {
+    return jsonError(requestId, {
+      error: "schoolSlug is reserved and cannot be used.",
+      code: "SLUG_RESERVED",
       status: 400,
     });
   }
@@ -156,9 +212,37 @@ export async function POST(request: NextRequest) {
       status: 400,
     });
   }
+  if (!plan) {
+    return jsonError(requestId, {
+      error: "plan is invalid. Allowed values: starter, growth, enterprise.",
+      code: "VALIDATION_ERROR",
+      status: 400,
+    });
+  }
+  if (billingEmailInput.length > 254) {
+    return jsonError(requestId, {
+      error: "billingEmail must be at most 254 characters.",
+      code: "VALIDATION_ERROR",
+      status: 400,
+    });
+  }
   if (billingEmail && !isValidEmail(billingEmail)) {
     return jsonError(requestId, {
       error: "billingEmail is invalid.",
+      code: "VALIDATION_ERROR",
+      status: 400,
+    });
+  }
+  if (affiliateCode && !AFFILIATE_CODE_PATTERN.test(affiliateCode)) {
+    return jsonError(requestId, {
+      error: "affiliateCode must be 1-64 chars and use letters, numbers, '_' or '-'.",
+      code: "VALIDATION_ERROR",
+      status: 400,
+    });
+  }
+  if (studentEstimate.error) {
+    return jsonError(requestId, {
+      error: studentEstimate.error,
       code: "VALIDATION_ERROR",
       status: 400,
     });
@@ -259,8 +343,48 @@ export async function POST(request: NextRequest) {
     );
 
     if (bootstrapError) {
+      console.error("tenant/register bootstrap rpc failed", {
+        requestId,
+        code: bootstrapError.code,
+        message: bootstrapError.message,
+        details: bootstrapError.details,
+        hint: bootstrapError.hint,
+      });
+      if (
+        isSchemaOutdatedError({
+          code: bootstrapError.code,
+          message: bootstrapError.message,
+          details: bootstrapError.details,
+        })
+      ) {
+        return jsonError(requestId, {
+          error:
+            "Registration backend schema is outdated. Apply the latest tenant registration migrations.",
+          code: "REGISTRATION_SCHEMA_OUTDATED",
+          status: 503,
+        });
+      }
       const normalized = (bootstrapError.message ?? "").toLowerCase();
-      if (normalized.includes("domain already assigned") || normalized.includes("duplicate")) {
+      if (normalized.includes("reserved tenant slug")) {
+        return jsonError(requestId, {
+          error: "This school slug is reserved.",
+          code: "SLUG_RESERVED",
+          status: 400,
+        });
+      }
+      if (normalized.includes("invalid plan code")) {
+        return jsonError(requestId, {
+          error: "The selected plan is invalid.",
+          code: "INVALID_PLAN",
+          status: 400,
+        });
+      }
+      if (
+        normalized.includes("tenant slug already assigned") ||
+        normalized.includes("domain already assigned") ||
+        normalized.includes("idempotency key replay mismatch") ||
+        normalized.includes("duplicate")
+      ) {
         return jsonError(requestId, {
           error: "This school slug is unavailable.",
           code: "SLUG_UNAVAILABLE",
@@ -383,12 +507,34 @@ export async function POST(request: NextRequest) {
       .from("tenant_signup_requests")
       .update({
         admin_user_id: adminUserId,
+        billing_email_normalized: billingEmail,
+        affiliate_code: affiliateCode,
+        estimated_students: studentCount,
+        request_host: host,
+        request_user_agent: userAgent,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", signupRequestId)
-      .is("admin_user_id", null);
+      .eq("id", signupRequestId);
     if (signupUpdateError) {
-      console.warn("tenant/register: failed to update signup admin_user_id", signupUpdateError);
+      if (
+        isSchemaOutdatedError({
+          code: signupUpdateError.code,
+          message: signupUpdateError.message,
+          details: signupUpdateError.details,
+        })
+      ) {
+        return jsonError(requestId, {
+          error:
+            "Registration backend schema is outdated. Apply the latest tenant registration migrations.",
+          code: "REGISTRATION_SCHEMA_OUTDATED",
+          status: 503,
+        });
+      }
+      return jsonError(requestId, {
+        error: "Unable to persist onboarding audit data.",
+        code: "TENANT_SIGNUP_AUDIT_UPDATE_FAILED",
+        status: 500,
+      });
     }
 
     const status = createdNew ? 201 : 200;
@@ -406,7 +552,7 @@ export async function POST(request: NextRequest) {
           status: "trial_pending",
           starts_at: null,
           ends_at: null,
-          days: 14,
+          days: TENANT_PLAN_CATALOG[plan].trialDays,
           starts_on: "first_admin_login",
         },
         subscription: {
@@ -434,4 +580,3 @@ export async function POST(request: NextRequest) {
     });
   }
 }
-

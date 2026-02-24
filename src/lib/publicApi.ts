@@ -19,6 +19,21 @@ export type PublicApiErrorBody = {
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])$/;
+const RESERVED_TENANT_SLUGS = new Set([
+  "www",
+  "app",
+  "api",
+  "admin",
+  "auth",
+  "billing",
+  "dashboard",
+  "help",
+  "support",
+  "status",
+  "staging",
+  "dev",
+  "test",
+]);
 
 export function jsonError(requestId: string, options: PublicApiErrorOptions) {
   const body: PublicApiErrorBody = {
@@ -57,6 +72,10 @@ export function isValidSlug(slug: string): boolean {
   return SLUG_PATTERN.test(slug);
 }
 
+export function isReservedTenantSlug(slug: string): boolean {
+  return RESERVED_TENANT_SLUGS.has(slug);
+}
+
 export function isValidPassword(password: string): boolean {
   return password.length >= 8 && password.length <= 128;
 }
@@ -87,4 +106,3 @@ export function buildIdempotencyKey(seed: string): string {
 export function assertPublicRegistrationHost(host: string | null) {
   return isPublicSaasRegistrationHost(host);
 }
-
