@@ -13,11 +13,13 @@ type CreateOnlineStudentBody = {
   assigned_teacher_id?: string | null;
   parent_name?: string | null;
   parent_contact_number?: string | null;
+  crm_stage?: string | null;
+  crm_status_reason?: string | null;
+  id?: string;
 };
 
 type EnrollmentRow = {
   student_id: string | null;
-  programs?: Array<{ type?: string | null; name?: string | null }> | null;
 };
 
 const adminErrorDetails = (error: unknown, fallback: string) => {
@@ -53,20 +55,30 @@ export async function GET(request: NextRequest) {
 
     const tenantId = await resolveTenantIdOrThrow(request);
     const payload = await adminOperationSimple(async (client) => {
+      const { data: programsData, error: programsError } = await client
+        .from("programs")
+        .select("id")
+        .eq("tenant_id", tenantId)
+        .in("type", ["online", "hybrid"]);
+      if (programsError) throw programsError;
+
+      const onlineProgramIds = (programsData ?? [])
+        .map((row) => row.id as string | null)
+        .filter((id): id is string => Boolean(id));
+
+      if (onlineProgramIds.length === 0) return [];
+
       const { data: enrollmentRows, error: enrollmentError } = await client
         .from("enrollments")
-        .select("student_id, status, programs(type, name)")
+        .select("student_id")
         .eq("tenant_id", tenantId)
+        .in("program_id", onlineProgramIds)
         .in("status", ["pending_payment", "active", "paused"]);
       if (enrollmentError) throw enrollmentError;
 
       const onlineStudentIds = Array.from(
         new Set(
           ((enrollmentRows ?? []) as EnrollmentRow[])
-            .filter((row) => {
-              const type = row.programs?.[0]?.type ?? null;
-              return type === "online" || type === "hybrid";
-            })
             .map((row) => row.student_id)
             .filter((id): id is string => Boolean(id))
         )
@@ -84,7 +96,7 @@ export async function GET(request: NextRequest) {
         .order("name", { ascending: true });
       if (studentError) throw studentError;
 
-      return students ?? [];
+      return (students ?? []).filter((student) => student.record_type !== "prospect");
     });
 
     return NextResponse.json(payload);
@@ -171,6 +183,88 @@ export async function POST(request: NextRequest) {
     }
     console.error("Admin online student creation error:", error);
     const { message, status } = adminErrorDetails(error, "Failed to create online student");
+    return NextResponse.json({ error: message }, { status });
+  }
+}
+
+export async function PUT(request: NextRequest) {
+  try {
+    const guard = await requireAdminPermission(request, ["admin:online", "admin:dashboard"]);
+    if (!guard.ok) return guard.response;
+
+    const body = (await request.json()) as CreateOnlineStudentBody;
+    const id = (body.id ?? "").trim();
+    const name = (body.name ?? "").trim();
+
+    if (!id) {
+      return NextResponse.json({ error: "id is required" }, { status: 400 });
+    }
+
+    if (!name) {
+      return NextResponse.json({ error: "name is required" }, { status: 400 });
+    }
+
+    const tenantId = await resolveTenantIdOrThrow(request);
+
+    const payload = await adminOperationSimple(async (client) => {
+      const { data: updated, error } = await client
+        .from("students")
+        .update({
+          name,
+          parent_id: toNullable(body.parent_id),
+          assigned_teacher_id: toNullable(body.assigned_teacher_id),
+          parent_name: toNullable(body.parent_name),
+          parent_contact_number: toNullable(body.parent_contact_number),
+          crm_stage: toNullable(body.crm_stage),
+          crm_status_reason: toNullable(body.crm_status_reason),
+        })
+        .eq("id", id)
+        .eq("tenant_id", tenantId)
+        .select(
+          "id, name, record_type, assigned_teacher_id, parent_name, parent_contact_number, crm_stage, crm_status_reason"
+        )
+        .single();
+
+      if (error) throw error;
+      return updated;
+    });
+
+    return NextResponse.json(payload);
+  } catch (error: unknown) {
+    console.error("Admin online student update error:", error);
+    const { message, status } = adminErrorDetails(error, "Failed to update online student");
+    return NextResponse.json({ error: message }, { status });
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const guard = await requireAdminPermission(request, ["admin:online", "admin:dashboard"]);
+    if (!guard.ok) return guard.response;
+
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get("id");
+
+    if (!id) {
+      return NextResponse.json({ error: "id is required" }, { status: 400 });
+    }
+
+    const tenantId = await resolveTenantIdOrThrow(request);
+
+    await adminOperationSimple(async (client) => {
+      const { error } = await client
+        .from("students")
+        .delete()
+        .eq("id", id)
+        .eq("tenant_id", tenantId);
+
+      if (error) throw error;
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error: unknown) {
+    console.error("Admin online student delete error:", error);
+    const { message, status } = adminErrorDetails(error, "Failed to delete online student");
     return NextResponse.json({ error: message }, { status });
   }
 }
