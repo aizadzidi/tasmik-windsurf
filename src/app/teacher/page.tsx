@@ -42,6 +42,11 @@ type ActiveSession = {
 
 type ActiveSessionMap = Record<string, ActiveSession>;
 
+type EnrollmentScopeRow = {
+  student_id: string | null;
+  programs?: { type?: string | null } | Array<{ type?: string | null }> | null;
+};
+
 type SmartSuggestion = {
   surah: string;
   juzuk: number;
@@ -71,6 +76,19 @@ const mapReportsWithStudentName = (rows: ReportRow[]): Report[] =>
     ...row,
     student_name: row.students?.name || "",
   }));
+
+const isMissingRelationError = (
+  error: { message?: string } | null | undefined,
+  table: string
+) => Boolean(error?.message?.includes(`relation \"public.${table}\" does not exist`));
+
+const getProgramType = (
+  programs: EnrollmentScopeRow["programs"]
+) => {
+  if (!programs) return null;
+  if (Array.isArray(programs)) return programs[0]?.type ?? null;
+  return programs.type ?? null;
+};
 
 function FetchActiveSchedules({ students, onData }: { students: string[]; onData: (map: ActiveSessionMap) => void }) {
   const studentParams = useMemo(() => {
@@ -163,6 +181,38 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
   }, []);
   const [juzTestHistoryStudent, setJuzTestHistoryStudent] = useState<Student | null>(null);
 
+  const fetchOnlineStudentIds = useCallback(async (studentIds: string[]) => {
+    if (studentIds.length === 0) return new Set<string>();
+
+    const { data, error } = await supabase
+      .from("enrollments")
+      .select("student_id, status, programs(type)")
+      .in("status", ["active", "paused", "pending_payment"])
+      .in("student_id", studentIds);
+
+    if (
+      isMissingRelationError(error, "enrollments") ||
+      isMissingRelationError(error, "programs")
+    ) {
+      return new Set<string>();
+    }
+
+    if (error) {
+      console.error("Failed to resolve student enrollment scope:", error);
+      return new Set<string>();
+    }
+
+    return new Set(
+      ((data ?? []) as EnrollmentScopeRow[])
+        .filter((row) => {
+          const type = getProgramType(row.programs);
+          return type === "online" || type === "hybrid";
+        })
+        .map((row) => row.student_id)
+        .filter((id): id is string => Boolean(id))
+    );
+  }, []);
+
   // Auth check and fetch teacher name
   useEffect(() => {
     const fetchUserData = async () => {
@@ -208,10 +258,15 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
         .select("id, name, tenant_id, memorization_completed, memorization_completed_date")
         .neq("record_type", "prospect")
         .eq("assigned_teacher_id", userId);
-      if (!error && data) setStudents(data);
+      if (error || !data) return;
+
+      const studentRows = data as Student[];
+      const onlineStudentIds = await fetchOnlineStudentIds(studentRows.map((student) => student.id));
+      const campusStudents = studentRows.filter((student) => !onlineStudentIds.has(student.id));
+      setStudents(campusStudents);
     }
     fetchStudents();
-  }, [userId]);
+  }, [fetchOnlineStudentIds, userId]);
 
   // Fetch reports
   useEffect(() => {
@@ -365,9 +420,17 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
         memorization_completed_date: string | null;
       }>;
 
+      const onlineStudentIds = await fetchOnlineStudentIds(studentRows.map((student) => student.id));
+      const campusStudentRows = studentRows.filter((student) => !onlineStudentIds.has(student.id));
+
+      if (campusStudentRows.length === 0) {
+        setMonitorStudents([]);
+        return;
+      }
+
       const classIds = [
         ...new Set(
-          studentRows
+          campusStudentRows
             .map((row) => row.class_id)
             .filter((id): id is string => Boolean(id))
         ),
@@ -388,7 +451,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
       }
 
       // Optimize: Batch fetch reports for all students instead of individual queries
-      const allStudentIds = studentRows.map((s) => s.id);
+      const allStudentIds = campusStudentRows.map((student) => student.id);
       
       // Fetch all reports for these students in one query
       // RLS policies will ensure teacher only sees reports for assigned students
@@ -415,7 +478,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
         return acc;
       }, {});
 
-      const studentProgressPromises = studentRows.map(async (student) => {
+      const studentProgressPromises = campusStudentRows.map(async (student) => {
         const className = student.class_id
           ? classNameById.get(student.class_id) || null
           : null;
@@ -549,7 +612,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
     } finally {
       setMonitorLoading(false);
     }
-  }, [userId, viewMode, teacherName]);
+  }, [fetchOnlineStudentIds, userId, viewMode, teacherName]);
 
   useEffect(() => {
     if (userId) {

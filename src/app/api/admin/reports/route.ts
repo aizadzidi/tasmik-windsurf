@@ -40,6 +40,22 @@ type ReportRow = {
   [key: string]: unknown;
 };
 
+type EnrollmentRow = {
+  student_id: string | null;
+  programs?:
+    | {
+        type?: string | null;
+      }
+    | Array<{ type?: string | null }>
+    | null;
+};
+
+const extractProgramType = (programs: EnrollmentRow["programs"]) => {
+  if (!programs) return null;
+  if (Array.isArray(programs)) return programs[0]?.type ?? null;
+  return programs.type ?? null;
+};
+
 // GET - Fetch student progress data for admin reports page
 export async function GET(request: NextRequest) {
   try {
@@ -63,6 +79,7 @@ export async function GET(request: NextRequest) {
           users!assigned_teacher_id(name),
           classes(name)
         `)
+        .eq('tenant_id', guard.tenantId)
         .neq('record_type', 'prospect');
 
       if (studentsError) throw studentsError;
@@ -73,7 +90,31 @@ export async function GET(request: NextRequest) {
         return [];
       }
 
-      const studentIds = studentsSafe.map(s => s.id);
+      const studentIds = studentsSafe.map((student) => student.id);
+      const { data: enrollmentData, error: enrollmentError } = await client
+        .from("enrollments")
+        .select("student_id, status, programs(type)")
+        .eq("tenant_id", guard.tenantId)
+        .in("status", ["active", "paused", "pending_payment"])
+        .in("student_id", studentIds);
+      if (enrollmentError) throw enrollmentError;
+
+      const onlineStudentIds = new Set(
+        ((enrollmentData ?? []) as EnrollmentRow[])
+          .filter((row) => {
+            const programType = extractProgramType(row.programs);
+            return programType === "online" || programType === "hybrid";
+          })
+          .map((row) => row.student_id)
+          .filter((id): id is string => Boolean(id))
+      );
+
+      const campusStudents = studentsSafe.filter((student) => !onlineStudentIds.has(student.id));
+      if (campusStudents.length === 0) {
+        return [];
+      }
+
+      const campusStudentIds = campusStudents.map((student) => student.id);
 
       if (viewMode === 'juz_tests') {
         // Fetch juz test related data
@@ -82,7 +123,7 @@ export async function GET(request: NextRequest) {
           client
             .from('reports')
             .select('student_id, juzuk')
-            .in('student_id', studentIds)
+            .in('student_id', campusStudentIds)
             .eq('type', 'Tasmi')
             .not('juzuk', 'is', null)
             .order('juzuk', { ascending: false }),
@@ -91,7 +132,7 @@ export async function GET(request: NextRequest) {
           client
             .from('juz_tests')
             .select('student_id, juz_number, test_date, passed, total_percentage, examiner_name, test_mode, test_hizb, hizb_number, page_from, page_to')
-            .in('student_id', studentIds)
+            .in('student_id', campusStudentIds)
             .order('test_date', { ascending: false })
             .order('id', { ascending: false })
             .then(result => {
@@ -119,7 +160,7 @@ export async function GET(request: NextRequest) {
           return acc;
         }, {});
 
-        return studentsSafe.map(student => ({
+        return campusStudents.map(student => ({
           ...student,
           teacher_name: student.users?.name || null,
           class_name: student.classes?.name || null,
@@ -134,7 +175,7 @@ export async function GET(request: NextRequest) {
         const { data: reportsData, error: reportsError } = await client
           .from('reports')
           .select('*')
-          .in('student_id', studentIds)
+          .in('student_id', campusStudentIds)
           .order('date', { ascending: false });
 
         if (reportsError) throw reportsError;
@@ -150,7 +191,7 @@ export async function GET(request: NextRequest) {
           return acc;
         }, {});
 
-        return studentsSafe.map(student => {
+        return campusStudents.map(student => {
           const studentReports = reportsByStudent[student.id] || { tasmik: [], murajaah: [] };
           
           return {
