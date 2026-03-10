@@ -7,6 +7,7 @@ insert into public.permissions (key, description)
 values
   ('admin:dashboard', 'Access admin dashboard'),
   ('admin:online', 'Access admin online dashboard'),
+  ('admin:online-reports', 'Access online hafazan reports'),
   ('admin:crm', 'Access admin CRM'),
   ('admin:reports', 'Access admin reports'),
   ('admin:payments', 'Access admin payments'),

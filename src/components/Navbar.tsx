@@ -6,7 +6,12 @@ import { usePathname } from "next/navigation";
 import SignOutButton from "@/components/SignOutButton";
 import type { ProgramScope } from "@/types/programs";
 import { useAdminPermissions } from "@/hooks/useAdminPermissions";
-import { ADMIN_PERMISSION_KEYS } from "@/lib/adminAccess";
+import {
+  ADMIN_PAGE_PERMISSIONS,
+  ADMIN_PERMISSION_KEYS,
+  hasAdminPermission,
+} from "@/lib/adminAccess";
+import { useTeachingModeContext } from "@/contexts/TeachingModeContext";
 
 type NavbarProps = {
   programScope?: ProgramScope | null;
@@ -16,16 +21,53 @@ export default function Navbar({ programScope }: NavbarProps) {
   const pathname = usePathname();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { isAdmin: isAdminUser, permissions } = useAdminPermissions();
-  const isOnlineOnly = programScope === "online";
-  const hasOnlineScope = programScope === "online" || programScope === "mixed";
+  const { mode: teachingMode, programScope: teachingProgramScope } = useTeachingModeContext();
 
-  // Determine the user role and dashboard info based on current path
-  const isParent = pathname.startsWith('/parent');
-  const isTeacher = pathname.startsWith('/teacher');
-  const isAdminRoute = pathname.startsWith('/admin');
+  // Keep teacher nav mode stable across route transitions by using layout-level scope.
+  const isTeacher = pathname.startsWith("/teacher");
+  const isParent = pathname.startsWith("/parent");
+  const isAdminRoute = pathname.startsWith("/admin");
+  const resolvedProgramScope = isTeacher ? teachingProgramScope : programScope;
+  const isOnlineAttendancePath = pathname.startsWith("/teacher/online-attendance");
+
+  const isMixedOnline =
+    resolvedProgramScope === "mixed" &&
+    (teachingMode === "online" || (teachingMode === null && isOnlineAttendancePath));
+  const isOnlineOnly = resolvedProgramScope === "online";
+  const effectiveOnline = isOnlineOnly || isMixedOnline;
+  const hasOnlineScope = resolvedProgramScope === "online" || resolvedProgramScope === "mixed";
 
   const hasAdminAccess =
     isAdminUser || ADMIN_PERMISSION_KEYS.some((key) => permissions.has(key));
+
+  const adminNavHref = (() => {
+    if (isAdminUser || permissions.has("admin:dashboard")) return "/admin";
+
+    const preferredPaths = [
+      "/admin/attendance",
+      "/admin/reports",
+      "/admin/online",
+      "/admin/online/reports",
+      "/admin/users",
+      "/admin/exam",
+      "/admin/payments",
+      "/admin/crm",
+      "/admin/certificates",
+      "/admin/historical",
+    ];
+
+    for (const path of preferredPaths) {
+      const page = ADMIN_PAGE_PERMISSIONS.find((item) => item.path === path);
+      if (page && hasAdminPermission(page.key, permissions)) {
+        return page.path;
+      }
+    }
+
+    const firstAccessiblePage = ADMIN_PAGE_PERMISSIONS.find((item) =>
+      hasAdminPermission(item.key, permissions)
+    );
+    return firstAccessiblePage?.path ?? "/admin";
+  })();
 
   const navClasses = isParent
     ? "relative z-50 bg-gradient-to-br from-[#f8fafc]/92 via-white/92 to-[#f8fafc]/92 backdrop-blur-xl border-b border-slate-200/50 shadow-md"
@@ -98,34 +140,19 @@ export default function Navbar({ programScope }: NavbarProps) {
               </svg>
             )
           },
-          ...(hasOnlineScope
+          {
+            href: effectiveOnline ? "/teacher/online-attendance" : "/teacher/attendance",
+            label: "Attendance",
+            icon: (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" strokeWidth={2} />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 2v4M8 2v4M3 10h18" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 16l2 2 4-5" />
+              </svg>
+            )
+          },
+          ...(!effectiveOnline
             ? [
-                {
-                  href: "/teacher/online-attendance",
-                  label: "Online Attendance",
-                  icon: (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" strokeWidth={2} />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 2v4M8 2v4M3 10h18" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 16l2 2 4-5" />
-                    </svg>
-                  )
-                },
-              ]
-            : []),
-          ...(!isOnlineOnly
-            ? [
-                {
-                  href: "/teacher/attendance",
-                  label: "Attendance",
-                  icon: (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" strokeWidth={2} />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 2v4M8 2v4M3 10h18" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 16l2 2 4-5" />
-                    </svg>
-                  )
-                },
                 {
                   href: "/teacher/lesson",
                   label: "Lessons",
@@ -151,7 +178,7 @@ export default function Navbar({ programScope }: NavbarProps) {
           ...(hasAdminAccess
             ? [
                 {
-                  href: "/admin",
+                  href: adminNavHref,
                   label: "Admin",
                   icon: (
                     <svg

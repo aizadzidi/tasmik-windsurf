@@ -3,7 +3,6 @@ import { useEffect, useState, useMemo, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import React from "react";
 import { QuranProgressBar, ChartTabs } from "@/components/ReportCharts";
-import Navbar from "@/components/Navbar";
 import { Card } from "@/components/ui/Card";
 import QuickReportModal from "@/components/teacher/QuickReportModal";
 import EditReportModal from "./EditReportModal";
@@ -12,7 +11,7 @@ import JuzTestProgressLineChart from "@/components/teacher/JuzTestProgressLineCh
 import JuzTestHistoryModalViewOnly from "@/components/teacher/JuzTestHistoryModalViewOnly";
 import ScheduleTestModal from "@/components/teacher/ScheduleTestModal";
 import { notificationService } from "@/lib/notificationService";
-import { useProgramScope } from "@/hooks/useProgramScope";
+import { useTeachingModeContext } from "@/contexts/TeachingModeContext";
 import {
   StudentProgressData,
   calculateDaysSinceLastRead,
@@ -41,11 +40,6 @@ type ActiveSession = {
 };
 
 type ActiveSessionMap = Record<string, ActiveSession>;
-
-type EnrollmentScopeRow = {
-  student_id: string | null;
-  programs?: { type?: string | null } | Array<{ type?: string | null }> | null;
-};
 
 type SmartSuggestion = {
   surah: string;
@@ -76,19 +70,6 @@ const mapReportsWithStudentName = (rows: ReportRow[]): Report[] =>
     ...row,
     student_name: row.students?.name || "",
   }));
-
-const isMissingRelationError = (
-  error: { message?: string } | null | undefined,
-  table: string
-) => Boolean(error?.message?.includes(`relation \"public.${table}\" does not exist`));
-
-const getProgramType = (
-  programs: EnrollmentScopeRow["programs"]
-) => {
-  if (!programs) return null;
-  if (Array.isArray(programs)) return programs[0]?.type ?? null;
-  return programs.type ?? null;
-};
 
 function FetchActiveSchedules({ students, onData }: { students: string[]; onData: (map: ActiveSessionMap) => void }) {
   const studentParams = useMemo(() => {
@@ -124,8 +105,9 @@ export default function TeacherPage() {
   const [reports, setReports] = useState<Report[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
   const [teacherName, setTeacherName] = useState<string>("");
-  const { programScope } = useProgramScope({ role: "teacher", userId });
-  
+  const { mode: teachingMode, programScope } = useTeachingModeContext();
+  const [onlineStudentIds, setOnlineStudentIds] = useState<Set<string>>(new Set());
+
   // Monitor state
   const [monitorStudents, setMonitorStudents] = useState<StudentProgressData[]>([]);
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
@@ -181,38 +163,6 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
   }, []);
   const [juzTestHistoryStudent, setJuzTestHistoryStudent] = useState<Student | null>(null);
 
-  const fetchOnlineStudentIds = useCallback(async (studentIds: string[]) => {
-    if (studentIds.length === 0) return new Set<string>();
-
-    const { data, error } = await supabase
-      .from("enrollments")
-      .select("student_id, status, programs(type)")
-      .in("status", ["active", "paused", "pending_payment"])
-      .in("student_id", studentIds);
-
-    if (
-      isMissingRelationError(error, "enrollments") ||
-      isMissingRelationError(error, "programs")
-    ) {
-      return new Set<string>();
-    }
-
-    if (error) {
-      console.error("Failed to resolve student enrollment scope:", error);
-      return new Set<string>();
-    }
-
-    return new Set(
-      ((data ?? []) as EnrollmentScopeRow[])
-        .filter((row) => {
-          const type = getProgramType(row.programs);
-          return type === "online" || type === "hybrid";
-        })
-        .map((row) => row.student_id)
-        .filter((id): id is string => Boolean(id))
-    );
-  }, []);
-
   // Auth check and fetch teacher name
   useEffect(() => {
     const fetchUserData = async () => {
@@ -249,7 +199,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
     fetchUserData();
   }, []);
 
-  // Fetch students
+  // Fetch students and classify by program scope
   useEffect(() => {
     if (!userId) return;
     async function fetchStudents() {
@@ -260,13 +210,30 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
         .eq("assigned_teacher_id", userId);
       if (error || !data) return;
 
-      const studentRows = data as Student[];
-      const onlineStudentIds = await fetchOnlineStudentIds(studentRows.map((student) => student.id));
-      const campusStudents = studentRows.filter((student) => !onlineStudentIds.has(student.id));
-      setStudents(campusStudents);
+      setStudents(data as Student[]);
+
+      // Classify students as online or campus via enrollments
+      const allIds = data.map((s) => s.id).filter(Boolean);
+      if (allIds.length > 0) {
+        const { data: enrollmentData } = await supabase
+          .from("enrollments")
+          .select("student_id, programs(type)")
+          .in("status", ["active", "paused", "pending_payment"])
+          .in("student_id", allIds);
+
+        const onlineIds = new Set<string>();
+        (enrollmentData ?? []).forEach((row) => {
+          const prog = row.programs as { type?: string } | null;
+          const type = prog?.type;
+          if (type === "online" || type === "hybrid") {
+            if (row.student_id) onlineIds.add(row.student_id);
+          }
+        });
+        setOnlineStudentIds(onlineIds);
+      }
     }
     fetchStudents();
-  }, [fetchOnlineStudentIds, userId]);
+  }, [userId]);
 
   // Fetch reports
   useEffect(() => {
@@ -420,17 +387,14 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
         memorization_completed_date: string | null;
       }>;
 
-      const onlineStudentIds = await fetchOnlineStudentIds(studentRows.map((student) => student.id));
-      const campusStudentRows = studentRows.filter((student) => !onlineStudentIds.has(student.id));
-
-      if (campusStudentRows.length === 0) {
+      if (studentRows.length === 0) {
         setMonitorStudents([]);
         return;
       }
 
       const classIds = [
         ...new Set(
-          campusStudentRows
+          studentRows
             .map((row) => row.class_id)
             .filter((id): id is string => Boolean(id))
         ),
@@ -451,7 +415,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
       }
 
       // Optimize: Batch fetch reports for all students instead of individual queries
-      const allStudentIds = campusStudentRows.map((student) => student.id);
+      const allStudentIds = studentRows.map((student) => student.id);
       
       // Fetch all reports for these students in one query
       // RLS policies will ensure teacher only sees reports for assigned students
@@ -478,7 +442,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
         return acc;
       }, {});
 
-      const studentProgressPromises = campusStudentRows.map(async (student) => {
+      const studentProgressPromises = studentRows.map(async (student) => {
         const className = student.class_id
           ? classNameById.get(student.class_id) || null
           : null;
@@ -612,7 +576,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
     } finally {
       setMonitorLoading(false);
     }
-  }, [fetchOnlineStudentIds, userId, viewMode, teacherName]);
+  }, [userId, viewMode, teacherName]);
 
   useEffect(() => {
     if (userId) {
@@ -622,7 +586,16 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
 
   // Filtered and sorted students (optimized with debounced search)
   const filteredMonitorStudents = useMemo(() => {
-    let filtered = filterStudentsBySearch(monitorStudents, debouncedSearchTerm);
+    // Apply scope filter for mixed-scope teachers
+    let scopeFiltered = monitorStudents;
+    if (programScope === "mixed" && teachingMode) {
+      scopeFiltered = monitorStudents.filter((s) => {
+        const isOnline = onlineStudentIds.has(s.id);
+        return teachingMode === "online" ? isOnline : !isOnline;
+      });
+    }
+
+    let filtered = filterStudentsBySearch(scopeFiltered, debouncedSearchTerm);
     
     if (viewMode === 'juz_tests') {
       // Sort by gap first (larger gaps first for priority), then by highest memorized juz
@@ -650,7 +623,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
     }
     
     return filtered;
-  }, [monitorStudents, debouncedSearchTerm, sortBy, viewMode]);
+  }, [monitorStudents, debouncedSearchTerm, sortBy, viewMode, programScope, teachingMode, onlineStudentIds]);
 
   const summaryStats: SummaryStats = useMemo(() => {
     if (viewMode === 'juz_tests') {
@@ -766,7 +739,6 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
-      <Navbar programScope={programScope} />
       <div className="relative p-4 sm:p-6">
         <div className="max-w-7xl mx-auto">
           {/* Header */}

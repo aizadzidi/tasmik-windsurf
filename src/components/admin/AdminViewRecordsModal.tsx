@@ -31,12 +31,14 @@ interface AdminViewRecordsModalProps {
   };
   onClose: () => void;
   viewMode?: 'tasmik' | 'murajaah' | 'all';
+  scope?: "campus" | "online";
 }
 
 export default function AdminViewRecordsModal({ 
   student, 
   onClose, 
-  viewMode = 'all'
+  viewMode = 'all',
+  scope = "campus",
 }: AdminViewRecordsModalProps) {
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,7 +50,7 @@ export default function AdminViewRecordsModal({
     try {
       // Use API route for secure admin access
       const response = await authFetch(
-        `/api/admin/student-reports?studentId=${student.id}&viewMode=${viewMode}`
+        `/api/admin/student-reports?studentId=${student.id}&viewMode=${viewMode}&scope=${scope}`
       );
       
       if (!response.ok) {
@@ -66,7 +68,7 @@ export default function AdminViewRecordsModal({
     } finally {
       setLoading(false);
     }
-  }, [student.id, viewMode]);
+  }, [scope, student.id, viewMode]);
 
   useEffect(() => {
     fetchStudentReports();

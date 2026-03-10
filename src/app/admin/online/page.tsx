@@ -390,7 +390,9 @@ export default function AdminOnlinePage() {
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
               <h1 className="text-2xl font-bold text-gray-800">Online Student Management</h1>
-              <p className="text-gray-600">Manage students, assign teachers, and track CRM progress.</p>
+              <p className="text-gray-600">
+                Manage students, teacher assignment, and CRM progress.
+              </p>
             </div>
             <AdminScopeSwitch />
           </div>

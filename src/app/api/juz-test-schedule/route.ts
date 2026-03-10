@@ -22,6 +22,8 @@ type TestSessionRow = {
 
 type BasicSessionRow = Pick<TestSessionRow, 'id' | 'student_id' | 'scheduled_date' | 'slot_number' | 'status'>;
 type SessionUpdatePayload = Partial<Pick<TestSessionRow, 'scheduled_date' | 'slot_number' | 'status' | 'notes' | 'juz_number'>>;
+type StudentLookupRow = { id: string; name: string | null; tenant_id?: string | null };
+type TeacherLookupRow = { id: string; name: string | null; role: string | null };
 
 const getPostgrestCode = (error: unknown) => {
   if (error && typeof error === 'object' && 'code' in error) {
@@ -30,6 +32,93 @@ const getPostgrestCode = (error: unknown) => {
   }
   return undefined;
 };
+
+const isNotificationMetadataMissingSchema = (error: unknown) => {
+  const code = getPostgrestCode(error);
+  if (code === 'PGRST204') return true;
+  if (!(error && typeof error === 'object' && 'message' in error)) return false;
+  const message = String((error as { message?: unknown }).message || '');
+  return /notification_type|session_id|scheduled_date|slot_number/i.test(message);
+};
+
+const toSuggestedJuz = (raw: unknown): number => {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return 1;
+  const rounded = Math.round(parsed);
+  if (rounded < 1) return 1;
+  if (rounded > 30) return 30;
+  return rounded;
+};
+
+const buildTeacherBookingNotes = (session: TestSessionRow) => {
+  const bookedDate = session.scheduled_date;
+  const slotText = typeof session.slot_number === 'number' ? `Slot ${session.slot_number}` : null;
+  const summary = [bookedDate, slotText].filter(Boolean).join(' • ');
+  const cleanNotes = typeof session.notes === 'string' ? session.notes.trim() : '';
+  return cleanNotes ? `${summary}\n${cleanNotes}` : summary;
+};
+
+async function createTeacherBookingNotification(params: {
+  client: SupabaseClient;
+  requestedBy: string | null | undefined;
+  tenantId: string;
+  studentId: string;
+  studentName: string;
+  session: TestSessionRow;
+}) {
+  const { client, requestedBy, tenantId, studentId, studentName, session } = params;
+  if (!requestedBy) return;
+
+  const { data: teacherRaw, error: teacherError } = await client
+    .from('users')
+    .select('id, name, role')
+    .eq('id', requestedBy)
+    .maybeSingle();
+  if (teacherError) {
+    console.error('Teacher lookup error for schedule notification:', teacherError);
+    return;
+  }
+  const teacher = teacherRaw as TeacherLookupRow | null;
+  if (!teacher || teacher.role !== 'teacher') {
+    return;
+  }
+
+  const payloadBase = {
+    tenant_id: tenantId,
+    teacher_id: teacher.id,
+    teacher_name: teacher.name || 'Unknown Teacher',
+    student_id: studentId,
+    student_name: studentName || 'Unknown Student',
+    suggested_juz: toSuggestedJuz(session.juz_number),
+    status: 'pending' as const,
+    teacher_notes: buildTeacherBookingNotes(session),
+  };
+  const payloadWithMetadata = {
+    ...payloadBase,
+    notification_type: 'teacher_booking' as const,
+    session_id: session.id,
+    scheduled_date: session.scheduled_date,
+    slot_number: session.slot_number,
+  };
+
+  const { error: insertError } = await client
+    .from('juz_test_notifications')
+    .insert([payloadWithMetadata]);
+
+  if (!insertError) return;
+
+  if (!isNotificationMetadataMissingSchema(insertError)) {
+    console.error('Teacher booking notification insert error:', insertError);
+    return;
+  }
+
+  const { error: fallbackError } = await client
+    .from('juz_test_notifications')
+    .insert([payloadBase]);
+  if (fallbackError) {
+    console.error('Teacher booking notification fallback insert error:', fallbackError);
+  }
+}
 
 // Helper: parse YYYY-MM-DD safely
 function toDateOnlyString(d: Date) {
@@ -172,6 +261,7 @@ type SessionPatchBody = {
   status?: string;
   notes?: string | null;
   juz_number?: number | null;
+  requested_by?: string | null;
 };
 
 function isSessionPatchBody(value: unknown): value is SessionPatchBody {
@@ -207,6 +297,13 @@ function isSessionPatchBody(value: unknown): value is SessionPatchBody {
   ) {
     return false;
   }
+  if (
+    record.requested_by !== undefined &&
+    record.requested_by !== null &&
+    typeof record.requested_by !== 'string'
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -220,13 +317,14 @@ if (!student_id || !scheduled_date) {
     }
 
     const data = await adminOperationSimple(async (client) => {
-      const { data: studentRow, error: studentErr } = await client
+      const { data: studentRowRaw, error: studentErr } = await client
         .from('students')
-        .select('tenant_id')
+        .select('id, name, tenant_id')
         .eq('id', student_id)
         .single();
       if (studentErr) throw studentErr;
-      const tenantId = (studentRow as { tenant_id?: string | null } | null)?.tenant_id;
+      const studentRow = studentRowRaw as StudentLookupRow | null;
+      const tenantId = studentRow?.tenant_id;
       if (!tenantId) {
         throw new Error('Student tenant not found.');
       }
@@ -275,7 +373,18 @@ if (!student_id || !scheduled_date) {
         }
         throw error;
       }
-      return (data ?? [])[0] as TestSessionRow | undefined;
+      const createdSession = (data ?? [])[0] as TestSessionRow | undefined;
+      if (createdSession) {
+        await createTeacherBookingNotification({
+          client,
+          requestedBy: requested_by,
+          tenantId,
+          studentId: student_id,
+          studentName: studentRow?.name || 'Unknown Student',
+          session: createdSession,
+        });
+      }
+      return createdSession;
     });
 
     return NextResponse.json({ success: true, session: data }, { status: 201 });
@@ -299,6 +408,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
     const body = rawBody;
+    const requestedBy = body.requested_by ?? null;
     const allowed: SessionUpdatePayload = {};
     if (body.scheduled_date) allowed.scheduled_date = body.scheduled_date;
     if (body.slot_number !== undefined) allowed.slot_number = body.slot_number;
@@ -310,7 +420,7 @@ export async function PATCH(request: NextRequest) {
 // Fetch current session
       const { data: current, error: currentErr } = await client
         .from('test_sessions')
-        .select('id, scheduled_date, slot_number, tenant_id')
+        .select('id, student_id, scheduled_date, slot_number, tenant_id')
         .eq('id', id)
         .single();
       if (currentErr) throw currentErr;
@@ -344,7 +454,36 @@ export async function PATCH(request: NextRequest) {
         }
         throw error;
       }
-      return (data ?? [])[0] as TestSessionRow | undefined;
+      const updatedSession = (data ?? [])[0] as TestSessionRow | undefined;
+      if (updatedSession && requestedBy) {
+        const shouldNotify =
+          updatedSession.status === 'scheduled' ||
+          updatedSession.status === 'reschedule_requested';
+        if (shouldNotify) {
+          const studentId = updatedSession.student_id || currentSession?.student_id;
+          const tenantId = updatedSession.tenant_id || currentSession?.tenant_id;
+          if (studentId && tenantId) {
+            const { data: studentRaw, error: studentError } = await client
+              .from('students')
+              .select('name')
+              .eq('id', studentId)
+              .maybeSingle();
+            if (studentError) {
+              console.error('Student lookup error for schedule notification:', studentError);
+            }
+            const studentName = ((studentRaw as { name?: string | null } | null)?.name) || 'Unknown Student';
+            await createTeacherBookingNotification({
+              client,
+              requestedBy,
+              tenantId,
+              studentId,
+              studentName,
+              session: updatedSession,
+            });
+          }
+        }
+      }
+      return updatedSession;
     });
 
     return NextResponse.json({ success: true, session: data });

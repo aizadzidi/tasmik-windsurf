@@ -6,6 +6,12 @@ export interface MurajaahTestAssessment {
   pass_threshold?: number;
 }
 
+export interface MurajaahTestResultBadge {
+  state: "pass" | "fail" | "unknown";
+  label: string;
+  className: string;
+}
+
 export interface MurajaahReadingProgress {
   murajaah_mode?: MurajaahMode;
   test_assessment?: MurajaahTestAssessment;
@@ -52,4 +58,33 @@ export const getMurajaahTestAssessmentFromReport = (report: {
   const parsed = parseMurajaahReadingProgress(report.reading_progress);
   if (!parsed?.test_assessment) return null;
   return parsed.test_assessment;
+};
+
+export const getMurajaahTestResultBadge = (
+  assessment: MurajaahTestAssessment | null | undefined
+): MurajaahTestResultBadge => {
+  const hasScore = typeof assessment?.total_percentage === "number";
+  const hasPassFlag = typeof assessment?.passed === "boolean";
+
+  if (!hasScore || !hasPassFlag) {
+    return {
+      state: "unknown",
+      label: "-",
+      className: "bg-gray-100 text-gray-700",
+    };
+  }
+
+  if (assessment.passed) {
+    return {
+      state: "pass",
+      label: `${assessment.total_percentage}% PASS`,
+      className: "bg-green-100 text-green-800",
+    };
+  }
+
+  return {
+    state: "fail",
+    label: `${assessment.total_percentage}% FAIL`,
+    className: "bg-red-100 text-red-700",
+  };
 };

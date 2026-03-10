@@ -20,7 +20,12 @@ const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
-const ADMIN_JUZ_PERMISSIONS = ["admin:reports", "admin:exam"];
+const ADMIN_JUZ_PERMISSIONS = [
+  "admin:reports",
+  "admin:exam",
+  "admin:online",
+  "admin:online-reports",
+];
 
 const adminErrorDetails = (error: unknown, fallback: string) => {
   const message =

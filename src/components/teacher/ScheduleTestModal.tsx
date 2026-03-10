@@ -1,5 +1,6 @@
 "use client";
 import React from 'react';
+import { supabase } from '@/lib/supabaseClient';
 
 const WEEKDAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
@@ -49,6 +50,21 @@ export default function ScheduleTestModal({ student, onClose, onScheduled }: Sch
   const [juzNumber, setJuzNumber] = React.useState<number | ''>('');
   const [notes, setNotes] = React.useState('');
   const [activeSession, setActiveSession] = React.useState<SessionSummary | null>(null);
+  const [requesterId, setRequesterId] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let isMounted = true;
+    supabase.auth.getUser().then(({ data }) => {
+      if (!isMounted) return;
+      setRequesterId(data.user?.id ?? null);
+    }).catch(() => {
+      if (!isMounted) return;
+      setRequesterId(null);
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
 // Month navigation state
   const [viewMonthStart, setViewMonthStart] = React.useState(() => {
@@ -145,13 +161,26 @@ const days = React.useMemo(() => {
       setLoading(true);
       setError(null);
       const isUpdate = Boolean(activeSession);
+      const actorId = requesterId || (await supabase.auth.getUser()).data.user?.id || null;
       const url = isUpdate
         ? `/api/juz-test-schedule?id=${activeSession?.id}`
         : '/api/juz-test-schedule';
       const method = isUpdate ? 'PATCH' : 'POST';
       const body = isUpdate
-        ? { scheduled_date: selectedDate, status: 'scheduled', notes, juz_number: juzNumber || null }
-        : { student_id: student.id, scheduled_date: selectedDate, juz_number: juzNumber || null, notes };
+        ? {
+            scheduled_date: selectedDate,
+            status: 'scheduled',
+            notes,
+            juz_number: juzNumber || null,
+            requested_by: actorId,
+          }
+        : {
+            student_id: student.id,
+            scheduled_date: selectedDate,
+            juz_number: juzNumber || null,
+            notes,
+            requested_by: actorId,
+          };
 
       const res = await fetch(url, {
         method,
@@ -170,7 +199,7 @@ const days = React.useMemo(() => {
     } finally {
       setLoading(false);
     }
-  }, [activeSession, juzNumber, notes, onClose, onScheduled, selectedDate, student.id]);
+  }, [activeSession, juzNumber, notes, onClose, onScheduled, requesterId, selectedDate, student.id]);
 
   const cancelExisting = React.useCallback(async () => {
     if (!activeSession) return;

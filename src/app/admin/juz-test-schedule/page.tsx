@@ -1,5 +1,6 @@
 "use client";
 import React from 'react';
+import { useSearchParams } from 'next/navigation';
 import AdminNavbar from '@/components/admin/AdminNavbar';
 import AdminScheduleTestModal from '@/components/admin/AdminScheduleTestModal';
 import { Card } from '@/components/ui/Card';
@@ -13,6 +14,7 @@ type JuzScheduleResponse = {
 };
 
 export default function AdminJuzTestSchedulePage() {
+  const searchParams = useSearchParams();
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [counts, setCounts] = React.useState<Record<string, number>>({});
@@ -21,6 +23,12 @@ export default function AdminJuzTestSchedulePage() {
   const [selectedDate, setSelectedDate] = React.useState<string>('');
   const [showScheduleModal, setShowScheduleModal] = React.useState(false);
   const [toast, setToast] = React.useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const targetDate = searchParams.get('date');
+  const targetStudentId = searchParams.get('student_id');
+  const targetSessionId = searchParams.get('session_id');
+  const targetSlotNumberRaw = searchParams.get('slot_number');
+  const targetSlotNumber = targetSlotNumberRaw ? Number(targetSlotNumberRaw) : null;
+  const targetRowRef = React.useRef<HTMLDivElement | null>(null);
   React.useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 2500);
@@ -32,6 +40,24 @@ export default function AdminJuzTestSchedulePage() {
     const d = new Date();
     return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
   });
+
+  React.useEffect(() => {
+    if (!targetDate) return;
+    const focusDate = new Date(`${targetDate}T00:00:00Z`);
+    if (Number.isNaN(focusDate.getTime())) return;
+    setSelectedDate(targetDate);
+    setViewMonthStart(new Date(Date.UTC(focusDate.getUTCFullYear(), focusDate.getUTCMonth(), 1)));
+  }, [targetDate]);
+
+  React.useEffect(() => {
+    if (targetDate || !targetSessionId || sessions.length === 0) return;
+    const matched = sessions.find((session) => session.id === targetSessionId);
+    if (!matched?.scheduled_date) return;
+    const focusDate = new Date(`${matched.scheduled_date}T00:00:00Z`);
+    if (Number.isNaN(focusDate.getTime())) return;
+    setSelectedDate(matched.scheduled_date);
+    setViewMonthStart(new Date(Date.UTC(focusDate.getUTCFullYear(), focusDate.getUTCMonth(), 1)));
+  }, [sessions, targetDate, targetSessionId]);
 function monthLabel(date: Date) {
     const months = [
       'January','February','March','April','May','June',
@@ -86,6 +112,23 @@ const weekdays = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   }, [viewMonthStart, counts]);
 
   const listForDay = React.useMemo(() => sessions.filter((s) => s.scheduled_date === selectedDate), [sessions, selectedDate]);
+  const isExactTarget = React.useCallback((session: JuzTestSession) => {
+    if (targetSessionId) return session.id === targetSessionId;
+    if (targetStudentId && targetSlotNumber !== null) {
+      return session.student_id === targetStudentId && session.slot_number === targetSlotNumber;
+    }
+    if (targetStudentId) return session.student_id === targetStudentId;
+    if (targetSlotNumber !== null) return session.slot_number === targetSlotNumber;
+    return false;
+  }, [targetSessionId, targetStudentId, targetSlotNumber]);
+
+  React.useEffect(() => {
+    if (!selectedDate) return;
+    const matched = listForDay.find((session) => isExactTarget(session));
+    if (!matched) return;
+    if (!targetRowRef.current) return;
+    targetRowRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [isExactTarget, listForDay, selectedDate]);
 
   const refetchDay = React.useCallback(async () => {
     await loadMonth(viewMonthStart);
@@ -206,7 +249,19 @@ return (
             ) : (
               <div className="space-y-2">
                 {listForDay.map((s) => (
-                  <div key={s.id} className="flex items-center justify-between border rounded p-2">
+                  <div
+                    key={s.id}
+                    ref={(node) => {
+                      if (isExactTarget(s)) {
+                        targetRowRef.current = node;
+                      }
+                    }}
+                    className={`flex items-center justify-between border rounded p-2 ${
+                      isExactTarget(s)
+                        ? 'ring-2 ring-blue-500 border-blue-300 bg-blue-50/40'
+                        : ''
+                    }`}
+                  >
                     <div>
                       <div className="font-medium">Slot {s.slot_number} • {s.students?.name || 'Student'}</div>
                       {s.students?.users?.name && (

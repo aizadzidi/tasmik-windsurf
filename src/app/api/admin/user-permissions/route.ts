@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
 import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
 import { requireAdminPermission } from "@/lib/adminPermissions";
+import { ADMIN_PAGE_PERMISSIONS } from "@/lib/adminAccess";
 
 const adminErrorDetails = (error: unknown, fallback: string) => {
   const message = error instanceof Error ? error.message : fallback;
@@ -22,6 +23,16 @@ const resolveTenantIdOrThrow = async (request: NextRequest) =>
 
     return data[0].id as string;
   });
+
+const ADMIN_PERMISSION_KEYS = new Set(
+  ADMIN_PAGE_PERMISSIONS.map((permission) => permission.key)
+);
+const ADMIN_PERMISSION_DESCRIPTIONS = new Map(
+  ADMIN_PAGE_PERMISSIONS.map((permission) => [
+    permission.key,
+    `Access ${permission.label.toLowerCase()}`,
+  ])
+);
 
 export async function GET(request: NextRequest) {
   try {
@@ -77,10 +88,31 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    if (!ADMIN_PERMISSION_KEYS.has(String(permission_key))) {
+      return NextResponse.json(
+        { error: "Invalid permission_key" },
+        { status: 400 }
+      );
+    }
+
     const tenantId = await resolveTenantIdOrThrow(request);
 
     const data = await adminOperationSimple(async (client) => {
       if (enabled) {
+        const description =
+          ADMIN_PERMISSION_DESCRIPTIONS.get(String(permission_key)) ??
+          `Access ${String(permission_key)}`;
+        const { error: permissionSeedError } = await client
+          .from("permissions")
+          .upsert(
+            {
+              key: permission_key,
+              description,
+            },
+            { onConflict: "key" }
+          );
+        if (permissionSeedError) throw permissionSeedError;
+
         const { data, error } = await client
           .from("user_permissions")
           .upsert(

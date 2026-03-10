@@ -13,7 +13,10 @@ export default function AdminScopeSwitch() {
   const { loading, isAdmin, permissions } = useAdminPermissions();
 
   const canSeeCampus = isAdmin || permissions.has("admin:dashboard");
-  const canSeeOnline = isAdmin || permissions.has("admin:online");
+  const hasOnlineDashboard = isAdmin || permissions.has("admin:online");
+  const hasOnlineReports = isAdmin || permissions.has("admin:online-reports");
+  const canSeeOnline = hasOnlineDashboard || hasOnlineReports;
+  const onlineHref = hasOnlineDashboard ? "/admin/online" : "/admin/online/reports";
   const campusActive = isCampusRoute(pathname);
   const onlineActive = isOnlineRoute(pathname);
 
@@ -36,7 +39,7 @@ export default function AdminScopeSwitch() {
       )}
       {canSeeOnline && (
         <Link
-          href="/admin/online"
+          href={onlineHref}
           className={cn(
             "rounded-full px-4 py-2 text-sm font-semibold transition",
             onlineActive

@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/Button";
 import { ChevronDown, ChevronUp, Info, Users } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { authFetch } from "@/lib/authFetch";
-import Navbar from "@/components/Navbar";
 import { getGradingScale, computeGrade, type GradingScale } from "@/lib/gradingUtils";
 import ConductEditor from "@/components/teacher/ConductEditor";
 import type { ConductSummary } from "@/data/conduct";
@@ -13,9 +12,8 @@ import { fetchGradeSummary } from "@/lib/db/exams";
 import type { GradeSummaryRow } from "@/lib/db/exams";
 import StudentDetailsPanelTeacher from "@/components/teacher/StudentDetailsPanelTeacher";
 import type { StudentData } from "@/components/admin/exam/StudentTable";
-import { useProgramScope } from "@/hooks/useProgramScope";
+import { useTeachingModeContext } from "@/contexts/TeachingModeContext";
 import { useRouter } from "next/navigation";
-import type { ProgramScope } from "@/types/programs";
 import Portal from "@/components/Portal";
 
 // Dynamic conduct criteria from database
@@ -82,7 +80,7 @@ type StudentRow = {
 
 type SaveIndicatorState = 'idle' | 'saving' | 'saved' | 'error';
 
-function TeacherExamDashboardContent({ programScope }: { programScope: ProgramScope }) {
+function TeacherExamDashboardContent() {
   const [userId, setUserId] = React.useState<string>("");
   const [classes, setClasses] = React.useState<ClassItem[]>([]);
   const [subjects, setSubjects] = React.useState<SubjectItem[]>([]);
@@ -1302,7 +1300,6 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <Navbar programScope={programScope} />
       <main className="px-4 py-8 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-6xl">
           <header className="mb-8">
@@ -1907,19 +1904,19 @@ function TeacherExamDashboardContent({ programScope }: { programScope: ProgramSc
 
 export default function TeacherExamDashboard() {
   const router = useRouter();
-  const { programScope, loading: programScopeLoading } = useProgramScope({ role: "teacher" });
+  const { programScope } = useTeachingModeContext();
 
   React.useEffect(() => {
-    if (!programScopeLoading && programScope === "online") {
+    if (programScope === "online") {
       router.replace("/teacher");
     }
-  }, [programScope, programScopeLoading, router]);
+  }, [programScope, router]);
 
-  if (programScopeLoading || programScope === "online") {
+  if (programScope === "online") {
     return null;
   }
 
-  return <TeacherExamDashboardContent programScope={programScope} />;
+  return <TeacherExamDashboardContent />;
 }
 type StudentRosterItem = { id: string; name: string; class_id: string | null };
 type StudentRowWithIndex = StudentRow & { _idx: number };

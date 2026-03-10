@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-import Navbar from "@/components/Navbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -18,8 +17,7 @@ import {
 } from "@/components/ui/command";
 import { supabase } from "@/lib/supabaseClient";
 import { useSearchParams, useRouter } from "next/navigation";
-import { useProgramScope } from "@/hooks/useProgramScope";
-import type { ProgramScope } from "@/types/programs";
+import { useTeachingModeContext } from "@/contexts/TeachingModeContext";
 import {
   Calendar,
   Check,
@@ -163,7 +161,7 @@ const ProgressRing: React.FC<ProgressRingProps> = ({ progress, neutral = false }
 
 type TopicTrackingDensity = "default" | "compact";
 
-function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope }) {
+function TeacherLessonPageContent() {
   const searchParams = useSearchParams();
   const densityParam = searchParams?.get("density");
   const density: TopicTrackingDensity = densityParam === "compact" ? "compact" : "default";
@@ -1082,7 +1080,6 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar programScope={programScope} />
       <Modal
         open={Boolean(remarkModalTarget)}
         title={remarkModalTarget?.subtopicTitle || "Remark"}
@@ -2291,21 +2288,21 @@ function TeacherLessonPageContent({ programScope }: { programScope: ProgramScope
 
 export default function TeacherLessonPage() {
   const router = useRouter();
-  const { programScope, loading: programScopeLoading } = useProgramScope({ role: "teacher" });
+  const { programScope } = useTeachingModeContext();
 
   React.useEffect(() => {
-    if (!programScopeLoading && programScope === "online") {
+    if (programScope === "online") {
       router.replace("/teacher");
     }
-  }, [programScope, programScopeLoading, router]);
+  }, [programScope, router]);
 
-  if (programScopeLoading || programScope === "online") {
+  if (programScope === "online") {
     return null;
   }
 
   return (
     <React.Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading lesson page…</div>}>
-      <TeacherLessonPageContent programScope={programScope} />
+      <TeacherLessonPageContent />
     </React.Suspense>
   );
 }

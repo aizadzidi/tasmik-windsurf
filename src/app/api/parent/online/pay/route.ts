@@ -1,21 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseService } from "@/lib/supabaseServiceClient";
+import { isMissingRelationError } from "@/lib/online/db";
 import { requireAuthenticatedTenantUser } from "@/lib/requestAuth";
-import { confirmOnlineSlotPayment } from "@/lib/online/claims";
-import { isMissingFunctionError, isMissingRelationError } from "@/lib/online/db";
+import { supabaseService } from "@/lib/supabaseServiceClient";
 
 type PayBody = {
-  claim_id?: string;
+  package_id?: string;
+  package_change_request_id?: string;
   payment_reference?: string | null;
 };
 
-const statusForCode = (code: string) => {
-  if (code === "hold_expired") return 409;
-  if (code === "invalid_status") return 409;
-  if (code === "claim_not_found") return 404;
-  if (code === "invalid_request") return 400;
-  return 500;
-};
+const PAYABLE_PACKAGE_STATUS = "pending_payment";
+const PAYABLE_CHANGE_STATUS = "pending_payment";
+const PAYABLE_CHANGE_BILLING_STATUS = "pending_payment";
 
 export async function POST(request: NextRequest) {
   const auth = await requireAuthenticatedTenantUser(request);
@@ -23,64 +19,151 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = (await request.json()) as PayBody;
-    const claimId = (body.claim_id ?? "").trim();
-    if (!claimId) {
-      return NextResponse.json({ error: "claim_id is required" }, { status: 400 });
-    }
-
-    const { data: claimRow, error: claimError } = await supabaseService
-      .from("online_slot_claims")
-      .select("id, parent_id")
-      .eq("tenant_id", auth.tenantId)
-      .eq("id", claimId)
-      .maybeSingle();
-    if (claimError) throw claimError;
-    if (!claimRow?.id || claimRow.parent_id !== auth.userId) {
-      return NextResponse.json({ error: "Claim not found for this parent." }, { status: 404 });
-    }
-
-    const result = await confirmOnlineSlotPayment(
-      async (fn, args) => await supabaseService.rpc(fn, args),
-      {
-        tenantId: auth.tenantId,
-        claimId,
-        actorUserId: auth.userId,
-        paymentReference: body.payment_reference ?? null,
-      }
-    );
-
-    if (!result.ok) {
+    const packageId = (body.package_id ?? "").trim();
+    const packageChangeRequestId = (body.package_change_request_id ?? "").trim();
+    if (!packageId && !packageChangeRequestId) {
       return NextResponse.json(
-        {
-          ok: false,
-          code: result.code,
-          error: result.message,
-          enrollment_id: result.enrollmentId,
-          claim_status: result.claimStatus,
-        },
-        { status: statusForCode(result.code) }
+        { error: "package_id or package_change_request_id is required" },
+        { status: 400 },
+      );
+    }
+
+    if (packageChangeRequestId) {
+      const changeRes = await supabaseService
+        .from("online_package_change_requests")
+        .select("id, student_id, next_package_id_draft, billing_status, status")
+        .eq("tenant_id", auth.tenantId)
+        .eq("id", packageChangeRequestId)
+        .maybeSingle();
+      if (changeRes.error) throw changeRes.error;
+      if (!changeRes.data?.id) {
+        return NextResponse.json({ error: "Package change request not found." }, { status: 404 });
+      }
+
+      const studentRes = await supabaseService
+        .from("students")
+        .select("id")
+        .eq("tenant_id", auth.tenantId)
+        .eq("id", changeRes.data.student_id)
+        .eq("parent_id", auth.userId)
+        .maybeSingle();
+      if (studentRes.error) throw studentRes.error;
+      if (!studentRes.data?.id) {
+        return NextResponse.json({ error: "Package change request not found for this parent." }, { status: 404 });
+      }
+      if (
+        changeRes.data.status !== PAYABLE_CHANGE_STATUS ||
+        changeRes.data.billing_status !== PAYABLE_CHANGE_BILLING_STATUS
+      ) {
+        return NextResponse.json(
+          { error: "Package change request is not awaiting payment." },
+          { status: 409 },
+        );
+      }
+
+      const updateChangeRes = await supabaseService
+        .from("online_package_change_requests")
+        .update({
+          billing_status: "paid",
+          status: "scheduled",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("tenant_id", auth.tenantId)
+        .eq("id", packageChangeRequestId)
+        .eq("status", PAYABLE_CHANGE_STATUS)
+        .eq("billing_status", PAYABLE_CHANGE_BILLING_STATUS)
+        .select("*")
+        .maybeSingle();
+      if (updateChangeRes.error) throw updateChangeRes.error;
+      if (!updateChangeRes.data?.id) {
+        return NextResponse.json(
+          { error: "Package change request is no longer payable." },
+          { status: 409 },
+        );
+      }
+
+      return NextResponse.json({
+        ok: true,
+        code: "scheduled",
+        message: "Next-month package change has been paid and scheduled.",
+        package_change_request: updateChangeRes.data,
+      });
+    }
+
+    const packageRes = await supabaseService
+      .from("online_recurring_packages")
+      .select("id, student_id, status, hold_expires_at")
+      .eq("tenant_id", auth.tenantId)
+      .eq("id", packageId)
+      .maybeSingle();
+    if (packageRes.error) throw packageRes.error;
+    if (!packageRes.data?.id) {
+      return NextResponse.json({ error: "Package not found." }, { status: 404 });
+    }
+
+    const studentRes = await supabaseService
+      .from("students")
+      .select("id")
+      .eq("tenant_id", auth.tenantId)
+      .eq("id", packageRes.data.student_id)
+      .eq("parent_id", auth.userId)
+      .maybeSingle();
+    if (studentRes.error) throw studentRes.error;
+    if (!studentRes.data?.id) {
+      return NextResponse.json({ error: "Package not found for this parent." }, { status: 404 });
+    }
+    if (packageRes.data.status !== PAYABLE_PACKAGE_STATUS) {
+      return NextResponse.json(
+        { error: "Package is not awaiting payment." },
+        { status: 409 },
+      );
+    }
+
+    if (
+      packageRes.data.hold_expires_at &&
+      new Date(packageRes.data.hold_expires_at).getTime() <= Date.now()
+    ) {
+      return NextResponse.json({ error: "Package hold expired." }, { status: 409 });
+    }
+
+    const updatePackageRes = await supabaseService
+      .from("online_recurring_packages")
+      .update({
+        status: "active",
+        hold_expires_at: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("tenant_id", auth.tenantId)
+      .eq("id", packageId)
+      .eq("status", PAYABLE_PACKAGE_STATUS)
+      .select("*")
+      .maybeSingle();
+    if (updatePackageRes.error) throw updatePackageRes.error;
+    if (!updatePackageRes.data?.id) {
+      return NextResponse.json(
+        { error: "Package is no longer payable." },
+        { status: 409 },
       );
     }
 
     return NextResponse.json({
       ok: true,
-      code: result.code,
-      message: result.message,
-      enrollment_id: result.enrollmentId,
-      claim_status: result.claimStatus,
+      code: "activated",
+      message: "Recurring package payment confirmed.",
+      package: updatePackageRes.data,
     });
   } catch (error: unknown) {
-    console.error("Parent online payment confirm error:", error);
+    console.error("Parent online package payment confirm error:", error);
     if (
-      isMissingFunctionError(error as { message?: string }, "confirm_online_slot_payment") ||
-      isMissingRelationError(error as { message?: string }, "online_slot_claims")
+      isMissingRelationError(error as { message?: string }, "online_recurring_packages") ||
+      isMissingRelationError(error as { message?: string }, "online_package_change_requests")
     ) {
       return NextResponse.json(
-        { error: "Online payment flow is not configured yet. Please contact support." },
-        { status: 503 }
+        { error: "Online package payment flow is not configured yet. Please contact support." },
+        { status: 503 },
       );
     }
-    const message = error instanceof Error ? error.message : "Failed to confirm payment";
+    const message = error instanceof Error ? error.message : "Failed to confirm package payment";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

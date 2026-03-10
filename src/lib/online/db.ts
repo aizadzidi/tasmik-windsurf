@@ -15,7 +15,11 @@ export const isMissingRelationError = (error: ErrorLike | null | undefined, tabl
       text.includes(`relation "public.${normalizedTable}" does not exist`) ||
       (text.includes("could not find the table") &&
         text.includes(normalizedTable) &&
-        text.includes("schema cache"))
+        text.includes("schema cache")) ||
+      (text.includes("could not find a relationship") &&
+        text.includes(normalizedTable)) ||
+      (text.includes("more than one relationship was found") &&
+        text.includes(normalizedTable))
     );
   })();
 

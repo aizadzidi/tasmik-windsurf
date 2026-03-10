@@ -1,28 +1,44 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseService } from "@/lib/supabaseServiceClient";
+import {
+  getSharedTeacherCandidates,
+  currentMonthKey,
+  normalizeDateKey,
+} from "@/lib/online/recurring";
+import { fetchRecurringSnapshot } from "@/lib/online/recurringStore";
+import { isMissingRelationError } from "@/lib/online/db";
 import { requireAuthenticatedTenantUser } from "@/lib/requestAuth";
-import { claimOnlineSlot } from "@/lib/online/claims";
-import { isMissingFunctionError, isMissingRelationError } from "@/lib/online/db";
+import { supabaseService } from "@/lib/supabaseServiceClient";
 
 type ClaimBody = {
   student_id?: string;
-  slot_template_id?: string;
-  session_date?: string;
+  course_id?: string;
+  slot_template_ids?: string[];
+  effective_month?: string;
 };
 
 type ReleaseBody = {
-  claim_id?: string;
-  reason?: string;
+  package_id?: string;
 };
 
-const statusForClaimCode = (code: string) => {
-  if (code === "slot_taken") return 409;
-  if (code === "no_teacher_available") return 409;
-  if (code === "slot_not_found" || code === "weekend_not_allowed" || code === "slot_day_mismatch") {
-    return 400;
-  }
-  if (code === "invalid_request") return 400;
-  return 500;
+const ACTIVE_PACKAGE_STATUSES = new Set(["active", "pending_payment", "draft"]);
+
+const toEffectiveMonthStart = (value: string) => {
+  const normalized = normalizeDateKey(value);
+  if (!normalized) return null;
+  return `${normalized.slice(0, 7)}-01`;
+};
+
+const isPackageActiveForMonth = (
+  row: { status: string; effective_month: string; effective_to: string | null },
+  monthStart: string,
+) => {
+  if (!ACTIVE_PACKAGE_STATUSES.has(row.status)) return false;
+  const effectiveMonth = normalizeDateKey(row.effective_month);
+  const effectiveTo = normalizeDateKey(row.effective_to);
+  if (!effectiveMonth) return false;
+  if (effectiveMonth > monthStart) return false;
+  if (effectiveTo && effectiveTo < monthStart) return false;
+  return true;
 };
 
 export async function POST(request: NextRequest) {
@@ -32,17 +48,28 @@ export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as ClaimBody;
     const studentId = (body.student_id ?? "").trim();
-    const slotTemplateId = (body.slot_template_id ?? "").trim();
-    const sessionDate = (body.session_date ?? "").trim();
+    const courseId = (body.course_id ?? "").trim();
+    const slotTemplateIds = Array.from(
+      new Set((Array.isArray(body.slot_template_ids) ? body.slot_template_ids : []).map(String).map((value) => value.trim()).filter(Boolean)),
+    );
+    const effectiveMonthStart = toEffectiveMonthStart(
+      (body.effective_month ?? currentMonthKey()).trim(),
+    );
 
-    if (!studentId || !slotTemplateId || !sessionDate) {
+    if (!studentId || !courseId || slotTemplateIds.length === 0) {
       return NextResponse.json(
-        { error: "student_id, slot_template_id, and session_date are required" },
-        { status: 400 }
+        { error: "student_id, course_id, and slot_template_ids are required" },
+        { status: 400 },
+      );
+    }
+    if (!effectiveMonthStart) {
+      return NextResponse.json(
+        { error: "effective_month must be in YYYY-MM or YYYY-MM-DD format" },
+        { status: 400 },
       );
     }
 
-    const { data: studentRow, error: studentError } = await supabaseService
+    const studentRes = await supabaseService
       .from("students")
       .select("id")
       .eq("tenant_id", auth.tenantId)
@@ -50,52 +77,143 @@ export async function POST(request: NextRequest) {
       .eq("parent_id", auth.userId)
       .neq("record_type", "prospect")
       .maybeSingle();
-
-    if (studentError) throw studentError;
-    if (!studentRow?.id) {
+    if (studentRes.error) throw studentRes.error;
+    if (!studentRes.data?.id) {
       return NextResponse.json({ error: "Student not found for this parent." }, { status: 403 });
     }
 
-    const result = await claimOnlineSlot(
-      async (fn, args) => await supabaseService.rpc(fn, args),
-      {
-        tenantId: auth.tenantId,
-        parentId: auth.userId,
-        studentId,
-        slotTemplateId,
-        sessionDate,
-        actorUserId: auth.userId,
-      }
-    );
-
-    if (!result.ok) {
+    const snapshot = await fetchRecurringSnapshot(supabaseService, auth.tenantId);
+    if (snapshot.warning) {
       return NextResponse.json(
-        { ok: false, code: result.code, error: result.message, claim_id: result.claimId ?? null },
-        { status: statusForClaimCode(result.code) }
+        { error: "Recurring package storage is not ready yet. Run the online attendance v2 migration first." },
+        { status: 503 },
       );
     }
+
+    const course = snapshot.courses.find((row) => row.id === courseId && row.is_active);
+    if (!course) {
+      return NextResponse.json({ error: "Course not found." }, { status: 404 });
+    }
+
+    const templates = snapshot.templates.filter((template) => slotTemplateIds.includes(template.id));
+    if (templates.length !== slotTemplateIds.length) {
+      return NextResponse.json({ error: "One or more selected weekly slots were not found." }, { status: 404 });
+    }
+    if (templates.some((template) => template.course_id !== courseId || !template.is_active)) {
+      return NextResponse.json(
+        { error: "All selected weekly slots must belong to the same active course." },
+        { status: 409 },
+      );
+    }
+
+    const requiredCount = Math.max(course.sessions_per_week ?? templates.length, 1);
+    if (slotTemplateIds.length !== requiredCount) {
+      return NextResponse.json(
+        { error: `This course requires exactly ${requiredCount} weekly slot(s).` },
+        { status: 409 },
+      );
+    }
+
+    const activePackagesForMonth = snapshot.packages.filter((pkg) =>
+      isPackageActiveForMonth(pkg, effectiveMonthStart),
+    );
+    const existingPackage = activePackagesForMonth.find(
+      (pkg) => pkg.student_id === studentId,
+    );
+    if (existingPackage) {
+      return NextResponse.json({ error: "This student already has a package draft or active package for that month." }, { status: 409 });
+    }
+
+    const activePackageById = new Map(
+      activePackagesForMonth.map((pkg) => [pkg.id, pkg] as const),
+    );
+    const occupiedTeacherSlotKeys = new Set(
+      snapshot.packageSlots
+        .filter(
+          (slot) =>
+            slot.status === "active" &&
+            activePackageById.has(slot.package_id),
+        )
+        .map((slot) => {
+          const pkg = activePackageById.get(slot.package_id)!;
+          return `${pkg.teacher_id}:${slot.slot_template_id}`;
+        }),
+    );
+
+    const sharedTeachers = getSharedTeacherCandidates({
+      slotTemplateIds,
+      teacherAvailability: snapshot.teacherAvailability,
+      activePackages: snapshot.packages,
+    });
+    const assignedTeacher =
+      sharedTeachers.find((teacher) =>
+        slotTemplateIds.every(
+          (slotTemplateId) =>
+            !occupiedTeacherSlotKeys.has(`${teacher.teacherId}:${slotTemplateId}`),
+        ),
+      ) ?? null;
+    if (!assignedTeacher) {
+      return NextResponse.json({ error: "No teacher is available for the selected package slots." }, { status: 409 });
+    }
+
+    const holdExpiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    const insertPackageRes = await supabaseService
+      .from("online_recurring_packages")
+      .insert({
+        tenant_id: auth.tenantId,
+        student_id: studentId,
+        course_id: courseId,
+        teacher_id: assignedTeacher.teacherId,
+        status: "pending_payment",
+        source: "parent_self_pick",
+        effective_month: effectiveMonthStart,
+        effective_from: effectiveMonthStart,
+        sessions_per_week: requiredCount,
+        monthly_fee_cents_snapshot: course.monthly_fee_cents ?? 0,
+        hold_expires_at: holdExpiresAt,
+        created_by: auth.userId,
+        updated_by: auth.userId,
+      })
+      .select("*")
+      .single();
+    if (insertPackageRes.error) throw insertPackageRes.error;
+
+    const insertSlotRows = await supabaseService
+      .from("online_recurring_package_slots")
+      .insert(
+        templates.map((template) => ({
+          tenant_id: auth.tenantId,
+          package_id: insertPackageRes.data.id,
+          slot_template_id: template.id,
+          day_of_week_snapshot: template.day_of_week,
+          start_time_snapshot: template.start_time,
+          duration_minutes_snapshot: template.duration_minutes,
+          status: "active",
+        })),
+      )
+      .select("*");
+    if (insertSlotRows.error) throw insertSlotRows.error;
 
     return NextResponse.json({
       ok: true,
-      code: result.code,
-      message: result.message,
-      claim_id: result.claimId,
-      assigned_teacher_id: result.assignedTeacherId,
-      seat_hold_expires_at: result.seatHoldExpiresAt,
-      enrollment_id: result.enrollmentId,
+      code: "claimed",
+      package_id: insertPackageRes.data.id,
+      assigned_teacher_id: assignedTeacher.teacherId,
+      seat_hold_expires_at: holdExpiresAt,
+      package_slots: insertSlotRows.data ?? [],
     });
   } catch (error: unknown) {
-    console.error("Parent online claim error:", error);
+    console.error("Parent online package claim error:", error);
     if (
-      isMissingFunctionError(error as { message?: string }, "claim_online_slot_atomic") ||
-      isMissingRelationError(error as { message?: string }, "online_slot_claims")
+      isMissingRelationError(error as { message?: string }, "online_recurring_packages") ||
+      isMissingRelationError(error as { message?: string }, "online_recurring_package_slots")
     ) {
       return NextResponse.json(
-        { error: "Online enrollment is not configured yet. Please contact support." },
-        { status: 503 }
+        { error: "Online package enrollment is not configured yet. Please contact support." },
+        { status: 503 },
       );
     }
-    const message = error instanceof Error ? error.message : "Failed to claim online slot";
+    const message = error instanceof Error ? error.message : "Failed to claim package";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
@@ -106,41 +224,55 @@ export async function DELETE(request: NextRequest) {
 
   try {
     const body = (await request.json()) as ReleaseBody;
-    const claimId = (body.claim_id ?? "").trim();
-    if (!claimId) {
-      return NextResponse.json({ error: "claim_id is required" }, { status: 400 });
+    const packageId = (body.package_id ?? "").trim();
+    if (!packageId) {
+      return NextResponse.json({ error: "package_id is required" }, { status: 400 });
     }
 
-    const { data: claimRow, error: claimError } = await supabaseService
-      .from("online_slot_claims")
-      .select("id, parent_id, status")
+    const packageRes = await supabaseService
+      .from("online_recurring_packages")
+      .select("id, student_id, status")
       .eq("tenant_id", auth.tenantId)
-      .eq("id", claimId)
+      .eq("id", packageId)
       .maybeSingle();
-    if (claimError) throw claimError;
-    if (!claimRow?.id || claimRow.parent_id !== auth.userId) {
-      return NextResponse.json({ error: "Claim not found." }, { status: 404 });
+    if (packageRes.error) throw packageRes.error;
+    if (!packageRes.data?.id) {
+      return NextResponse.json({ error: "Package draft not found." }, { status: 404 });
     }
 
-    const { data: rpcData, error: rpcError } = await supabaseService.rpc("release_online_slot_claim", {
-      p_tenant_id: auth.tenantId,
-      p_claim_id: claimId,
-      p_reason: body.reason?.trim() || "parent_release",
-    });
-
-    if (rpcError) throw rpcError;
-    const row = Array.isArray(rpcData) ? rpcData[0] : null;
-    if (!row || !row.ok) {
-      return NextResponse.json(
-        { error: row?.message || "Unable to release claim.", code: row?.code || "release_failed" },
-        { status: row?.code === "active_claim" ? 409 : 400 }
-      );
+    const studentRes = await supabaseService
+      .from("students")
+      .select("id")
+      .eq("tenant_id", auth.tenantId)
+      .eq("id", packageRes.data.student_id)
+      .eq("parent_id", auth.userId)
+      .maybeSingle();
+    if (studentRes.error) throw studentRes.error;
+    if (!studentRes.data?.id) {
+      return NextResponse.json({ error: "Package draft not found for this parent." }, { status: 404 });
+    }
+    if (packageRes.data.status === "active") {
+      return NextResponse.json({ error: "Active packages cannot be released directly." }, { status: 409 });
     }
 
-    return NextResponse.json({ ok: true, code: row.code, message: row.message });
+    const deleteSlotRes = await supabaseService
+      .from("online_recurring_package_slots")
+      .delete()
+      .eq("tenant_id", auth.tenantId)
+      .eq("package_id", packageId);
+    if (deleteSlotRes.error) throw deleteSlotRes.error;
+
+    const deletePackageRes = await supabaseService
+      .from("online_recurring_packages")
+      .delete()
+      .eq("tenant_id", auth.tenantId)
+      .eq("id", packageId);
+    if (deletePackageRes.error) throw deletePackageRes.error;
+
+    return NextResponse.json({ ok: true });
   } catch (error: unknown) {
-    console.error("Parent online claim release error:", error);
-    const message = error instanceof Error ? error.message : "Failed to release online claim";
+    console.error("Parent online package release error:", error);
+    const message = error instanceof Error ? error.message : "Failed to release package draft";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

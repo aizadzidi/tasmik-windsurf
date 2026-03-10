@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { useAdminPermissions } from "@/hooks/useAdminPermissions";
-import { getRequiredAdminPermission } from "@/lib/adminAccess";
+import { getRequiredAdminPermission, hasAdminPermission } from "@/lib/adminAccess";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -49,7 +49,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     if (!ready || permissionsLoading) return;
 
     const hasAccess =
-      isAdmin || (requiredPermission ? permissions.has(requiredPermission) : false);
+      isAdmin || hasAdminPermission(requiredPermission, permissions);
 
     if (!hasAccess) {
       setAuthorized(false);

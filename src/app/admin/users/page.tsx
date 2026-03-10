@@ -6,14 +6,27 @@ import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Switch } from "@/components/ui/Switch";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ADMIN_PAGE_PERMISSIONS } from "@/lib/adminAccess";
 import { authFetch } from "@/lib/authFetch";
+import { MoreHorizontal, SlidersHorizontal } from "lucide-react";
 
 type UserRow = {
   id: string;
   name: string | null;
   email: string | null;
   role: "admin" | "teacher" | "parent";
+  created_at?: string | null;
+  linked_children?: Array<{
+    id: string;
+    name: string | null;
+    class_name: string | null;
+  }>;
 };
 
 type ProgramRow = {
@@ -22,13 +35,34 @@ type ProgramRow = {
   type: "campus" | "online" | "hybrid";
 };
 
+type ParentCandidate = {
+  id: string;
+  name: string | null;
+  parent_id: string | null;
+  class_name: string | null;
+};
+
 type AssignmentValue = "campus" | "online" | "both" | "unassigned";
+type TeachingScopeFilter = "all" | AssignmentValue;
+type RoleFilter = "all" | UserRow["role"] | "unassigned-parent";
+type SortOption =
+  | "name-asc"
+  | "name-desc"
+  | "registered-newest"
+  | "registered-oldest";
 
 const ROLE_OPTIONS: UserRow["role"][] = ["admin", "teacher", "parent"];
+const ASSIGNMENT_LABELS: Record<AssignmentValue, string> = {
+  campus: "Campus",
+  online: "Online",
+  both: "Campus + Online",
+  unassigned: "Unassigned",
+};
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [programs, setPrograms] = useState<ProgramRow[]>([]);
+  const [parentCandidates, setParentCandidates] = useState<ParentCandidate[]>([]);
   const [assignmentsByTeacher, setAssignmentsByTeacher] = useState<Record<string, AssignmentValue>>({});
   const [adminPagePermissions, setAdminPagePermissions] = useState<Record<string, Record<string, boolean>>>({});
   const [expandedAdminAccess, setExpandedAdminAccess] = useState<Record<string, boolean>>({});
@@ -40,6 +74,13 @@ export default function AdminUsersPage() {
   const [assignmentError, setAssignmentError] = useState("");
   const [permissionError, setPermissionError] = useState("");
   const [query, setQuery] = useState("");
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
+  const [teachingScopeFilter, setTeachingScopeFilter] =
+    useState<TeachingScopeFilter>("all");
+  const [sortOption, setSortOption] = useState<SortOption>("name-asc");
+  const [selectedChildByParent, setSelectedChildByParent] = useState<Record<string, string>>({});
+  const [parentLinkSavingByParent, setParentLinkSavingByParent] = useState<Record<string, boolean>>({});
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const updateControllers = useRef<Map<string, AbortController>>(new Map());
   const updateRequestIds = useRef<Map<string, number>>(new Map());
   const assignmentControllers = useRef<Map<string, AbortController>>(new Map());
@@ -51,7 +92,7 @@ export default function AdminUsersPage() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
     try {
-      const res = await authFetch("/api/admin/users", {
+      const res = await authFetch("/api/admin/users?include_parent_candidates=true", {
         signal: controller.signal,
       });
       if (!res.ok) {
@@ -59,7 +100,15 @@ export default function AdminUsersPage() {
         throw new Error(payload?.error || "Failed to load users");
       }
       const data = await res.json();
-      setUsers(Array.isArray(data) ? data : []);
+      if (Array.isArray(data)) {
+        setUsers(data);
+        setParentCandidates([]);
+      } else {
+        setUsers(Array.isArray(data?.users) ? data.users : []);
+        setParentCandidates(
+          Array.isArray(data?.parent_candidates) ? data.parent_candidates : []
+        );
+      }
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
         setError("Request timed out");
@@ -172,12 +221,195 @@ export default function AdminUsersPage() {
 
   const filteredUsers = useMemo(() => {
     const term = query.trim().toLowerCase();
-    if (!term) return users;
-    return users.filter((u) => {
-      const haystack = `${u.name ?? ""} ${u.email ?? ""}`.toLowerCase();
-      return haystack.includes(term);
+    const searchedUsers = !term
+      ? users
+      : users.filter((u) => {
+          const haystack = `${u.name ?? ""} ${u.email ?? ""}`.toLowerCase();
+          return haystack.includes(term);
+        });
+
+    const roleFilteredUsers = searchedUsers.filter((user) => {
+      if (roleFilter === "all") return true;
+      if (roleFilter === "unassigned-parent") {
+        if (user.role !== "parent") return false;
+        return (user.linked_children ?? []).length === 0;
+      }
+      return user.role === roleFilter;
     });
-  }, [query, users]);
+
+    const scopeFilteredUsers = roleFilteredUsers.filter((user) => {
+      if (teachingScopeFilter === "all") return true;
+      if (user.role !== "teacher") return false;
+      return (assignmentsByTeacher[user.id] ?? "unassigned") === teachingScopeFilter;
+    });
+
+    const getRegistrationTimestamp = (user: UserRow) => {
+      if (!user.created_at) return 0;
+      const timestamp = new Date(user.created_at).getTime();
+      return Number.isNaN(timestamp) ? 0 : timestamp;
+    };
+
+    return [...scopeFilteredUsers].sort((a, b) => {
+      if (sortOption === "name-desc") {
+        return (b.name ?? "").localeCompare(a.name ?? "");
+      }
+      if (sortOption === "registered-newest") {
+        return getRegistrationTimestamp(b) - getRegistrationTimestamp(a);
+      }
+      if (sortOption === "registered-oldest") {
+        return getRegistrationTimestamp(a) - getRegistrationTimestamp(b);
+      }
+      return (a.name ?? "").localeCompare(b.name ?? "");
+    });
+  }, [assignmentsByTeacher, query, roleFilter, sortOption, teachingScopeFilter, users]);
+
+  const formatRegistrationDate = (value?: string | null) => {
+    if (!value) return "Registered date unavailable";
+    const parsedDate = new Date(value);
+    if (Number.isNaN(parsedDate.getTime())) return "Registered date unavailable";
+    return `Registered ${parsedDate.toLocaleDateString("ms-MY", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    })}`;
+  };
+
+  const syncLinkedChildren = useCallback(
+    (child: ParentCandidate, nextParentId: string | null) => {
+      setUsers((prev) =>
+        prev.map((user) => {
+          if (user.role !== "parent") return user;
+          const withoutChild = (user.linked_children ?? []).filter(
+            (linkedChild) => linkedChild.id !== child.id
+          );
+          if (nextParentId && user.id === nextParentId) {
+            const nextLinkedChildren = [
+              ...withoutChild,
+              {
+                id: child.id,
+                name: child.name,
+                class_name: child.class_name,
+              },
+            ].sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+            return { ...user, linked_children: nextLinkedChildren };
+          }
+          return { ...user, linked_children: withoutChild };
+        })
+      );
+    },
+    []
+  );
+
+  const updateParentChildLink = async (
+    parentId: string,
+    childId: string,
+    action: "link-child" | "unlink-child"
+  ) => {
+    const child = parentCandidates.find((item) => item.id === childId);
+    if (!child) {
+      setError("Selected child not found");
+      return;
+    }
+
+    setParentLinkSavingByParent((prev) => ({ ...prev, [parentId]: true }));
+    setError("");
+    try {
+      const res = await authFetch("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          parent_id: parentId,
+          child_id: childId,
+        }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        throw new Error(payload?.error || "Failed to update parent-child link");
+      }
+
+      const nextParentId = action === "link-child" ? parentId : null;
+      setParentCandidates((prev) =>
+        prev.map((candidate) =>
+          candidate.id === childId ? { ...candidate, parent_id: nextParentId } : candidate
+        )
+      );
+      syncLinkedChildren(child, nextParentId);
+      if (action === "link-child") {
+        setSelectedChildByParent((prev) => ({ ...prev, [parentId]: "" }));
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to update parent-child link";
+      setError(message);
+    } finally {
+      setParentLinkSavingByParent((prev) => ({ ...prev, [parentId]: false }));
+    }
+  };
+
+  const deleteUser = async (user: UserRow) => {
+    const label = user.name || user.email || "this user";
+    const confirmed = window.confirm(
+      `Delete ${label}? This action removes the user from the system.`
+    );
+    if (!confirmed) return;
+
+    setDeletingUserId(user.id);
+    setError("");
+    try {
+      const res = await authFetch(`/api/admin/users?id=${encodeURIComponent(user.id)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        throw new Error(payload?.error || "Failed to delete user");
+      }
+
+      setUsers((prev) => prev.filter((item) => item.id !== user.id));
+      setAssignmentsByTeacher((prev) => {
+        if (!(user.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[user.id];
+        return next;
+      });
+      setAdminPagePermissions((prev) => {
+        if (!(user.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[user.id];
+        return next;
+      });
+      setExpandedAdminAccess((prev) => {
+        if (!(user.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[user.id];
+        return next;
+      });
+      setSelectedChildByParent((prev) => {
+        if (!(user.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[user.id];
+        return next;
+      });
+      setParentLinkSavingByParent((prev) => {
+        if (!(user.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[user.id];
+        return next;
+      });
+      if (user.role === "parent") {
+        setParentCandidates((prev) =>
+          prev.map((child) =>
+            child.parent_id === user.id ? { ...child, parent_id: null } : child
+          )
+        );
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to delete user";
+      setError(message);
+    } finally {
+      setDeletingUserId(null);
+    }
+  };
 
   const updateRole = async (userId: string, role: UserRow["role"]) => {
     const existingController = updateControllers.current.get(userId);
@@ -362,21 +594,70 @@ export default function AdminUsersPage() {
           </div>
 
           <Card className="p-4">
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search by name or email"
                 aria-label="Search users by name or email"
-                className="md:max-w-sm"
+                className="w-full lg:max-w-sm"
               />
-              <Button
-                variant="secondary"
-                onClick={() => fetchUsers()}
-                disabled={loading}
-              >
-                Refresh
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={roleFilter}
+                  onChange={(event) => setRoleFilter(event.target.value as RoleFilter)}
+                  aria-label="Filter users by role"
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
+                >
+                  <option value="all">All roles</option>
+                  <option value="admin">Admin</option>
+                  <option value="teacher">Teacher</option>
+                  <option value="parent">Parent</option>
+                  <option value="unassigned-parent">Unassigned Parent</option>
+                </select>
+                <select
+                  value={teachingScopeFilter}
+                  onChange={(event) =>
+                    setTeachingScopeFilter(event.target.value as TeachingScopeFilter)
+                  }
+                  aria-label="Filter teachers by teaching scope"
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
+                >
+                  <option value="all">All scopes</option>
+                  <option value="campus">Campus</option>
+                  <option value="online">Online</option>
+                  <option value="both">Campus + Online</option>
+                  <option value="unassigned">Unassigned</option>
+                </select>
+                <div className="relative">
+                  <SlidersHorizontal
+                    className="pointer-events-none absolute left-3 top-1/2 h-4 w-4
+                    -translate-y-1/2 text-slate-400"
+                  />
+                  <select
+                    value={sortOption}
+                    onChange={(event) =>
+                      setSortOption(event.target.value as SortOption)
+                    }
+                    aria-label="Sort users"
+                    className="rounded-lg border border-slate-200 bg-white py-2
+                    pl-9 pr-8 text-sm text-slate-700 shadow-sm focus:border-slate-400
+                    focus:outline-none"
+                  >
+                    <option value="name-asc">Name A-Z</option>
+                    <option value="name-desc">Name Z-A</option>
+                    <option value="registered-newest">Registered (Newest)</option>
+                    <option value="registered-oldest">Registered (Oldest)</option>
+                  </select>
+                </div>
+                <Button
+                  variant="secondary"
+                  onClick={() => fetchUsers()}
+                  disabled={loading}
+                >
+                  Refresh
+                </Button>
+              </div>
             </div>
           </Card>
 
@@ -406,6 +687,12 @@ export default function AdminUsersPage() {
                 ) : (
                   filteredUsers.map((user) => {
                     const isTeacher = user.role === "teacher";
+                    const isParent = user.role === "parent";
+                    const linkedChildren = user.linked_children ?? [];
+                    const linkableChildren = parentCandidates.filter(
+                      (child) => !child.parent_id
+                    );
+                    const isParentLinkSaving = Boolean(parentLinkSavingByParent[user.id]);
                     const enabledLabels = getEnabledPermissionLabels(user.id);
                     const enabledKeys = getEnabledPermissionKeys(user.id);
                     const isAdminAccessEnabled = enabledKeys.length > 0;
@@ -426,11 +713,42 @@ export default function AdminUsersPage() {
                       >
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                           <div className="min-w-[220px]">
-                            <div className="text-sm font-semibold text-slate-900">
-                              {user.name || "Unnamed user"}
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="text-sm font-semibold text-slate-900">
+                                {user.name || "Unnamed user"}
+                              </div>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-slate-500 hover:text-slate-900"
+                                    aria-label={`Actions for ${user.name || user.email || "user"}`}
+                                  >
+                                    <MoreHorizontal className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem
+                                    variant="destructive"
+                                    disabled={deletingUserId === user.id}
+                                    onSelect={(event) => {
+                                      event.preventDefault();
+                                      if (deletingUserId === user.id) return;
+                                      void deleteUser(user);
+                                    }}
+                                  >
+                                    {deletingUserId === user.id ? "Deleting…" : "Delete user"}
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
                             <div className="text-xs text-slate-500">
                               {user.email || "No email"}
+                            </div>
+                            <div className="mt-1 text-xs text-slate-400">
+                              {formatRegistrationDate(user.created_at)}
                             </div>
                             <div className="mt-3 flex flex-wrap items-center gap-2">
                               <select
@@ -452,7 +770,10 @@ export default function AdminUsersPage() {
                                 <span className="text-xs text-slate-500">Saving…</span>
                               ) : null}
                               {isTeacher ? (
-                                <>
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                                    Teaching Scope
+                                  </span>
                                   <select
                                     value={assignmentsByTeacher[user.id] ?? "unassigned"}
                                     onChange={(e) =>
@@ -470,10 +791,13 @@ export default function AdminUsersPage() {
                                     <option value="online">Online</option>
                                     <option value="both">Campus + Online</option>
                                   </select>
+                                  <span className="text-[11px] text-slate-500">
+                                    {ASSIGNMENT_LABELS[assignmentsByTeacher[user.id] ?? "unassigned"]}
+                                  </span>
                                   {assignmentSavingId === user.id ? (
                                     <span className="text-xs text-slate-500">Saving…</span>
                                   ) : null}
-                                </>
+                                </div>
                               ) : null}
                             </div>
                           </div>
@@ -558,6 +882,81 @@ export default function AdminUsersPage() {
                                   Enable admin access to choose pages.
                                 </p>
                               )}
+                            </div>
+                          ) : null}
+                          {isParent ? (
+                            <div className="w-full rounded-xl border border-slate-100 bg-slate-50/70 p-3 lg:ml-auto lg:max-w-lg">
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                                Linked Children
+                              </p>
+                              <p className="text-sm text-slate-700">
+                                {linkedChildren.length > 0
+                                  ? `${linkedChildren.length} anak linked`
+                                  : "No child linked yet"}
+                              </p>
+                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                <select
+                                  value={selectedChildByParent[user.id] ?? ""}
+                                  onChange={(event) =>
+                                    setSelectedChildByParent((prev) => ({
+                                      ...prev,
+                                      [user.id]: event.target.value,
+                                    }))
+                                  }
+                                  aria-label={`Select child for ${user.name || user.email || "parent"}`}
+                                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
+                                  disabled={isParentLinkSaving}
+                                >
+                                  <option value="">Select child to link</option>
+                                  {linkableChildren.map((child) => (
+                                    <option key={child.id} value={child.id}>
+                                      {child.name || "Unnamed child"}
+                                      {child.class_name ? ` (${child.class_name})` : ""}
+                                    </option>
+                                  ))}
+                                </select>
+                                <Button
+                                  size="sm"
+                                  onClick={() =>
+                                    updateParentChildLink(
+                                      user.id,
+                                      selectedChildByParent[user.id] ?? "",
+                                      "link-child"
+                                    )
+                                  }
+                                  disabled={
+                                    isParentLinkSaving ||
+                                    !selectedChildByParent[user.id]
+                                  }
+                                >
+                                  {isParentLinkSaving ? "Saving…" : "Link child"}
+                                </Button>
+                              </div>
+                              {linkedChildren.length > 0 ? (
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                  {linkedChildren.map((child) => (
+                                    <button
+                                      key={child.id}
+                                      type="button"
+                                      onClick={() =>
+                                        updateParentChildLink(
+                                          user.id,
+                                          child.id,
+                                          "unlink-child"
+                                        )
+                                      }
+                                      disabled={isParentLinkSaving}
+                                      className="rounded-full border border-slate-200 bg-white
+                                      px-2.5 py-1 text-[11px] text-slate-600
+                                      hover:border-slate-300"
+                                    >
+                                      {child.name || "Unnamed child"}
+                                      {child.class_name ? ` (${child.class_name})` : ""}
+                                      {" · Unlink"}
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : null}
                             </div>
                           ) : null}
                         </div>

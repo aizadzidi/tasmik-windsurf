@@ -18,6 +18,8 @@ import { listAttendanceRecords } from "@/lib/attendanceApi";
 import { deleteHoliday, listHolidays, upsertHoliday } from "@/lib/holidaysApi";
 import type { AttendanceRecord, AttendanceStatus, ClassAttendance, SchoolHoliday } from "@/types/attendance";
 import { supabase } from "@/lib/supabaseClient";
+import AdminAttendanceV2 from "@/components/admin/AdminAttendanceV2";
+import { isAttendanceV2GloballyEnabled } from "@/lib/attendanceV2";
 
 type FormState = {
   id?: string | null;
@@ -97,6 +99,8 @@ type StudentRosterRow = {
 };
 
 export default function AdminAttendancePage() {
+  const attendanceV2Enabled = isAttendanceV2GloballyEnabled();
+
   const [classes, setClasses] = React.useState<ClassAttendance[]>([]);
   const [attendanceState, setAttendanceState] = React.useState<AttendanceRecord>({});
   const [selectedDate, setSelectedDate] = React.useState(() => todayIso());
@@ -383,6 +387,10 @@ export default function AdminAttendancePage() {
     const totalAbsent = filteredSummaries.reduce((sum, item) => sum + item.absentDays, 0);
     return { totalStudents, totalPresent, totalAbsent };
   }, [filteredSummaries]);
+
+  if (attendanceV2Enabled) {
+    return <AdminAttendanceV2 />;
+  }
 
   return (
     <div className="min-h-screen bg-[#f6f7fb] text-slate-900">

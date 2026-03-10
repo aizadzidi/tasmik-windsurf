@@ -3,12 +3,16 @@ import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
 import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
 import { requireAdminPermission } from "@/lib/adminPermissions";
 import { isMissingColumnError, isMissingRelationError } from "@/lib/online/db";
+import { filterTeachersByTeachingScope } from "@/lib/adminTeacherScope";
 
 type CoursePayload = {
   name?: string;
   description?: string | null;
   monthly_fee_cents?: number;
   sessions_per_week?: number;
+  color_hex?: string | null;
+  color?: string | null;
+  default_slot_duration_minutes?: number;
   is_active?: boolean;
 };
 
@@ -41,6 +45,14 @@ const toIntOrFallback = (value: unknown, fallback: number) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return Math.max(0, Math.trunc(numeric));
+};
+
+const normalizeColorHex = (value: unknown) => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
+  return /^#[0-9a-fA-F]{6}$/.test(normalized) ? normalized.toUpperCase() : null;
 };
 
 export async function GET(request: NextRequest) {
@@ -122,18 +134,37 @@ export async function GET(request: NextRequest) {
         throw prefError;
       }
 
-      const { data: teacherRows, error: teacherError } = await client
+      let teacherRows: Array<{ id: string; name: string | null }> = [];
+      const { data: tenantTeacherRows, error: teacherError } = await client
         .from("users")
         .select("id, name")
         .eq("role", "teacher")
+        .eq("tenant_id", tenantId)
         .order("name", { ascending: true });
-      if (teacherError) throw teacherError;
+
+      if (teacherError && !isMissingColumnError(teacherError, "tenant_id", "users")) {
+        throw teacherError;
+      }
+
+      if (teacherError) {
+        const { data: fallbackTeacherRows, error: fallbackTeacherError } = await client
+          .from("users")
+          .select("id, name")
+          .eq("role", "teacher")
+          .order("name", { ascending: true });
+        if (fallbackTeacherError) throw fallbackTeacherError;
+        teacherRows = (fallbackTeacherRows ?? []) as typeof teacherRows;
+      } else {
+        teacherRows = (tenantTeacherRows ?? []) as typeof teacherRows;
+      }
+
+      teacherRows = await filterTeachersByTeachingScope(client, teacherRows, "online", tenantId);
 
       return {
         courses: courseRows ?? [],
         templates: templateRows ?? [],
         teacher_availability: prefRows,
-        teachers: (teacherRows ?? []).map((row) => ({
+        teachers: teacherRows.map((row) => ({
           id: row.id,
           name: row.name ?? "Unnamed Teacher",
         })),
@@ -162,6 +193,11 @@ export async function POST(request: NextRequest) {
     const tenantId = await resolveTenantIdOrThrow(request);
     const monthlyFeeCents = toIntOrFallback(body.monthly_fee_cents, 0);
     const sessionsPerWeek = Math.min(Math.max(toIntOrFallback(body.sessions_per_week, 3), 1), 14);
+    const defaultSlotDurationMinutes = Math.min(
+      Math.max(toIntOrFallback(body.default_slot_duration_minutes, 30), 15),
+      180
+    );
+    const colorHex = normalizeColorHex(body.color_hex ?? body.color);
 
     const payload = await adminOperationSimple(async (client) => {
       const { data: programRows, error: programError } = await client
@@ -177,22 +213,38 @@ export async function POST(request: NextRequest) {
         (programRows ?? [])[0]?.id ??
         null;
 
-      const { data, error } = await client
+      const insertPayload: Record<string, unknown> = {
+        tenant_id: tenantId,
+        program_id: onlineProgramId,
+        name,
+        description: body.description?.trim() || null,
+        monthly_fee_cents: monthlyFeeCents,
+        sessions_per_week: sessionsPerWeek,
+        default_slot_duration_minutes: defaultSlotDurationMinutes,
+        color_hex: colorHex,
+        is_active: body.is_active !== false,
+        created_by: guard.userId,
+      };
+
+      const insertWithColor = await client
         .from("online_courses")
-        .insert({
-          tenant_id: tenantId,
-          program_id: onlineProgramId,
-          name,
-          description: body.description?.trim() || null,
-          monthly_fee_cents: monthlyFeeCents,
-          sessions_per_week: sessionsPerWeek,
-          is_active: body.is_active !== false,
-          created_by: guard.userId,
-        })
+        .insert(insertPayload)
         .select("*")
         .single();
-      if (error) throw error;
-      return data;
+      if (!insertWithColor.error) return insertWithColor.data;
+
+      if (!isMissingColumnError(insertWithColor.error, "color_hex", "online_courses")) {
+        throw insertWithColor.error;
+      }
+
+      delete insertPayload.color_hex;
+      const insertFallback = await client
+        .from("online_courses")
+        .insert(insertPayload)
+        .select("*")
+        .single();
+      if (insertFallback.error) throw insertFallback.error;
+      return insertFallback.data;
     });
 
     return NextResponse.json(payload, { status: 201 });
@@ -228,18 +280,45 @@ export async function PUT(request: NextRequest) {
         14
       );
     }
+    if (body.default_slot_duration_minutes !== undefined) {
+      updates.default_slot_duration_minutes = Math.min(
+        Math.max(toIntOrFallback(body.default_slot_duration_minutes, 30), 15),
+        180
+      );
+    }
+    if (body.color_hex !== undefined || body.color !== undefined) {
+      updates.color_hex = normalizeColorHex(body.color_hex ?? body.color);
+    }
     if (body.is_active !== undefined) updates.is_active = body.is_active;
 
     const payload = await adminOperationSimple(async (client) => {
-      const { data, error } = await client
+      const updateWithColor = await client
         .from("online_courses")
         .update(updates)
         .eq("tenant_id", tenantId)
         .eq("id", id)
         .select("*")
         .single();
-      if (error) throw error;
-      return data;
+      if (!updateWithColor.error) return updateWithColor.data;
+
+      if (!isMissingColumnError(updateWithColor.error, "color_hex", "online_courses")) {
+        throw updateWithColor.error;
+      }
+
+      const fallbackUpdates = { ...updates };
+      delete fallbackUpdates.color_hex;
+      if (Object.keys(fallbackUpdates).length === 0) {
+        throw new Error("Course color is not available yet. Please run latest online courses migration.");
+      }
+      const updateFallback = await client
+        .from("online_courses")
+        .update(fallbackUpdates)
+        .eq("tenant_id", tenantId)
+        .eq("id", id)
+        .select("*")
+        .single();
+      if (updateFallback.error) throw updateFallback.error;
+      return updateFallback.data;
     });
 
     return NextResponse.json(payload);
@@ -257,12 +336,32 @@ export async function DELETE(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const id = (searchParams.get("id") ?? "").trim();
+    const mode = (searchParams.get("mode") ?? "").trim().toLowerCase();
+    const hardDelete = mode === "hard" || mode === "delete";
     if (!id) {
       return NextResponse.json({ error: "id is required" }, { status: 400 });
     }
 
     const tenantId = await resolveTenantIdOrThrow(request);
     await adminOperationSimple(async (client) => {
+      if (hardDelete) {
+        const { error } = await client
+          .from("online_courses")
+          .delete()
+          .eq("tenant_id", tenantId)
+          .eq("id", id);
+        if (error) {
+          const message = (error as { message?: string }).message ?? "";
+          if (
+            /foreign key|violates|referenced|constraint|still referenced|in use/i.test(message)
+          ) {
+            throw new Error("Course is still used by slots/packages. Archive it first.");
+          }
+          throw error;
+        }
+        return;
+      }
+
       const { error } = await client
         .from("online_courses")
         .update({ is_active: false })

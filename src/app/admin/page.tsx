@@ -172,7 +172,7 @@ export default function AdminPage() {
         const [studentsRes, parentsRes, teachersRes, classesRes, enrollmentsRes] = await Promise.all([
           authFetch('/api/admin/students'),
           authFetch('/api/admin/users?role=parent'),
-          authFetch('/api/admin/users?role=teacher'),
+          authFetch('/api/admin/users?role=teacher&teaching_scope=campus'),
           authFetch('/api/admin/classes'),
           authFetch('/api/admin/enrollments'),
         ]);

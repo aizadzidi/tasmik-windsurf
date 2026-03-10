@@ -8,6 +8,7 @@ import NotificationPanel from "./NotificationPanel";
 import { notificationService } from "@/lib/notificationService";
 import { AnimatePresence, motion } from "framer-motion";
 import { useAdminPermissions } from "@/hooks/useAdminPermissions";
+import { hasAdminPermission } from "@/lib/adminAccess";
 
 const AdminNavbar = () => {
   const pathname = usePathname();
@@ -129,17 +130,46 @@ const AdminNavbar = () => {
         </svg>
       )
     },
+    {
+      href: "/admin/online/attendance",
+      label: "Attendance",
+      permission: "admin:online",
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <rect x="3" y="4" width="18" height="18" rx="2" ry="2" strokeWidth={2} />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 2v4M16 2v4M3 10h18" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 14h8M8 18h5" />
+        </svg>
+      )
+    },
+    {
+      href: "/admin/online/reports",
+      label: "Hafazan Reports",
+      permission: "admin:online-reports",
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17V9a2 2 0 012-2h2a2 2 0 012 2v8" />
+        </svg>
+      )
+    },
   ];
 
   const navItems = isOnlineScope ? onlineNavItems : campusNavItems;
 
   const visibleNavItems = navItems.filter(
-    (item) => !loading && (isAdmin || permissions.has(item.permission))
+    (item) => !loading && (isAdmin || hasAdminPermission(item.permission, permissions))
   );
 
   const isActive = (href: string) => {
     if (href === "/admin") {
       return pathname === "/admin";
+    }
+    if (href === "/admin/online") {
+      return pathname === "/admin/online";
+    }
+    if (href === "/admin/online/attendance") {
+      return pathname.startsWith("/admin/online/attendance");
     }
     return pathname.startsWith(href);
   };

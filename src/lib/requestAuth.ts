@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
+import { ensureUserProfile, resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -23,6 +23,33 @@ export type AuthGuardResult =
 export type TenantAuthGuardResult =
   | { ok: true; userId: string; email: string | null; tenantId: string }
   | { ok: false; response: NextResponse };
+
+async function resolveTeacherTenantId(userId: string): Promise<string | null> {
+  const tenantIds = new Set<string>();
+
+  const [studentsRes, claimsRes] = await Promise.all([
+    supabaseAdmin
+      ?.from("students")
+      .select("tenant_id")
+      .eq("assigned_teacher_id", userId),
+    supabaseAdmin
+      ?.from("online_slot_claims")
+      .select("tenant_id")
+      .eq("assigned_teacher_id", userId),
+  ]);
+
+  [studentsRes, claimsRes].forEach((response) => {
+    if (response?.error) return;
+    (response?.data ?? []).forEach((row) => {
+      const tenantId = row?.tenant_id;
+      if (typeof tenantId === "string" && tenantId.length > 0) {
+        tenantIds.add(tenantId);
+      }
+    });
+  });
+
+  return tenantIds.size === 1 ? Array.from(tenantIds)[0] : null;
+}
 
 export async function requireAuthenticatedUser(request: NextRequest): Promise<AuthGuardResult> {
   const authHeader = request.headers.get("authorization") || "";
@@ -77,14 +104,24 @@ export async function requireAuthenticatedTenantUser(
         response: NextResponse.json({ error: error.message }, { status: 500 }),
       };
     }
-    if (!data?.tenant_id) {
+
+    const ensuredProfile = data?.tenant_id
+      ? data
+      : await ensureUserProfile({ request, userId: auth.userId, supabaseAdmin });
+
+    if (!ensuredProfile?.tenant_id || ensuredProfile.tenant_id !== requestedTenantId) {
       return {
         ok: false,
         response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
       };
     }
 
-    return { ok: true, userId: auth.userId, email: auth.email, tenantId: data.tenant_id as string };
+    return {
+      ok: true,
+      userId: auth.userId,
+      email: auth.email,
+      tenantId: ensuredProfile.tenant_id as string,
+    };
   }
 
   const { data: profiles, error: profileError } = await supabaseAdmin
@@ -100,6 +137,18 @@ export async function requireAuthenticatedTenantUser(
     };
   }
 
+  if (!profiles || profiles.length === 0) {
+    const ensuredProfile = await ensureUserProfile({ request, userId: auth.userId, supabaseAdmin });
+    if (ensuredProfile?.tenant_id) {
+      return {
+        ok: true,
+        userId: auth.userId,
+        email: auth.email,
+        tenantId: ensuredProfile.tenant_id as string,
+      };
+    }
+  }
+
   const tenantIds = Array.from(
     new Set((profiles ?? []).map((row) => row.tenant_id).filter((id): id is string => !!id))
   );
@@ -107,6 +156,31 @@ export async function requireAuthenticatedTenantUser(
     return { ok: true, userId: auth.userId, email: auth.email, tenantId: tenantIds[0] };
   }
   if (tenantIds.length > 1) {
+    const { data: userRow, error: userError } = await supabaseAdmin
+      .from("users")
+      .select("role")
+      .eq("id", auth.userId)
+      .maybeSingle();
+
+    if (userError) {
+      return {
+        ok: false,
+        response: NextResponse.json({ error: userError.message }, { status: 500 }),
+      };
+    }
+
+    if (userRow?.role === "teacher") {
+      const resolvedTeacherTenantId = await resolveTeacherTenantId(auth.userId);
+      if (resolvedTeacherTenantId && tenantIds.includes(resolvedTeacherTenantId)) {
+        return {
+          ok: true,
+          userId: auth.userId,
+          email: auth.email,
+          tenantId: resolvedTeacherTenantId,
+        };
+      }
+    }
+
     return {
       ok: false,
       response: NextResponse.json(

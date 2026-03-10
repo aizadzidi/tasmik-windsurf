@@ -56,14 +56,21 @@ const extractProgramType = (programs: EnrollmentRow["programs"]) => {
   return programs.type ?? null;
 };
 
+const resolveScope = (scopeParam: string | null) =>
+  scopeParam?.toLowerCase() === "online" ? "online" : "campus";
+
 // GET - Fetch student progress data for admin reports page
 export async function GET(request: NextRequest) {
   try {
-    const guard = await requireAdminPermission(request, ['admin:reports']);
-    if (!guard.ok) return guard.response;
-
     const { searchParams } = new URL(request.url);
+    const scope = resolveScope(searchParams.get("scope"));
     const viewMode = searchParams.get('viewMode') || 'tasmik';
+
+    const guard = await requireAdminPermission(
+      request,
+      scope === "online" ? ["admin:online-reports", "admin:online"] : ["admin:reports"]
+    );
+    if (!guard.ok) return guard.response;
 
     const data = await adminOperationSimple(async (client) => {
       // Fetch students with teacher and class info
@@ -109,12 +116,14 @@ export async function GET(request: NextRequest) {
           .filter((id): id is string => Boolean(id))
       );
 
-      const campusStudents = studentsSafe.filter((student) => !onlineStudentIds.has(student.id));
-      if (campusStudents.length === 0) {
+      const scopedStudents = scope === "online"
+        ? studentsSafe.filter((student) => onlineStudentIds.has(student.id))
+        : studentsSafe.filter((student) => !onlineStudentIds.has(student.id));
+      if (scopedStudents.length === 0) {
         return [];
       }
 
-      const campusStudentIds = campusStudents.map((student) => student.id);
+      const scopedStudentIds = scopedStudents.map((student) => student.id);
 
       if (viewMode === 'juz_tests') {
         // Fetch juz test related data
@@ -123,7 +132,7 @@ export async function GET(request: NextRequest) {
           client
             .from('reports')
             .select('student_id, juzuk')
-            .in('student_id', campusStudentIds)
+            .in('student_id', scopedStudentIds)
             .eq('type', 'Tasmi')
             .not('juzuk', 'is', null)
             .order('juzuk', { ascending: false }),
@@ -132,7 +141,7 @@ export async function GET(request: NextRequest) {
           client
             .from('juz_tests')
             .select('student_id, juz_number, test_date, passed, total_percentage, examiner_name, test_mode, test_hizb, hizb_number, page_from, page_to')
-            .in('student_id', campusStudentIds)
+            .in('student_id', scopedStudentIds)
             .order('test_date', { ascending: false })
             .order('id', { ascending: false })
             .then(result => {
@@ -160,7 +169,7 @@ export async function GET(request: NextRequest) {
           return acc;
         }, {});
 
-        return campusStudents.map(student => ({
+        return scopedStudents.map(student => ({
           ...student,
           teacher_name: student.users?.name || null,
           class_name: student.classes?.name || null,
@@ -175,7 +184,7 @@ export async function GET(request: NextRequest) {
         const { data: reportsData, error: reportsError } = await client
           .from('reports')
           .select('*')
-          .in('student_id', campusStudentIds)
+          .in('student_id', scopedStudentIds)
           .order('date', { ascending: false });
 
         if (reportsError) throw reportsError;
@@ -191,7 +200,7 @@ export async function GET(request: NextRequest) {
           return acc;
         }, {});
 
-        return campusStudents.map(student => {
+        return scopedStudents.map(student => {
           const studentReports = reportsByStudent[student.id] || { tasmik: [], murajaah: [] };
           
           return {

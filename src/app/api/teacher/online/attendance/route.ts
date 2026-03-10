@@ -1,141 +1,208 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseService } from "@/lib/supabaseServiceClient";
+import {
+  buildPlannerDays,
+  buildTeacherOptions,
+  currentMonthKey,
+  parseWeekStart,
+} from "@/lib/online/recurring";
+import {
+  buildOccurrencesForMonth,
+  fetchRecurringSnapshot,
+  filterPackagesForMonth,
+  hydratePlannerPackages,
+} from "@/lib/online/recurringStore";
+import { isMissingRelationError } from "@/lib/online/db";
+import { buildTeacherSchedulerOptions } from "@/lib/online/scheduling";
 import { requireAuthenticatedTenantUser } from "@/lib/requestAuth";
+import { supabaseService } from "@/lib/supabaseServiceClient";
+import type { OnlineRecurringOccurrence } from "@/types/online";
 
 type AttendanceBody = {
-  claim_id?: string;
-  session_date?: string;
+  occurrence_id?: string;
   status?: "present" | "absent";
   notes?: string | null;
 };
 
-type ClaimRow = {
-  id: string;
-  student_id: string;
-  session_date: string;
-  status: string | null;
-  assigned_teacher_id: string | null;
-  students?: { name?: string | null } | null;
-  online_courses?: { name?: string | null } | null;
-};
+type TeacherOccurrenceRow = Omit<OnlineRecurringOccurrence, "id" | "created_at" | "updated_at"> &
+  Partial<Pick<OnlineRecurringOccurrence, "id" | "created_at" | "updated_at">>;
 
 const monthDateRange = (monthKey: string) => {
   const match = /^(\d{4})-(\d{2})$/.exec(monthKey);
   if (!match) return null;
   const year = Number(match[1]);
   const month = Number(match[2]);
-  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
-    return null;
-  }
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return null;
   const start = new Date(Date.UTC(year, month - 1, 1));
   const end = new Date(Date.UTC(year, month, 1));
-  return {
-    start: start.toISOString().slice(0, 10),
-    end: end.toISOString().slice(0, 10),
-  };
+  return { start, end };
 };
 
-const currentMonthKey = () => {
-  const now = new Date();
-  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
-};
-
-const toNullable = (value?: string | null) => {
-  if (value === undefined) return undefined;
-  const trimmed = value === null ? "" : value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-};
+const emptyPayload = (monthKey: string, warning?: string) => ({
+  month: monthKey,
+  summary: {
+    total_sessions: 0,
+    marked_sessions: 0,
+    present_count: 0,
+    absent_count: 0,
+    attendance_rate_pct: 0,
+  },
+  weekly_packages: [],
+  weekly_slot_actions: [],
+  today_queue: [],
+  monthly_occurrences: [],
+  scheduler: {
+    students: [],
+    courses: [],
+    slot_capacity: "single_student" as const,
+  },
+  ...(warning ? { warning } : {}),
+});
 
 export async function GET(request: NextRequest) {
-  const auth = await requireAuthenticatedTenantUser(request);
-  if (!auth.ok) return auth.response;
+  const requestedMonth = new URL(request.url).searchParams.get("month") || currentMonthKey();
+  const requestedWeek = new URL(request.url).searchParams.get("week");
 
   try {
-    const roleRes = await supabaseService
+    const auth = await requireAuthenticatedTenantUser(request);
+    if (!auth.ok) return auth.response;
+
+    const { data: roleRow, error: roleError } = await supabaseService
       .from("users")
       .select("role")
       .eq("id", auth.userId)
       .maybeSingle();
-    if (roleRes.error) throw roleRes.error;
-    if (roleRes.data?.role !== "teacher") {
+    if (roleError) throw roleError;
+    if (roleRow?.role !== "teacher") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const monthKey = new URL(request.url).searchParams.get("month") || currentMonthKey();
-    const range = monthDateRange(monthKey);
+    const range = monthDateRange(requestedMonth);
     if (!range) {
       return NextResponse.json({ error: "month must be YYYY-MM" }, { status: 400 });
     }
 
-    const { data: claimsData, error: claimsError } = await supabaseService
-      .from("online_slot_claims")
-      .select("id, student_id, session_date, status, assigned_teacher_id, students(name), online_courses(name)")
-      .eq("tenant_id", auth.tenantId)
-      .eq("assigned_teacher_id", auth.userId)
-      .eq("status", "active")
-      .gte("session_date", range.start)
-      .lt("session_date", range.end)
-      .order("session_date", { ascending: true });
-    if (claimsError) throw claimsError;
-
-    const claimRows = (claimsData ?? []) as ClaimRow[];
-    const claimIds = claimRows.map((row) => row.id);
-
-    const { data: attendanceRows, error: attendanceError } = claimIds.length
-      ? await supabaseService
-          .from("online_attendance_sessions")
-          .select("claim_id, session_date, status, notes, recorded_at")
-          .eq("tenant_id", auth.tenantId)
-          .eq("teacher_id", auth.userId)
-          .in("claim_id", claimIds)
-      : { data: [], error: null };
-    if (attendanceError) throw attendanceError;
-
-    const attendanceByClaim = new Map<string, { status: string; notes: string | null; recorded_at: string }>();
-    (attendanceRows ?? []).forEach((row) => {
-      const key = `${row.claim_id}:${row.session_date}`;
-      attendanceByClaim.set(key, {
-        status: row.status,
-        notes: row.notes ?? null,
-        recorded_at: row.recorded_at,
+    const [snapshot, schedulerOptions] = await Promise.all([
+      fetchRecurringSnapshot(supabaseService, auth.tenantId),
+      buildTeacherSchedulerOptions({
+        client: supabaseService,
+        tenantId: auth.tenantId,
+        teacherId: auth.userId,
+      }),
+    ]);
+    if (snapshot.warning) {
+      return NextResponse.json({
+        ...emptyPayload(requestedMonth, snapshot.warning),
+        scheduler: schedulerOptions,
       });
+    }
+
+    const monthPackages = hydratePlannerPackages({
+      packages: filterPackagesForMonth(snapshot.packages, requestedMonth).filter(
+        (pkg) =>
+          pkg.teacher_id === auth.userId &&
+          (pkg.status === "active" || pkg.status === "pending_payment" || pkg.status === "draft"),
+      ),
+      packageSlots: snapshot.packageSlots,
+      students: snapshot.students,
+      courses: snapshot.courses,
     });
 
-    const sessions = claimRows.map((claim) => {
-      const key = `${claim.id}:${claim.session_date}`;
-      const mark = attendanceByClaim.get(key);
-      return {
-        claim_id: claim.id,
-        student_id: claim.student_id,
-        student_name: claim.students?.name ?? "Student",
-        course_name: claim.online_courses?.name ?? "Online Course",
-        session_date: claim.session_date,
-        attendance_status: mark?.status ?? null,
-        attendance_notes: mark?.notes ?? null,
-        recorded_at: mark?.recorded_at ?? null,
-      };
+    const templateById = new Map(snapshot.templates.map((template) => [template.id, template]));
+    const occurrenceDrafts = buildOccurrencesForMonth({
+      packages: monthPackages,
+      monthKey: requestedMonth,
+      templateById,
     });
 
-    const presentCount = sessions.filter((session) => session.attendance_status === "present").length;
-    const absentCount = sessions.filter((session) => session.attendance_status === "absent").length;
-    const markedCount = presentCount + absentCount;
-    const attendanceRate = markedCount > 0 ? Math.round((presentCount / markedCount) * 100) : 0;
+    let monthlyOccurrences: TeacherOccurrenceRow[] = occurrenceDrafts;
+    const upsertRes = await supabaseService
+      .from("online_recurring_occurrences")
+      .upsert(occurrenceDrafts, { onConflict: "tenant_id,package_slot_id,session_date" });
+
+    if (!upsertRes.error) {
+      const selectRes = await supabaseService
+        .from("online_recurring_occurrences")
+        .select(
+          "id, tenant_id, package_id, package_slot_id, student_id, course_id, teacher_id, slot_template_id, session_date, start_time, duration_minutes, attendance_status, attendance_notes, recorded_at, cancelled_at, created_at, updated_at"
+        )
+        .eq("tenant_id", auth.tenantId)
+        .eq("teacher_id", auth.userId)
+        .is("cancelled_at", null)
+        .gte("session_date", range.start.toISOString().slice(0, 10))
+        .lt("session_date", range.end.toISOString().slice(0, 10))
+        .order("session_date", { ascending: true })
+        .order("start_time", { ascending: true });
+      if (selectRes.error) throw selectRes.error;
+      monthlyOccurrences = selectRes.data ?? occurrenceDrafts;
+    } else if (!isMissingRelationError(upsertRes.error, "online_recurring_occurrences")) {
+      throw upsertRes.error;
+    }
+
+    const studentById = new Map(snapshot.students.map((student) => [student.id, student]));
+    const courseById = new Map(snapshot.courses.map((course) => [course.id, course]));
+    const weekStart = parseWeekStart(requestedWeek);
+
+    const weeklySlotActions = buildPlannerDays({
+      selectedTeacherId: auth.userId,
+      monthKey: requestedMonth,
+      weekStart,
+      templates: snapshot.templates,
+      teacherAvailability: snapshot.teacherAvailability,
+      packages: monthPackages,
+      coursesById: courseById,
+    });
+
+    const enrichedOccurrences = monthlyOccurrences.map((occurrence: TeacherOccurrenceRow) => ({
+      ...occurrence,
+      student_name: studentById.get(occurrence.student_id)?.name ?? "Student",
+      course_name: courseById.get(occurrence.course_id)?.name ?? "Online Course",
+    }));
+
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const todayQueue = enrichedOccurrences.filter(
+      (occurrence: TeacherOccurrenceRow) => occurrence.session_date === todayKey,
+    );
+    const markedSessions = enrichedOccurrences.filter((occurrence: TeacherOccurrenceRow) =>
+      Boolean(occurrence.attendance_status),
+    );
+    const presentCount = markedSessions.filter(
+      (occurrence: TeacherOccurrenceRow) => occurrence.attendance_status === "present",
+    ).length;
+    const absentCount = markedSessions.filter(
+      (occurrence: TeacherOccurrenceRow) => occurrence.attendance_status === "absent",
+    ).length;
+    const attendanceRatePct = markedSessions.length > 0 ? Math.round((presentCount / markedSessions.length) * 100) : 0;
 
     return NextResponse.json({
-      month: monthKey,
+      month: requestedMonth,
       summary: {
-        total_sessions: sessions.length,
-        marked_sessions: markedCount,
+        total_sessions: enrichedOccurrences.length,
+        marked_sessions: markedSessions.length,
         present_count: presentCount,
         absent_count: absentCount,
-        attendance_rate_pct: attendanceRate,
+        attendance_rate_pct: attendanceRatePct,
       },
-      sessions,
+      weekly_packages: monthPackages,
+      weekly_slot_actions: weeklySlotActions,
+      today_queue: todayQueue,
+      monthly_occurrences: enrichedOccurrences,
+      scheduler: schedulerOptions,
+      teacher: buildTeacherOptions({
+        teachers: [{ id: auth.userId, name: "Current Teacher" }],
+        packages: snapshot.packages,
+        teacherAvailability: snapshot.teacherAvailability,
+      })[0] ?? null,
     });
   } catch (error: unknown) {
     console.error("Teacher online attendance fetch error:", error);
     const message = error instanceof Error ? error.message : "Failed to fetch online attendance";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      {
+        ...emptyPayload(requestedMonth),
+        error: message,
+      },
+      { status: 500 },
+    );
   }
 }
 
@@ -145,61 +212,51 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = (await request.json()) as AttendanceBody;
-    const claimId = (body.claim_id ?? "").trim();
-    const sessionDate = (body.session_date ?? "").trim();
-    if (!claimId || !sessionDate || (body.status !== "present" && body.status !== "absent")) {
+    const occurrenceId = (body.occurrence_id ?? "").trim();
+    if (!occurrenceId || (body.status !== "present" && body.status !== "absent")) {
       return NextResponse.json(
-        { error: "claim_id, session_date and status(present|absent) are required" },
-        { status: 400 }
+        { error: "occurrence_id and status(present|absent) are required" },
+        { status: 400 },
       );
     }
 
-    const roleRes = await supabaseService
+    const { data: roleRow, error: roleError } = await supabaseService
       .from("users")
       .select("role")
       .eq("id", auth.userId)
       .maybeSingle();
-    if (roleRes.error) throw roleRes.error;
-    if (roleRes.data?.role !== "teacher") {
+    if (roleError) throw roleError;
+    if (roleRow?.role !== "teacher") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const { data: claimRow, error: claimError } = await supabaseService
-      .from("online_slot_claims")
-      .select("id, student_id, session_date, assigned_teacher_id, status")
+    const occurrenceRes = await supabaseService
+      .from("online_recurring_occurrences")
+      .select("id, teacher_id")
       .eq("tenant_id", auth.tenantId)
-      .eq("id", claimId)
+      .eq("id", occurrenceId)
+      .is("cancelled_at", null)
       .maybeSingle();
-    if (claimError) throw claimError;
-    if (!claimRow?.id || claimRow.assigned_teacher_id !== auth.userId) {
-      return NextResponse.json({ error: "Claim not found for this teacher." }, { status: 404 });
-    }
-    if (claimRow.status !== "active") {
-      return NextResponse.json({ error: "Only active claims can be marked for attendance." }, { status: 409 });
-    }
-    if (claimRow.session_date !== sessionDate) {
-      return NextResponse.json({ error: "session_date must match claim session date." }, { status: 400 });
+    if (occurrenceRes.error) throw occurrenceRes.error;
+    if (!occurrenceRes.data?.id || occurrenceRes.data.teacher_id !== auth.userId) {
+      return NextResponse.json({ error: "Occurrence not found for this teacher." }, { status: 404 });
     }
 
-    const { data, error } = await supabaseService
-      .from("online_attendance_sessions")
-      .upsert(
-        {
-          tenant_id: auth.tenantId,
-          claim_id: claimId,
-          student_id: claimRow.student_id,
-          teacher_id: auth.userId,
-          session_date: sessionDate,
-          status: body.status,
-          notes: toNullable(body.notes),
-        },
-        { onConflict: "tenant_id,claim_id,session_date" }
-      )
+    const updateRes = await supabaseService
+      .from("online_recurring_occurrences")
+      .update({
+        attendance_status: body.status,
+        attendance_notes: body.notes?.trim() || null,
+        recorded_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("tenant_id", auth.tenantId)
+      .eq("id", occurrenceId)
       .select("*")
       .single();
-    if (error) throw error;
+    if (updateRes.error) throw updateRes.error;
 
-    return NextResponse.json(data);
+    return NextResponse.json(updateRes.data);
   } catch (error: unknown) {
     console.error("Teacher online attendance mark error:", error);
     const message = error instanceof Error ? error.message : "Failed to mark attendance";

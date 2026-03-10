@@ -1,175 +1,93 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseService } from "@/lib/supabaseServiceClient";
+import { currentMonthKey } from "@/lib/online/recurring";
+import {
+  fetchRecurringSnapshot,
+  filterPackagesForMonth,
+  hydratePlannerPackages,
+} from "@/lib/online/recurringStore";
 import { requireAuthenticatedTenantUser } from "@/lib/requestAuth";
-import { buildSlotInstances } from "@/lib/online/slots";
-import { isMissingRelationError } from "@/lib/online/db";
-
-type StudentRow = {
-  id: string;
-  name: string | null;
-};
-
-type CourseRow = {
-  id: string;
-  name: string;
-  description: string | null;
-  monthly_fee_cents: number | null;
-  sessions_per_week: number | null;
-};
-
-type TemplateRow = {
-  id: string;
-  course_id: string;
-  day_of_week: number;
-  start_time: string;
-  duration_minutes: number;
-  is_active: boolean;
-};
-
-type AvailabilityRow = {
-  slot_template_id: string;
-  teacher_id: string;
-  is_available: boolean;
-};
-
-type ClaimRow = {
-  id: string;
-  slot_template_id: string;
-  session_date: string;
-  status: string | null;
-  seat_hold_expires_at: string | null;
-  student_id: string | null;
-  parent_id: string | null;
-};
-
-const toDateKey = (date: Date) => date.toISOString().slice(0, 10);
-
-const startOfUtcDay = (date: Date) =>
-  new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+import { supabaseService } from "@/lib/supabaseServiceClient";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuthenticatedTenantUser(request);
   if (!auth.ok) return auth.response;
 
-  const from = startOfUtcDay(new Date());
-  const to = new Date(from.getTime() + 20 * 24 * 60 * 60 * 1000);
-
   try {
-    const [{ data: studentsData, error: studentsError }, { data: coursesData, error: coursesError }, { data: templatesData, error: templatesError }, { data: availabilityData, error: availabilityError }, { data: claimsData, error: claimsError }] =
-      await Promise.all([
-        supabaseService
-          .from("students")
-          .select("id, name")
-          .eq("tenant_id", auth.tenantId)
-          .eq("parent_id", auth.userId)
-          .neq("record_type", "prospect")
-          .order("name", { ascending: true }),
-        supabaseService
-          .from("online_courses")
-          .select("id, name, description, monthly_fee_cents, sessions_per_week")
-          .eq("tenant_id", auth.tenantId)
-          .eq("is_active", true)
-          .order("name", { ascending: true }),
-        supabaseService
-          .from("online_slot_templates")
-          .select("id, course_id, day_of_week, start_time, duration_minutes, is_active")
-          .eq("tenant_id", auth.tenantId)
-          .eq("is_active", true),
-        supabaseService
-          .from("online_teacher_slot_preferences")
-          .select("slot_template_id, teacher_id, is_available")
-          .eq("tenant_id", auth.tenantId)
-          .eq("is_available", true),
-        supabaseService
-          .from("online_slot_claims")
-          .select("id, slot_template_id, session_date, status, seat_hold_expires_at, student_id, parent_id")
-          .eq("tenant_id", auth.tenantId)
-          .in("status", ["pending_payment", "active"])
-          .gte("session_date", toDateKey(from))
-          .lte("session_date", toDateKey(to)),
-      ]);
+    const [studentsRes, snapshot] = await Promise.all([
+      supabaseService
+        .from("students")
+        .select("id, name")
+        .eq("tenant_id", auth.tenantId)
+        .eq("parent_id", auth.userId)
+        .neq("record_type", "prospect")
+        .order("name", { ascending: true }),
+      fetchRecurringSnapshot(supabaseService, auth.tenantId),
+    ]);
 
-    if (studentsError) throw studentsError;
+    if (studentsRes.error) throw studentsRes.error;
+    const students = (studentsRes.data ?? []) as Array<{ id: string; name: string | null }>;
 
-    if (coursesError || templatesError || availabilityError || claimsError) {
-      const missingTable =
-        (coursesError && isMissingRelationError(coursesError, "online_courses")) ||
-        (templatesError && isMissingRelationError(templatesError, "online_slot_templates")) ||
-        (availabilityError && isMissingRelationError(availabilityError, "online_teacher_slot_preferences")) ||
-        (claimsError && isMissingRelationError(claimsError, "online_slot_claims"));
-
-      if (missingTable) {
-        return NextResponse.json({
-          setup_required: true,
-          students: (studentsData ?? []) as StudentRow[],
-          courses: [],
-          slots: [],
-          claims: [],
-        });
-      }
-      throw coursesError ?? templatesError ?? availabilityError ?? claimsError;
+    if (snapshot.warning) {
+      return NextResponse.json({
+        setup_required: true,
+        students,
+        courses: [],
+        package_options: [],
+        pending_packages: [],
+        active_packages: [],
+      });
     }
 
-    const courses = (coursesData ?? []) as CourseRow[];
-    const templates = (templatesData ?? []) as TemplateRow[];
-    const availabilityRows = (availabilityData ?? []) as AvailabilityRow[];
-    const claims = (claimsData ?? []) as ClaimRow[];
-    const students = (studentsData ?? []) as StudentRow[];
+    const availabilityCountByTemplate = new Map<string, number>();
+    snapshot.teacherAvailability
+      .filter((row) => row.is_available)
+      .forEach((row) => {
+        availabilityCountByTemplate.set(
+          row.slot_template_id,
+          (availabilityCountByTemplate.get(row.slot_template_id) ?? 0) + 1,
+        );
+      });
 
-    const teacherCountByTemplate = new Map<string, number>();
-    availabilityRows.forEach((row) => {
-      teacherCountByTemplate.set(
-        row.slot_template_id,
-        (teacherCountByTemplate.get(row.slot_template_id) ?? 0) + 1
-      );
+    const activePackages = hydratePlannerPackages({
+      packages: filterPackagesForMonth(snapshot.packages, currentMonthKey()).filter(
+        (pkg) => students.some((student) => student.id === pkg.student_id),
+      ),
+      packageSlots: snapshot.packageSlots,
+      students: snapshot.students,
+      courses: snapshot.courses,
     });
 
-    const courseById = new Map(courses.map((course) => [course.id, course]));
-    const claimBySlotInstance = new Map<string, ClaimRow>();
-    claims.forEach((claim) => {
-      const key = `${claim.slot_template_id}:${claim.session_date}`;
-      if (!claimBySlotInstance.has(key)) {
-        claimBySlotInstance.set(key, claim);
-      }
-    });
-
-    const slotInstances = buildSlotInstances({ templates, fromDate: from, toDate: to });
-    const slots = slotInstances.map((instance) => {
-      const key = `${instance.slotTemplateId}:${instance.sessionDate}`;
-      const claim = claimBySlotInstance.get(key);
-      const availableTeachers = teacherCountByTemplate.get(instance.slotTemplateId) ?? 0;
-      const claimedBySelf = claim?.parent_id === auth.userId;
-      const unavailable = Boolean(claim) && !claimedBySelf;
-      return {
-        slot_template_id: instance.slotTemplateId,
-        course_id: instance.courseId,
-        course_name: courseById.get(instance.courseId)?.name ?? "Unknown Course",
-        session_date: instance.sessionDate,
-        start_time: instance.startTime,
-        duration_minutes: instance.durationMinutes,
-        available_teachers: availableTeachers,
-        is_available: availableTeachers > 0 && !unavailable,
-        claim_id: claim?.id ?? null,
-        claim_status: claim?.status ?? null,
-        seat_hold_expires_at: claim?.seat_hold_expires_at ?? null,
-        claimed_by_self: claimedBySelf,
-      };
-    });
-
-    const parentClaims = claims
-      .filter((claim) => claim.parent_id === auth.userId)
-      .sort((left, right) => left.session_date.localeCompare(right.session_date));
+    const packageOptions = snapshot.courses
+      .filter((course) => course.is_active)
+      .map((course) => ({
+        course_id: course.id,
+        course_name: course.name,
+        sessions_per_week: course.sessions_per_week,
+        monthly_fee_cents: course.monthly_fee_cents,
+        duration_minutes: course.default_slot_duration_minutes ?? 30,
+        templates: snapshot.templates
+          .filter((template) => template.course_id === course.id && template.is_active)
+          .map((template) => ({
+            slot_template_id: template.id,
+            day_of_week: template.day_of_week,
+            start_time: template.start_time,
+            duration_minutes: template.duration_minutes,
+            available_teachers: availabilityCountByTemplate.get(template.id) ?? 0,
+          })),
+      }))
+      .filter((row) => row.templates.length > 0);
 
     return NextResponse.json({
       setup_required: false,
       students,
-      courses,
-      slots,
-      claims: parentClaims,
+      courses: snapshot.courses,
+      package_options: packageOptions,
+      pending_packages: activePackages.filter((pkg) => pkg.status === "pending_payment" || pkg.status === "draft"),
+      active_packages: activePackages.filter((pkg) => pkg.status === "active"),
     });
   } catch (error: unknown) {
-    console.error("Parent online explore error:", error);
-    const message = error instanceof Error ? error.message : "Failed to load online explore data";
+    console.error("Parent online package explore error:", error);
+    const message = error instanceof Error ? error.message : "Failed to load online package options";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

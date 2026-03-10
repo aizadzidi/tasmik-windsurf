@@ -508,7 +508,14 @@ export function GradeChart({
             const g = gradesPerStudent[id];
             return g && g.count > 0 ? g.sum / g.count : null;
           }),
-          backgroundColor: "#22c55e",
+          borderColor: "#22c55e",
+          backgroundColor: "rgba(34, 197, 94, 0.12)",
+          pointBackgroundColor: "#22c55e",
+          pointBorderColor: "#22c55e",
+          pointRadius: 3,
+          pointHoverRadius: 4,
+          tension: 0.35,
+          fill: false,
         },
       ],
     };
@@ -523,7 +530,14 @@ export function GradeChart({
               const g = gradesByStudentWeek[id]?.[activeWeek];
               return g && g.count > 0 ? g.sum / g.count : null;
             }),
-            backgroundColor: "#22c55e",
+            borderColor: "#22c55e",
+            backgroundColor: "rgba(34, 197, 94, 0.12)",
+            pointBackgroundColor: "#22c55e",
+            pointBorderColor: "#22c55e",
+            pointRadius: 3,
+            pointHoverRadius: 4,
+            tension: 0.35,
+            fill: false,
           },
         ],
       };
@@ -539,7 +553,14 @@ export function GradeChart({
               const g = gradesByStudentWeek[id]?.[previousWeek];
               return g && g.count > 0 ? g.sum / g.count : null;
             }),
-            backgroundColor: "#86efac",
+            borderColor: "#86efac",
+            backgroundColor: "rgba(134, 239, 172, 0.16)",
+            pointBackgroundColor: "#86efac",
+            pointBorderColor: "#86efac",
+            pointRadius: 3,
+            pointHoverRadius: 4,
+            tension: 0.35,
+            fill: false,
           }] : []),
           {
             label: activeWeek,
@@ -547,7 +568,14 @@ export function GradeChart({
               const g = gradesByStudentWeek[id]?.[activeWeek];
               return g && g.count > 0 ? g.sum / g.count : null;
             }),
-            backgroundColor: "#22c55e",
+            borderColor: "#22c55e",
+            backgroundColor: "rgba(34, 197, 94, 0.12)",
+            pointBackgroundColor: "#22c55e",
+            pointBorderColor: "#22c55e",
+            pointRadius: 3,
+            pointHoverRadius: 4,
+            tension: 0.35,
+            fill: false,
           }
         ],
       };
@@ -556,9 +584,9 @@ export function GradeChart({
     return (
       <div className="mb-4">
         <div className="text-sm font-semibold mb-1">Grades by Student</div>
-        <Bar data={data} options={{
+        <Line data={data} options={{
           responsive: true,
-          plugins: { legend: { display: false } },
+          plugins: { legend: { display: weekViewMode === 'compare', position: 'top' as const } },
           scales: {
             x: { ticks: { maxRotation: 45, minRotation: 45 } },
             y: {

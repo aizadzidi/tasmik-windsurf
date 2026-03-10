@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-import Navbar from "@/components/Navbar";
 import ClassAttendanceBarChart from "@/components/teacher/ClassAttendanceBarChart";
 import { cn } from "@/lib/utils";
 import {
@@ -23,12 +22,17 @@ import {
   CheckCheck,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import { listAttendanceRecords, upsertAttendanceRecord } from "@/lib/attendanceApi";
+import {
+  listAttendanceRecords,
+  upsertAttendanceRecord,
+  type AttendanceRecordRow,
+} from "@/lib/attendanceApi";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
-import { useProgramScope } from "@/hooks/useProgramScope";
 import { useRouter } from "next/navigation";
-import type { ProgramScope } from "@/types/programs";
+import { useTeachingModeContext } from "@/contexts/TeachingModeContext";
+import TeacherAttendanceV2 from "@/components/teacher/TeacherAttendanceV2";
+import { isAttendanceV2GloballyEnabled } from "@/lib/attendanceV2";
 
 const ANALYTICS_RANGE_OPTIONS = [
   { id: "today", label: "Today", days: 1 },
@@ -102,8 +106,8 @@ function StatusToggle({
   onChange,
   disabled = false,
 }: {
-  value: "present" | "absent";
-  onChange: (val: "present" | "absent") => void;
+  value: AttendanceStatus;
+  onChange: (val: AttendanceStatus) => void;
   disabled?: boolean;
 }) {
   return (
@@ -123,6 +127,25 @@ function StatusToggle({
           <motion.div
             layoutId="toggle-active"
             className="absolute inset-0 rounded-full bg-white shadow-[0_2px_8px_-2px_rgba(16,185,129,0.25)] ring-1 ring-emerald-100"
+            transition={{ type: "spring", bounce: 0.15, duration: 0.4 }}
+          />
+        )}
+      </button>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onChange("late")}
+        className={cn(
+          "relative z-10 flex h-full items-center rounded-full px-4 text-[13px] font-medium transition-all duration-300",
+          value === "late" ? "text-amber-700" : "text-slate-400 hover:text-slate-600",
+          disabled && "opacity-50 cursor-not-allowed"
+        )}
+      >
+        <span className="relative z-10">Late</span>
+        {value === "late" && (
+          <motion.div
+            layoutId="toggle-active"
+            className="absolute inset-0 rounded-full bg-white shadow-[0_2px_8px_-2px_rgba(245,158,11,0.25)] ring-1 ring-amber-100"
             transition={{ type: "spring", bounce: 0.15, duration: 0.4 }}
           />
         )}
@@ -200,7 +223,67 @@ type StudentRosterRow = {
   parent_id: string | null;
 };
 
-function TeacherAttendanceContent({ programScope }: { programScope: ProgramScope }) {
+const buildAttendanceStateFromHistory = (records: AttendanceRecordRow[]): AttendanceRecord => {
+  const nextState: AttendanceRecord = {};
+  const grouped = new Map<
+    string,
+    { classId: string; date: string; statuses: Record<string, AttendanceStatus>; submitted: boolean }
+  >();
+
+  records.forEach((record) => {
+    const dateKey = normalizeAttendanceDate(String(record.attendance_date));
+    const key = `${record.class_id}_${dateKey}`;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        classId: String(record.class_id),
+        date: dateKey,
+        statuses: {},
+        submitted: true,
+      });
+    }
+    const group = grouped.get(key);
+    if (!group) return;
+    group.statuses[String(record.student_id)] = record.status || "present";
+  });
+
+  grouped.forEach((group) => {
+    nextState[group.classId] = nextState[group.classId] || {};
+    nextState[group.classId][group.date] = {
+      statuses: group.statuses,
+      submitted: true,
+      note: "",
+    };
+  });
+
+  return nextState;
+};
+
+const mergeAttendanceState = (
+  currentState: AttendanceRecord,
+  incomingState: AttendanceRecord
+): AttendanceRecord => {
+  const merged: AttendanceRecord = { ...currentState };
+
+  Object.entries(incomingState).forEach(([classId, classRecords]) => {
+    const currentClassRecords = merged[classId] || {};
+    const nextClassRecords: Record<string, AttendanceRecord[string][string]> = { ...currentClassRecords };
+
+    Object.entries(classRecords).forEach(([date, entry]) => {
+      const localEntry = currentClassRecords[date];
+      if (localEntry && localEntry.submitted === false) {
+        nextClassRecords[date] = localEntry;
+        return;
+      }
+      nextClassRecords[date] = entry;
+    });
+
+    merged[classId] = nextClassRecords;
+  });
+
+  return merged;
+};
+
+function TeacherAttendanceContent() {
   // State
   const [classes, setClasses] = React.useState<ClassAttendance[]>([]);
   const [selectedClassId, setSelectedClassId] = React.useState("");
@@ -216,6 +299,7 @@ function TeacherAttendanceContent({ programScope }: { programScope: ProgramScope
   const [saving, setSaving] = React.useState(false);
   const [isDirty, setIsDirty] = React.useState(false);
   const [rollCallSearch, setRollCallSearch] = React.useState("");
+  const [historyLoading, setHistoryLoading] = React.useState(false);
 
   // Analytics State
   const [analyticsRange, setAnalyticsRange] = React.useState<AnalyticsRange>("week");
@@ -250,12 +334,13 @@ function TeacherAttendanceContent({ programScope }: { programScope: ProgramScope
 
   // --- Data Fetching ---
 
-  const fetchStudentRoster = React.useCallback(async () => {
+  const fetchStudentRosterPaged = React.useCallback(async (teacherId: string | null) => {
     const allStudents: StudentRosterRow[] = [];
     let from = 0;
     const size = 1000;
+
     while (true) {
-      const { data, error } = await supabase
+      let query = supabase
         .from("students")
         .select("id, name, class_id, parent_id")
         .neq("record_type", "prospect")
@@ -263,13 +348,42 @@ function TeacherAttendanceContent({ programScope }: { programScope: ProgramScope
         .order("name")
         .range(from, from + size - 1);
 
+      if (teacherId !== null) {
+        query = query.eq("assigned_teacher_id", teacherId);
+      }
+
+      const { data, error } = await query;
+
       if (error) throw error;
       if (data) allStudents.push(...data);
       if (!data || data.length < size) break;
       from += size;
     }
+
     return allStudents;
   }, []);
+
+  const fetchStudentRoster = React.useCallback(async () => {
+    const { data: authData } = await supabase.auth.getUser();
+    const teacherId = authData.user?.id ?? null;
+
+    if (!teacherId) {
+      return fetchStudentRosterPaged(null);
+    }
+
+    try {
+      const scopedStudents = await fetchStudentRosterPaged(teacherId);
+      if (scopedStudents.length > 0) {
+        return scopedStudents;
+      }
+
+      console.warn("Attendance roster fallback: no teacher-scoped students found, using legacy roster query.");
+      return fetchStudentRosterPaged(null);
+    } catch (error) {
+      console.warn("Attendance roster fallback: teacher-scoped query failed, using legacy roster query.", error);
+      return fetchStudentRosterPaged(null);
+    }
+  }, [fetchStudentRosterPaged]);
 
   const initData = React.useCallback(async () => {
     setLoading(true);
@@ -304,6 +418,7 @@ function TeacherAttendanceContent({ programScope }: { programScope: ProgramScope
       });
 
       const roster = Array.from(classMap.values())
+        .filter((classItem) => classItem.students.length > 0)
         .map(c => ({ ...c, students: c.students.sort((a, b) => a.name.localeCompare(b.name)) }))
         .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -314,7 +429,11 @@ function TeacherAttendanceContent({ programScope }: { programScope: ProgramScope
         setSelectedClassId(roster[0].id);
       }
 
+      setLoading(false);
+
       // Load Attendance History
+      if (roster.length === 0) return;
+      setHistoryLoading(true);
       const historyRes = await listAttendanceRecords({
         classIds: roster.map(c => c.id),
         startDate: attendanceLookbackStart,
@@ -322,42 +441,14 @@ function TeacherAttendanceContent({ programScope }: { programScope: ProgramScope
       });
 
       if (!historyRes.error) {
-        // Reconstruct State
-        const newState: AttendanceRecord = {};
-
-        // Group by Class -> Date
-        const grouped = new Map<string, { classId: string; date: string; statuses: Record<string, AttendanceStatus>; submitted: boolean }>();
-
-        historyRes.records.forEach(rec => {
-          const dateKey = normalizeAttendanceDate(String(rec.attendance_date));
-          const key = `${rec.class_id}_${dateKey}`;
-          if (!grouped.has(key)) {
-            grouped.set(key, {
-              classId: String(rec.class_id),
-              date: dateKey,
-              statuses: {},
-              submitted: true
-            });
-          }
-          const group = grouped.get(key)!;
-          group.statuses[String(rec.student_id)] = rec.status || "present";
-        });
-
-        grouped.forEach(g => {
-          newState[g.classId] = newState[g.classId] || {};
-          newState[g.classId][g.date] = {
-            statuses: g.statuses,
-            submitted: true,
-            note: ""
-          };
-        });
-
-        setAttendanceState(newState);
+        const reconstructedState = buildAttendanceStateFromHistory(historyRes.records);
+        setAttendanceState((currentState) => mergeAttendanceState(currentState, reconstructedState));
       }
 
     } catch (err) {
       console.error("Data init failed", err);
     } finally {
+      setHistoryLoading(false);
       setLoading(false);
     }
   }, [fetchStudentRoster, attendanceLookbackStart]);
@@ -489,14 +580,18 @@ function TeacherAttendanceContent({ programScope }: { programScope: ProgramScope
 
   return (
     <div className="min-h-screen bg-[#F2F2F7] selection:bg-indigo-100 selection:text-indigo-900 flex flex-col">
-      <Navbar programScope={programScope} />
-
       <main className="flex-1 max-w-[1100px] w-full mx-auto px-4 sm:px-6 py-8 flex flex-col min-h-0">
         {/* Header Section */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-900">Attendance</h1>
             <p className="text-slate-500 mt-2 font-medium">Manage daily records and monitor student attendance.</p>
+            {historyLoading ? (
+              <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Syncing attendance history...
+              </div>
+            ) : null}
           </div>
 
           <div className="w-full md:w-auto">
@@ -834,17 +929,21 @@ function TeacherAttendanceContent({ programScope }: { programScope: ProgramScope
 
 export default function TeacherAttendancePage() {
   const router = useRouter();
-  const { programScope, loading: programScopeLoading } = useProgramScope({ role: "teacher" });
+  const { programScope } = useTeachingModeContext();
 
   React.useEffect(() => {
-    if (!programScopeLoading && programScope === "online") {
+    if (programScope === "online") {
       router.replace("/teacher");
     }
-  }, [programScope, programScopeLoading, router]);
+  }, [programScope, router]);
 
-  if (programScopeLoading || programScope === "online") {
+  if (programScope === "online") {
     return null;
   }
 
-  return <TeacherAttendanceContent programScope={programScope} />;
+  if (isAttendanceV2GloballyEnabled()) {
+    return <TeacherAttendanceV2 />;
+  }
+
+  return <TeacherAttendanceContent />;
 }

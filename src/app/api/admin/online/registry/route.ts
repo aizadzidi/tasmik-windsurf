@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
 import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
 import { requireAdminPermission } from "@/lib/adminPermissions";
+import { filterTeachersByTeachingScope } from "@/lib/adminTeacherScope";
 
 type EnrollmentRow = {
   student_id: string | null;
@@ -83,6 +84,8 @@ export async function GET(request: NextRequest) {
           teachers = (teacherRows ?? []) as TeacherRow[];
         }
 
+        teachers = await filterTeachersByTeachingScope(client, teachers, "online", tenantId);
+
         return {
           students: [],
           teachers: teachers.map((teacher) => ({
@@ -147,6 +150,8 @@ export async function GET(request: NextRequest) {
       } else {
         teachers = (teacherRows ?? []) as TeacherRow[];
       }
+
+      teachers = await filterTeachersByTeachingScope(client, teachers, "online", tenantId);
 
       return {
         students: students.map((student) => ({

@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { notificationService, type JuzTestNotification } from '@/lib/notificationService';
 import { authFetch } from '@/lib/authFetch';
 import { Card } from '@/components/ui/Card';
@@ -10,6 +11,7 @@ interface NotificationPanelProps {
 }
 
 export default function NotificationPanel({ isVisible, onClose }: NotificationPanelProps) {
+  const router = useRouter();
   const [notifications, setNotifications] = useState<JuzTestNotification[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +71,31 @@ export default function NotificationPanel({ isVisible, onClose }: NotificationPa
     }
   };
 
+  const handleOpenNotification = (notification: JuzTestNotification) => {
+    if (notification.status === 'pending') {
+      setNotifications(prev =>
+        prev.map(notif =>
+          notif.id === notification.id
+            ? { ...notif, status: 'acknowledged' }
+            : notif
+        )
+      );
+      void notificationService.markAsAcknowledged(notification.id);
+    }
+
+    const query = new URLSearchParams();
+    if (notification.scheduled_date) query.set('date', notification.scheduled_date);
+    if (notification.session_id) query.set('session_id', notification.session_id);
+    if (notification.student_id) query.set('student_id', notification.student_id);
+    if (typeof notification.slot_number === 'number') {
+      query.set('slot_number', String(notification.slot_number));
+    }
+
+    onClose();
+    const queryString = query.toString();
+    router.push(`/admin/juz-test-schedule${queryString ? `?${queryString}` : ''}`);
+  };
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
@@ -78,6 +105,13 @@ export default function NotificationPanel({ isVisible, onClose }: NotificationPa
     if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
     if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)}h ago`;
     return date.toLocaleDateString();
+  };
+
+  const formatScheduleDate = (dateString: string | null | undefined) => {
+    if (!dateString) return null;
+    const date = new Date(`${dateString}T00:00:00Z`);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
   };
 
   if (!isVisible) return null;
@@ -98,7 +132,7 @@ export default function NotificationPanel({ isVisible, onClose }: NotificationPa
             </div>
             <div>
               <h2 className="text-xl font-semibold text-gray-900">
-                Test Requests
+                Notifications
               </h2>
               <p className="text-sm text-gray-500 mt-0.5">
                 {notifications.filter(n => n.status === 'pending').length} pending • {notifications.length} total
@@ -139,9 +173,9 @@ export default function NotificationPanel({ isVisible, onClose }: NotificationPa
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
               </div>
-              <div className="text-gray-900 font-medium mb-2">No test requests</div>
+              <div className="text-gray-900 font-medium mb-2">No notifications yet</div>
               <div className="text-gray-500 text-sm text-center max-w-xs">
-                Test requests from teachers will appear here when students are ready for examination.
+                Teacher bookings and test requests will appear here.
               </div>
             </div>
           ) : (
@@ -150,7 +184,16 @@ export default function NotificationPanel({ isVisible, onClose }: NotificationPa
                 {notifications.map((notification) => (
                   <div
                     key={notification.id}
-                    className="bg-white border border-gray-100 rounded-xl p-5 hover:shadow-sm transition-all duration-200 group"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => handleOpenNotification(notification)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        handleOpenNotification(notification);
+                      }
+                    }}
+                    className="bg-white border border-gray-100 rounded-xl p-5 hover:shadow-sm hover:border-blue-200 transition-all duration-200 group cursor-pointer"
                   >
                     <div className="flex items-center justify-between">
                       {/* Left side - Main content */}
@@ -170,7 +213,9 @@ export default function NotificationPanel({ isVisible, onClose }: NotificationPa
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-3 mb-1">
                             <h3 className="font-semibold text-gray-900 text-base">
-                              Juz {notification.suggested_juz} Test Request
+                              {notification.notification_type === 'teacher_booking'
+                                ? `Juz ${notification.suggested_juz} Booking Scheduled`
+                                : `Juz ${notification.suggested_juz} Test Request`}
                             </h3>
                             
                             {/* Status badge */}
@@ -198,6 +243,18 @@ export default function NotificationPanel({ isVisible, onClose }: NotificationPa
                             <span className="text-gray-400">•</span>
                             <span>{formatDate(notification.created_at)}</span>
                           </div>
+                          {notification.notification_type === 'teacher_booking' && (
+                            <div className="mt-1 text-xs text-blue-700">
+                              {(() => {
+                                const label = formatScheduleDate(notification.scheduled_date);
+                                const slot = typeof notification.slot_number === 'number'
+                                  ? ` • Slot ${notification.slot_number}`
+                                  : '';
+                                if (!label && !slot) return 'Click to open Juz test schedule.';
+                                return `Scheduled for ${label || 'selected date'}${slot}`;
+                              })()}
+                            </div>
+                          )}
 
                           {/* Notes */}
                           {notification.teacher_notes && (
@@ -215,13 +272,19 @@ export default function NotificationPanel({ isVisible, onClose }: NotificationPa
                         {notification.status === 'pending' && (
                           <>
                             <button
-                              onClick={() => handleMarkAsAcknowledged(notification.id)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void handleMarkAsAcknowledged(notification.id);
+                              }}
                               className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors duration-200"
                             >
                               Acknowledge
                             </button>
                             <button
-                              onClick={() => handleMarkAsCompleted(notification.id)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void handleMarkAsCompleted(notification.id);
+                              }}
                               className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors duration-200"
                             >
                               Complete
@@ -230,7 +293,10 @@ export default function NotificationPanel({ isVisible, onClose }: NotificationPa
                         )}
                         {notification.status === 'acknowledged' && (
                           <button
-                            onClick={() => handleMarkAsCompleted(notification.id)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void handleMarkAsCompleted(notification.id);
+                            }}
                             className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors duration-200"
                           >
                             Complete

@@ -5,7 +5,8 @@ import { getWeekBoundaries } from "@/lib/gradeUtils";
 import {
   getMurajaahModeFromReport,
   getMurajaahModeLabel,
-  getMurajaahTestAssessmentFromReport
+  getMurajaahTestAssessmentFromReport,
+  getMurajaahTestResultBadge
 } from "@/lib/murajaahMode";
 import {
   canExportOldMurajaahTestPdf,
@@ -382,10 +383,7 @@ export default function FullRecordsModal({
                         const modeLabel = getMurajaahModeLabel(mode);
                         const testAssessment = getMurajaahTestAssessmentFromReport(report);
                         const isTestRecord = mode === "test";
-                        const hasTestScore = typeof testAssessment?.total_percentage === "number";
-                        const testResultLabel = hasTestScore
-                          ? `${testAssessment.total_percentage}% ${testAssessment.passed ? "PASS" : "FAIL"}`
-                          : "-";
+                        const testResultBadge = getMurajaahTestResultBadge(testAssessment);
                         const canDownloadOldTestPdf = canExportOldMurajaahTestPdf(report);
                         const isDownloadingPdf = downloadingReportId === report.id;
                         return (
@@ -424,9 +422,9 @@ export default function FullRecordsModal({
                           <td className="px-4 py-3 text-center border-b border-gray-100">
                             {isTestRecord ? (
                               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                                testAssessment?.passed ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-700'
+                                testResultBadge.className
                               }`}>
-                                {testResultLabel}
+                                {testResultBadge.label}
                               </span>
                             ) : (
                               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${

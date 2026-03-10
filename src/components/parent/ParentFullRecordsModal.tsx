@@ -4,7 +4,17 @@ import { supabase } from "@/lib/supabaseClient";
 import { formatGradeLabel, summarizeReportsByWeek } from "@/lib/parentReportUtils";
 import { formatJuzTestLabel, formatJuzTestPageRange } from "@/lib/juzTestUtils";
 import type { Report, ViewMode } from "@/types/teacher";
-import OldMurajaahTestResultsPanel from "@/components/OldMurajaahTestResultsPanel";
+import {
+  canExportOldMurajaahTestPdf,
+  downloadOldMurajaahTestSnapshotPdf
+} from "@/lib/oldMurajaahPdf";
+import {
+  getMurajaahModeFromReport,
+  getMurajaahModeLabel,
+  getMurajaahTestAssessmentFromReport,
+  getMurajaahTestResultBadge
+} from "@/lib/murajaahMode";
+import { getWeekBoundaries } from "@/lib/gradeUtils";
 import {
   type NormalModeMeta,
   buildNormalModeMeta,
@@ -69,6 +79,7 @@ export default function ParentFullRecordsModal({
   const initialLoadRef = useRef(true);
   const murajaahTabTouchedRef = useRef(false);
   const [murajaahTab, setMurajaahTab] = useState<'new' | 'old'>('new');
+  const [downloadingReportId, setDownloadingReportId] = useState<string | null>(null);
 
   const normalizeType = (type: string | null | undefined) => (type ?? '').trim().toLowerCase();
   const newMurajaahReports = useMemo(() => (
@@ -106,6 +117,22 @@ export default function ParentFullRecordsModal({
     const typeLabel = viewMode === 'tasmik' ? 'Tasmi' : murajaahTitle;
     return summarizeReportsByWeek(filteredReports, typeLabel);
   }, [filteredReports, murajaahTitle, viewMode]);
+
+  const handleDownloadOldTestPdf = useCallback(async (report: Report) => {
+    if (!canExportOldMurajaahTestPdf(report)) return;
+    try {
+      setDownloadingReportId(report.id);
+      await downloadOldMurajaahTestSnapshotPdf(
+        report,
+        student.name,
+        reports
+      );
+    } catch (error) {
+      console.error("Failed to download old murajaah test snapshot:", error);
+    } finally {
+      setDownloadingReportId(null);
+    }
+  }, [reports, student.name]);
 
   const fetchStudentReports = useCallback(async () => {
     if (initialLoadRef.current) {
@@ -281,91 +308,82 @@ export default function ParentFullRecordsModal({
 
   if (!student) return null;
 
-  const getViewModeTitle = () => {
-    switch (viewMode) {
-      case 'tasmik': return 'Tasmik Records';
-      case 'murajaah': return `${murajaahTitle} Records`;
-      case 'juz_tests': return 'Juz Test Records';
-      default: return 'All Records';
-    }
-  };
+  const headerTitle =
+    viewMode === 'tasmik'
+      ? 'Tasmi'
+      : viewMode === 'murajaah'
+      ? murajaahTitle
+      : viewMode === 'juz_tests'
+      ? 'Juz Test'
+      : 'All';
 
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl">
-        {/* Header */}
-        <div className="px-6 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-bold">{getViewModeTitle()}</h2>
-              <p className="text-blue-100 text-sm">Child: {student.name}</p>
-            </div>
-            <button
-              onClick={onClose}
-              className="text-white/70 hover:text-white transition-colors rounded-lg p-2 hover:bg-white/10"
-            >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/>
-              </svg>
-            </button>
-          </div>
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50 p-4">
+      <div className="bg-white/95 backdrop-blur-xl border border-white/40 rounded-2xl shadow-2xl p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-hidden">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-bold text-gray-900">
+            {headerTitle} Records for {student.name}
+          </h3>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
 
-        {/* Content */}
+        {viewMode === 'murajaah' && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="inline-flex rounded-full bg-gray-100 p-1">
+              <button
+                type="button"
+                onClick={() => {
+                  murajaahTabTouchedRef.current = true;
+                  setMurajaahTab('new');
+                }}
+                className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                  murajaahTab === 'new' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-700 hover:text-emerald-800'
+                }`}
+              >
+                New <span className="ml-1 text-[10px] opacity-80">({newMurajaahReports.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  murajaahTabTouchedRef.current = true;
+                  setMurajaahTab('old');
+                }}
+                className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                  murajaahTab === 'old' ? 'bg-amber-600 text-white shadow-sm' : 'text-amber-700 hover:text-amber-800'
+                }`}
+              >
+                Old <span className="ml-1 text-[10px] opacity-80">({oldMurajaahReports.length})</span>
+              </button>
+            </div>
+            <div className="text-xs text-gray-500">Separate old vs new murajaah records</div>
+          </div>
+        )}
+
         <div className="overflow-y-auto overscroll-contain max-h-[calc(90vh-120px)]">
-          {viewMode === 'murajaah' && !loading && (
-            <div className="px-6 pt-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="inline-flex rounded-full bg-gray-100 p-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    murajaahTabTouchedRef.current = true;
-                    setMurajaahTab('new');
-                  }}
-                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
-                    murajaahTab === 'new' ? 'bg-emerald-600 text-white shadow-sm' : 'text-emerald-700 hover:text-emerald-800'
-                  }`}
-                >
-                  New <span className="ml-1 text-[10px] opacity-80">({newMurajaahReports.length})</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    murajaahTabTouchedRef.current = true;
-                    setMurajaahTab('old');
-                  }}
-                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
-                    murajaahTab === 'old' ? 'bg-amber-600 text-white shadow-sm' : 'text-amber-700 hover:text-amber-800'
-                  }`}
-                >
-                    Old <span className="ml-1 text-[10px] opacity-80">({oldMurajaahReports.length})</span>
-                  </button>
-                </div>
-                <div className="text-xs text-gray-500">Separate old vs new murajaah records</div>
-              </div>
-            </div>
-          )}
-
-          {viewMode === "murajaah" && murajaahTab === "old" && !loading && (
-            <div className="px-6 pt-4">
-              <OldMurajaahTestResultsPanel
-                studentName={student.name}
-                reports={oldMurajaahReports}
-              />
-            </div>
-          )}
-
           {loading ? (
-            <div className="p-6">
-              <div className="animate-pulse space-y-4">
-                <div className="h-4 bg-gray-200 rounded w-1/4"></div>
-                <div className="space-y-3">
-                  {[...Array(5)].map((_, i) => (
-                    <div key={i} className="h-16 bg-gray-200 rounded"></div>
-                  ))}
-                </div>
+            <div className="animate-pulse space-y-4">
+              <div className="h-4 bg-gray-200 rounded w-1/4"></div>
+              <div className="space-y-2">
+                {[...Array(5)].map((_, i) => (
+                  <div key={i} className="flex space-x-4">
+                    <div className="h-8 bg-gray-200 rounded w-16"></div>
+                    <div className="h-8 bg-gray-200 rounded w-32"></div>
+                    <div className="h-8 bg-gray-200 rounded w-12"></div>
+                    <div className="h-8 bg-gray-200 rounded w-20"></div>
+                    <div className="h-8 bg-gray-200 rounded w-16"></div>
+                    <div className="h-8 bg-gray-200 rounded w-16"></div>
+                    <div className="h-8 bg-gray-200 rounded w-20"></div>
+                    <div className="h-8 bg-gray-200 rounded w-16"></div>
+                  </div>
+                ))}
               </div>
             </div>
           ) : viewMode === 'juz_tests' ? (
@@ -395,7 +413,7 @@ export default function ParentFullRecordsModal({
                             </div>
                             {formatJuzTestPageRange(test) && (
                               <div className="text-xs text-gray-500">
-                            {formatJuzTestPageRange(test)}
+                                {formatJuzTestPageRange(test)}
                               </div>
                             )}
                             <div className="mt-1">
@@ -404,7 +422,7 @@ export default function ParentFullRecordsModal({
                               </span>
                             </div>
                             <div className="text-sm text-gray-600">
-                              {test.examiner_name === 'Historical Entry' 
+                              {test.examiner_name === 'Historical Entry'
                                 ? (test.passed ? 'Historical Pass' : 'Historical Fail')
                                 : `Total Score: ${test.total_percentage}%`
                               }
@@ -420,7 +438,7 @@ export default function ParentFullRecordsModal({
                           </div>
                         )}
                       </div>
-                      
+
                       {/* Detailed Scores Section */}
                       {test.section2_scores && (
                         <div>
@@ -430,7 +448,7 @@ export default function ParentFullRecordsModal({
                           {renderDetailedScores(test)}
                         </div>
                       )}
-                      
+
                       {test.remarks && (
                         <div className="mt-3 pt-3 border-t border-gray-200">
                           <div className="text-sm text-gray-700">
@@ -443,18 +461,12 @@ export default function ParentFullRecordsModal({
                 </div>
               )}
             </div>
-          ) : weeklySummaries.length === 0 ? (
-            <div className="p-8 text-center">
-              <div className="text-gray-400 mb-4">
-                <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                </svg>
+          ) : viewMode === 'murajaah' && murajaahTab === 'old' ? (
+            filteredReports.length === 0 ? (
+              <div className="text-center py-8 text-gray-600">
+                <p>No Old Murajaah records found for this student.</p>
               </div>
-              <h3 className="text-lg font-medium text-gray-600 mb-2">No Records Found</h3>
-              <p className="text-gray-500">No {viewMode === 'murajaah' ? murajaahTitle : viewMode} records available for {student.name}</p>
-            </div>
-          ) : (
-            <div className="p-6">
+            ) : (
               <div className="overflow-hidden rounded-xl border border-gray-200 shadow-lg">
                 <div className="overflow-x-auto">
                   <table className="min-w-full">
@@ -467,60 +479,212 @@ export default function ParentFullRecordsModal({
                         <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Ayat</th>
                         <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Page</th>
                         <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Grade</th>
-                        <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Week</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Date</th>
+                        <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="bg-white">
-                      {weeklySummaries.map((summary, index) => (
-                        <tr key={summary.weekKey} className={`transition-colors hover:bg-gray-50 ${index % 2 === 0 ? 'bg-white' : 'bg-gray-25'}`}>
-                          <td className="px-4 py-3 text-gray-700 border-b border-gray-100">
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                              {summary.typeLabel}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100 text-xs font-medium">
-                            {summary.modeDisplay}
-                          </td>
-                          <td className="px-4 py-3 text-gray-800 font-medium border-b border-gray-100 text-sm">{summary.surahDisplay}</td>
-                          <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
-                            <span className="inline-flex items-center justify-center rounded-full bg-purple-100 text-purple-800 text-xs font-semibold px-2 py-0.5">
-                              {summary.juzDisplay}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
-                            <span className="text-xs font-mono">{summary.ayatDisplay}</span>
-                          </td>
-                          <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
-                            <span className="text-xs font-mono">
-                              {summary.pageDisplay}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-center border-b border-gray-100">
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                              summary.grade === 'mumtaz' ? 'bg-green-100 text-green-800' :
-                              summary.grade === 'jayyid jiddan' ? 'bg-yellow-100 text-yellow-800' :
-                              summary.grade === 'jayyid' ? 'bg-orange-100 text-orange-800' :
-                              summary.grade?.includes('PASS') ? 'bg-green-100 text-green-800' :
-                              summary.grade?.includes('FAIL') ? 'bg-red-100 text-red-700' :
-                              'bg-gray-100 text-gray-800'
-                            }`}>
-                              {formatGradeLabel(summary.grade)}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
-                            <div className="text-xs">
-                              <div className="font-medium">{summary.weekLabel}</div>
-                              <div className="text-gray-500">{summary.weekRange}</div>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                      {filteredReports.map((report, index) => {
+                        const mode = getMurajaahModeFromReport(report);
+                        const modeLabel = getMurajaahModeLabel(mode);
+                        const testAssessment = getMurajaahTestAssessmentFromReport(report);
+                        const isTestRecord = mode === "test";
+                        const testResultBadge = getMurajaahTestResultBadge(testAssessment);
+                        const canDownloadOldTestPdf = canExportOldMurajaahTestPdf(report);
+                        const isDownloadingPdf = downloadingReportId === report.id;
+
+                        return (
+                          <tr
+                            key={report.id}
+                            className={`transition-colors hover:bg-gray-50 ${
+                              index % 2 === 0 ? 'bg-white' : 'bg-gray-25'
+                            }`}
+                          >
+                            <td className="px-4 py-3 text-gray-700 border-b border-gray-100">
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                {report.type}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                              <div className="text-xs">
+                                <div className="font-semibold">{modeLabel}</div>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-gray-800 font-medium border-b border-gray-100 text-sm">
+                              {isTestRecord ? '-' : (report.surah || '-')}
+                            </td>
+                            <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-purple-100 text-purple-800 text-xs font-semibold">
+                                {report.juzuk}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                              <span className="text-xs font-mono">
+                                {isTestRecord ? '-' : `${report.ayat_from}-${report.ayat_to}`}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                              <span className="text-xs font-mono">
+                                {report.page_from && report.page_to
+                                  ? `${Math.min(report.page_from, report.page_to)}-${Math.max(report.page_from, report.page_to)}`
+                                  : '-'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-center border-b border-gray-100">
+                              {isTestRecord ? (
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                                  testResultBadge.className
+                                }`}>
+                                  {testResultBadge.label}
+                                </span>
+                              ) : (
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                                  report.grade === 'mumtaz' ? 'bg-green-100 text-green-800' :
+                                  report.grade === 'jayyid jiddan' ? 'bg-yellow-100 text-yellow-800' :
+                                  report.grade === 'jayyid' ? 'bg-orange-100 text-orange-800' :
+                                  'bg-gray-100 text-gray-800'
+                                }`}>
+                                  {formatGradeLabel(report.grade)}
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                              <div className="text-xs">
+                                <div className="font-medium">{report.date}</div>
+                                <div className="text-gray-500">
+                                  {getWeekBoundaries(report.date).weekRange}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-center border-b border-gray-100">
+                              <div className="flex items-center justify-center gap-2">
+                                {canDownloadOldTestPdf && (
+                                  <button
+                                    onClick={() => handleDownloadOldTestPdf(report)}
+                                    className={`inline-flex items-center justify-center w-8 h-8 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors ${
+                                      isDownloadingPdf ? "opacity-60 cursor-not-allowed" : ""
+                                    }`}
+                                    title="Download Old Test PDF"
+                                    aria-label="Download Old Test PDF"
+                                    disabled={isDownloadingPdf}
+                                  >
+                                    {isDownloadingPdf ? (
+                                      <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <circle
+                                          className="opacity-25"
+                                          cx="12"
+                                          cy="12"
+                                          r="10"
+                                          stroke="currentColor"
+                                          strokeWidth="3"
+                                        />
+                                        <path
+                                          className="opacity-75"
+                                          fill="currentColor"
+                                          d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z"
+                                        />
+                                      </svg>
+                                    ) : (
+                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          strokeWidth="2"
+                                          d="M12 16V4m0 12l-4-4m4 4l4-4M4 20h16"
+                                        />
+                                      </svg>
+                                    )}
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               </div>
+            )
+          ) : weeklySummaries.length === 0 ? (
+            <div className="text-center py-8 text-gray-600">
+              <p>No {viewMode === 'murajaah' ? murajaahTitle : viewMode} records found for this student.</p>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-xl border border-gray-200 shadow-lg">
+              <div className="overflow-x-auto">
+                <table className="min-w-full">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b text-sm">Type</th>
+                      <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Mode</th>
+                      <th className="px-4 py-3 text-left font-semibold text-gray-800 border-b text-sm">Surah</th>
+                      <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Juz</th>
+                      <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Ayat</th>
+                      <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Page</th>
+                      <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Grade</th>
+                      <th className="px-4 py-3 text-center font-semibold text-gray-800 border-b text-sm">Week</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white">
+                    {weeklySummaries.map((summary, index) => (
+                      <tr key={summary.weekKey} className={`transition-colors hover:bg-gray-50 ${index % 2 === 0 ? 'bg-white' : 'bg-gray-25'}`}>
+                        <td className="px-4 py-3 text-gray-700 border-b border-gray-100">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                            {summary.typeLabel}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100 text-xs font-medium">
+                          {summary.modeDisplay}
+                        </td>
+                        <td className="px-4 py-3 text-gray-800 font-medium border-b border-gray-100 text-sm">{summary.surahDisplay}</td>
+                        <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                          <span className="inline-flex items-center justify-center rounded-full bg-purple-100 text-purple-800 text-xs font-semibold px-2 py-0.5">
+                            {summary.juzDisplay}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                          <span className="text-xs font-mono">{summary.ayatDisplay}</span>
+                        </td>
+                        <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                          <span className="text-xs font-mono">
+                            {summary.pageDisplay}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-center border-b border-gray-100">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                            summary.grade === 'mumtaz' ? 'bg-green-100 text-green-800' :
+                            summary.grade === 'jayyid jiddan' ? 'bg-yellow-100 text-yellow-800' :
+                            summary.grade === 'jayyid' ? 'bg-orange-100 text-orange-800' :
+                            summary.grade?.includes('PASS') ? 'bg-green-100 text-green-800' :
+                            summary.grade?.includes('FAIL') ? 'bg-red-100 text-red-700' :
+                            'bg-gray-100 text-gray-800'
+                          }`}>
+                            {formatGradeLabel(summary.grade)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-center text-gray-700 border-b border-gray-100">
+                          <div className="text-xs">
+                            <div className="font-medium">{summary.weekLabel}</div>
+                            <div className="text-gray-500">{summary.weekRange}</div>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
+
+          <div className="flex justify-end mt-6">
+            <button
+              onClick={onClose}
+              className="px-6 py-2 rounded-lg text-gray-700 bg-gray-200 hover:bg-gray-300 transition-colors"
+            >
+              Close
+            </button>
+          </div>
         </div>
       </div>
     </div>

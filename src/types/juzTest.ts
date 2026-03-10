@@ -2,6 +2,7 @@ export type JuzTestStatus = 'scheduled' | 'reschedule_requested' | 'completed' |
 
 export type JuzTestSession = {
   id: string;
+  student_id?: string;
   slot_number: number;
   scheduled_date: string;
   status: JuzTestStatus;

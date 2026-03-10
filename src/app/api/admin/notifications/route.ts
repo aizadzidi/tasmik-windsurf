@@ -9,6 +9,10 @@ type NotificationRow = {
   student_name: string | null;
   teacher_id: string | null;
   teacher_name: string | null;
+  notification_type?: string | null;
+  session_id?: string | null;
+  scheduled_date?: string | null;
+  slot_number?: number | null;
   status?: string | null;
   created_at?: string | null;
   [key: string]: unknown;

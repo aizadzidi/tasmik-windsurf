@@ -6,13 +6,26 @@ import { createClient } from '@supabase/supabase-js';
 // - Data management that requires cross-user access
 // - System operations that need to bypass security policies
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!; // You'll need to add this
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const explicitServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const canUseDevFallback = process.env.NODE_ENV !== 'production';
+const supabaseServiceKey = explicitServiceKey ?? (canUseDevFallback ? supabaseAnonKey : undefined);
+
+if (!supabaseUrl) {
+  throw new Error('NEXT_PUBLIC_SUPABASE_URL is required');
+}
 
 if (!supabaseServiceKey) {
   throw new Error(
     'SUPABASE_SERVICE_ROLE_KEY is required for admin operations. ' +
     'Get it from Supabase Dashboard > Settings > API > service_role secret'
+  );
+}
+
+if (!explicitServiceKey && canUseDevFallback) {
+  console.warn(
+    'SUPABASE_SERVICE_ROLE_KEY is missing. Falling back to anon key for local development only.'
   );
 }
 

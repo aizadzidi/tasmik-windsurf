@@ -805,7 +805,7 @@ export default function AdminCrmPage() {
           await Promise.all([
             authFetch("/api/admin/students?include_prospects=true"),
             authFetch("/api/admin/users?role=parent"),
-            authFetch("/api/admin/users?role=teacher"),
+            authFetch("/api/admin/users?role=teacher&teaching_scope=campus"),
             authFetch("/api/admin/classes"),
             authFetch("/api/admin/crm-stages")
           ]);

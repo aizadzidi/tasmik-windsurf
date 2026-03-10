@@ -8,6 +8,10 @@ export interface JuzTestNotification {
   student_name: string;
   teacher_name: string;
   suggested_juz: number;
+  notification_type?: 'examiner_request' | 'teacher_booking';
+  session_id?: string | null;
+  scheduled_date?: string | null;
+  slot_number?: number | null;
   status: 'pending' | 'acknowledged' | 'completed';
   teacher_notes?: string;
   created_at: string;
@@ -67,6 +71,7 @@ export const notificationService = {
         student_name: studentName,
         teacher_name: teacherName,
         suggested_juz: data.suggested_juz,
+        notification_type: 'examiner_request' as const,
         teacher_notes: data.teacher_notes,
         status: 'pending' as const
       };
@@ -90,7 +95,7 @@ export const notificationService = {
         // If schema doesn't have the name columns yet, retry without them
         const schemaMissing =
           firstError.code === 'PGRST204' ||
-          /column .*student_name|teacher_name/i.test(firstError.message || '');
+          /column .*student_name|teacher_name|notification_type/i.test(firstError.message || '');
 
         if (schemaMissing) {
           const { error: retryError } = await supabase
