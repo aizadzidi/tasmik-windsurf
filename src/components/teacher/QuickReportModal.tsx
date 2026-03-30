@@ -22,6 +22,7 @@ interface QuickReportModalProps {
   onClose: () => void;
   onSuccess: () => void;
   userId: string;
+  apiEndpoint?: string;
   tasmiReports?: Array<{
     student_id: string;
     type: string;
@@ -126,14 +127,15 @@ function getCurrentWeekInfo() {
   return { weekRange, fridayDate };
 }
 
-export default function QuickReportModal({ 
-  student, 
-  reportType, 
-  onClose, 
-  onSuccess, 
+export default function QuickReportModal({
+  student,
+  reportType,
+  onClose,
+  onSuccess,
   userId,
+  apiEndpoint = "/api/teacher/reports",
   tasmiReports,
-  suggestions 
+  suggestions
 }: QuickReportModalProps) {
   const currentWeek = getCurrentWeekInfo();
   const normalizedReportType = reportType === "Murajaah" ? "Old Murajaah" : reportType;
@@ -593,7 +595,7 @@ export default function QuickReportModal({
         return;
       }
 
-      const res = await fetch("/api/teacher/reports", {
+      const res = await fetch(apiEndpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

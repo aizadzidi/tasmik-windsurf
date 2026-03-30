@@ -26,6 +26,7 @@ export const ADMIN_PAGE_PERMISSIONS: AdminPagePermission[] = [
   { key: "admin:certificates", label: "Certificates", path: "/admin/certificates" },
   { key: "admin:historical", label: "Historical Entry", path: "/admin/historical" },
   { key: "admin:users", label: "User Roles", path: "/admin/users" },
+  { key: "admin:leave", label: "Leave Management", path: "/admin/leave" },
 ];
 
 export const ADMIN_PERMISSION_KEYS = ADMIN_PAGE_PERMISSIONS.map((item) => item.key);

@@ -43,6 +43,7 @@ const isSafeRecurringFallbackError = (error: { message?: string } | null | undef
   isMissingColumnError(error, "status", table) ||
   isMissingColumnError(error, "hold_expires_at", table) ||
   isMissingColumnError(error, "monthly_fee_cents_snapshot", table) ||
+  isMissingColumnError(error, "student_package_assignment_id", "online_recurring_packages") ||
   isMissingColumnError(error, "default_slot_duration_minutes", "online_courses");
 
 const toCourseRows = async (client: SupabaseLike, tenantId: string) => {
@@ -122,7 +123,7 @@ const toRecurringPackages = async (client: SupabaseLike, tenantId: string) => {
   const response = await client
     .from("online_recurring_packages")
     .select(
-      "id, tenant_id, student_id, course_id, teacher_id, status, source, effective_month, effective_from, effective_to, sessions_per_week, monthly_fee_cents_snapshot, notes, hold_expires_at, created_by, updated_by, created_at, updated_at"
+      "id, tenant_id, student_id, course_id, teacher_id, student_package_assignment_id, status, source, effective_month, effective_from, effective_to, sessions_per_week, monthly_fee_cents_snapshot, notes, hold_expires_at, created_by, updated_by, created_at, updated_at"
     )
     .eq("tenant_id", tenantId)
     .order("effective_month", { ascending: false })

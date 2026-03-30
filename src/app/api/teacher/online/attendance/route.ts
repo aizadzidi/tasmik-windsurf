@@ -51,8 +51,7 @@ const emptyPayload = (monthKey: string, warning?: string) => ({
   today_queue: [],
   monthly_occurrences: [],
   scheduler: {
-    students: [],
-    courses: [],
+    pending_assignments: [],
     slot_capacity: "single_student" as const,
   },
   ...(warning ? { warning } : {}),

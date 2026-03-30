@@ -13,6 +13,12 @@ export type OnlineRecurringPackageStatus =
   | "paused"
   | "cancelled"
   | "legacy_review_required";
+export type OnlineStudentPackageAssignmentStatus =
+  | "draft"
+  | "pending_payment"
+  | "active"
+  | "paused"
+  | "cancelled";
 
 export type OnlineRecurringPackageSlotStatus = "active" | "moved" | "cancelled";
 export type OnlinePackageChangeRequestStatus =
@@ -104,6 +110,7 @@ export interface OnlineRecurringPackage {
   student_id: string;
   course_id: string;
   teacher_id: string;
+  student_package_assignment_id?: string | null;
   status: OnlineRecurringPackageStatus;
   source: string;
   effective_month: string;
@@ -113,6 +120,25 @@ export interface OnlineRecurringPackage {
   monthly_fee_cents_snapshot: number;
   notes: string | null;
   hold_expires_at?: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OnlineStudentPackageAssignment {
+  id: string;
+  tenant_id: string;
+  student_id: string;
+  course_id: string;
+  teacher_id: string;
+  status: OnlineStudentPackageAssignmentStatus;
+  effective_from: string;
+  effective_to: string | null;
+  sessions_per_week_snapshot: number;
+  duration_minutes_snapshot: number;
+  monthly_fee_cents_snapshot: number;
+  notes: string | null;
   created_by: string | null;
   updated_by: string | null;
   created_at: string;
@@ -172,6 +198,22 @@ export interface OnlineTeacherScheduleSlotInput {
   start_time: string;
 }
 
+export interface OnlineTeacherSchedulerAssignment {
+  id: string;
+  student_id: string;
+  student_name: string;
+  parent_name: string | null;
+  parent_contact_number: string | null;
+  course_id: string;
+  course_name: string;
+  status: OnlineStudentPackageAssignmentStatus;
+  sessions_per_week: number;
+  monthly_fee_cents: number;
+  duration_minutes: number;
+  effective_from: string;
+  effective_to: string | null;
+}
+
 export interface OnlineTeacherSchedulerStudent {
   id: string;
   name: string;
@@ -188,8 +230,7 @@ export interface OnlineTeacherSchedulerCourse {
 }
 
 export interface OnlineTeacherSchedulerOptions {
-  students: OnlineTeacherSchedulerStudent[];
-  courses: OnlineTeacherSchedulerCourse[];
+  pending_assignments: OnlineTeacherSchedulerAssignment[];
   slot_capacity: "single_student";
 }
 

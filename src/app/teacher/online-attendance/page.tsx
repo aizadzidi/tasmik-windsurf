@@ -9,11 +9,7 @@ import { authFetch } from "@/lib/authFetch";
 import { supabase } from "@/lib/supabaseClient";
 import { useTeachingModeContext } from "@/contexts/TeachingModeContext";
 import { cn } from "@/lib/utils";
-import type {
-  OnlineTeacherScheduleSlotInput,
-  OnlineTeacherSchedulerCourse,
-  OnlineTeacherSchedulerOptions,
-} from "@/types/online";
+import type { OnlineTeacherScheduleSlotInput, OnlineTeacherSchedulerOptions } from "@/types/online";
 
 type PlannerPill = {
   slot_template_id: string;
@@ -77,8 +73,20 @@ type TeacherPayload = {
   };
   weekly_packages: Array<{
     id: string;
+    student_id: string;
     student_name: string;
+    course_id: string;
     course_name: string;
+    sessions_per_week: number;
+    slots: Array<{
+      id: string;
+      package_id: string;
+      slot_template_id: string;
+      day_of_week_snapshot: number;
+      start_time_snapshot: string;
+      duration_minutes_snapshot: number;
+      status: string;
+    }>;
   }>;
   weekly_slot_actions: PlannerDay[];
   today_queue: OccurrenceRow[];
@@ -87,6 +95,7 @@ type TeacherPayload = {
 };
 
 type SlotDraft = OnlineTeacherScheduleSlotInput;
+type PendingAssignment = OnlineTeacherSchedulerOptions["pending_assignments"][number];
 
 const DAY_OPTIONS = [
   { value: 1, label: "Monday" },
@@ -176,10 +185,15 @@ export default function TeacherOnlineAttendancePage() {
   } | null>(null);
 
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [scheduleStudentId, setScheduleStudentId] = useState("");
-  const [scheduleCourseId, setScheduleCourseId] = useState("");
+  const [scheduleAssignmentId, setScheduleAssignmentId] = useState("");
   const [scheduleSlots, setScheduleSlots] = useState<SlotDraft[]>([]);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
+
+  const [classView, setClassView] = useState<"today" | "month">("today");
+  const [fillOpen, setFillOpen] = useState(false);
+  const [fillPackageId, setFillPackageId] = useState("");
+  const [fillSlots, setFillSlots] = useState<SlotDraft[]>([]);
+  const [fillError, setFillError] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -226,26 +240,53 @@ export default function TeacherOnlineAttendancePage() {
     [payload?.weekly_slot_actions],
   );
 
-  const selectedCourse = useMemo<OnlineTeacherSchedulerCourse | null>(() => {
-    if (!payload || !scheduleCourseId) return null;
-    return payload.scheduler.courses.find((course) => course.id === scheduleCourseId) ?? null;
-  }, [payload, scheduleCourseId]);
-
-  const unassignedStudents = useMemo(() => {
-    if (!payload) return [];
-    const assignedStudentIds = new Set(
-      payload.weekly_slot_actions.flatMap((day) => day.occupied_pills.map((pill) => pill.student_id)),
+  const underScheduledPackageIds = useMemo(() => {
+    if (!payload) return new Set<string>();
+    return new Set(
+      payload.weekly_packages
+        .filter((pkg) => pkg.slots.length > 0 && pkg.slots.length < pkg.sessions_per_week)
+        .map((pkg) => pkg.id),
     );
-    return payload.scheduler.students.filter((student) => !assignedStudentIds.has(student.id));
   }, [payload]);
 
+  const pendingAssignments = useMemo(() => {
+    const all = payload?.scheduler.pending_assignments ?? [];
+    if (!payload || underScheduledPackageIds.size === 0) return all;
+    // Exclude assignments that are already shown in the under-scheduled banner
+    const underScheduledStudentCourseKeys = new Set(
+      payload.weekly_packages
+        .filter((pkg) => underScheduledPackageIds.has(pkg.id))
+        .map((pkg) => `${pkg.student_id}:${pkg.course_id}`),
+    );
+    return all.filter((a) => !underScheduledStudentCourseKeys.has(`${a.student_id}:${a.course_id}`));
+  }, [payload, underScheduledPackageIds]);
+
+  const underScheduledPackages = useMemo(() => {
+    if (!payload) return [];
+    return payload.weekly_packages.filter((pkg) => underScheduledPackageIds.has(pkg.id));
+  }, [payload, underScheduledPackageIds]);
+
+  const fillPackage = useMemo(() => {
+    if (!fillPackageId || !payload) return null;
+    return payload.weekly_packages.find((pkg) => pkg.id === fillPackageId) ?? null;
+  }, [payload, fillPackageId]);
+
+  const fillMissingCount = fillPackage
+    ? Math.max(fillPackage.sessions_per_week - fillPackage.slots.length, 0)
+    : 0;
+
+  const selectedAssignment = useMemo<PendingAssignment | null>(() => {
+    if (!payload || !scheduleAssignmentId) return null;
+    return payload.scheduler.pending_assignments.find((assignment) => assignment.id === scheduleAssignmentId) ?? null;
+  }, [payload, scheduleAssignmentId]);
+
   useEffect(() => {
-    if (!selectedCourse) {
+    if (!selectedAssignment) {
       setScheduleSlots([]);
       return;
     }
     setScheduleSlots((current) => {
-      const required = Math.max(selectedCourse.sessions_per_week, 1);
+      const required = Math.max(selectedAssignment.sessions_per_week, 1);
       const next = current.slice(0, required);
       if (next.length < required) {
         const defaults = buildDefaultSlots(required - next.length);
@@ -253,7 +294,7 @@ export default function TeacherOnlineAttendancePage() {
       }
       return next;
     });
-  }, [selectedCourse]);
+  }, [selectedAssignment]);
 
   const moveCandidates = useMemo(() => {
     if (!selectedPill || !payload) return [] as EmptySlot[];
@@ -261,6 +302,33 @@ export default function TeacherOnlineAttendancePage() {
       .flatMap((day) => day.empty_slots)
       .filter((slot) => slot.course_id === selectedPill.course_id && slot.is_available);
   }, [payload, selectedPill]);
+
+  const todayDateStr = useMemo(() => {
+    const now = new Date();
+    return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(now.getUTCDate()).padStart(2, "0")}`;
+  }, []);
+
+  const monthlyByDate = useMemo(() => {
+    const grouped = new Map<string, OccurrenceRow[]>();
+    for (const occ of payload?.monthly_occurrences ?? []) {
+      const list = grouped.get(occ.session_date) ?? [];
+      list.push(occ);
+      grouped.set(occ.session_date, list);
+    }
+    return Array.from(grouped.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [payload?.monthly_occurrences]);
+
+  const formatDateHeading = (dateStr: string) => {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    const date = new Date(Date.UTC(y, m - 1, d));
+    return date.toLocaleDateString("en-GB", {
+      weekday: "long",
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+  };
 
   const visiblePlannerDays = useMemo(
     () => (payload?.weekly_slot_actions ?? []).filter((day) => day.occupied_pills.length > 0),
@@ -320,8 +388,8 @@ export default function TeacherOnlineAttendancePage() {
 
   const submitSchedule = async () => {
     if (!payload) return;
-    if (!scheduleStudentId || !scheduleCourseId) {
-      setScheduleError("Select student and course first.");
+    if (!scheduleAssignmentId || !selectedAssignment) {
+      setScheduleError("Select an assigned package first.");
       return;
     }
     if (scheduleSlots.length === 0 || scheduleSlots.some((slot) => !slot.start_time)) {
@@ -336,8 +404,7 @@ export default function TeacherOnlineAttendancePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          student_id: scheduleStudentId,
-          course_id: scheduleCourseId,
+          assignment_id: scheduleAssignmentId,
           month,
           slots: scheduleSlots,
         }),
@@ -346,8 +413,7 @@ export default function TeacherOnlineAttendancePage() {
       if (!response.ok) throw new Error(data.error || "Failed to schedule student");
 
       setScheduleOpen(false);
-      setScheduleStudentId("");
-      setScheduleCourseId("");
+      setScheduleAssignmentId("");
       setScheduleSlots([]);
       setScheduleError(null);
       setError(null);
@@ -364,8 +430,59 @@ export default function TeacherOnlineAttendancePage() {
     }
   };
 
+  const openFillModal = (packageId: string) => {
+    const pkg = payload?.weekly_packages.find((p) => p.id === packageId);
+    if (!pkg) return;
+    const missing = Math.max(pkg.sessions_per_week - pkg.slots.length, 0);
+    if (missing <= 0) return;
+    setFillPackageId(packageId);
+    setFillSlots(buildDefaultSlots(missing));
+    setFillError(null);
+    setFillOpen(true);
+    setSelectedPill(null);
+  };
+
+  const submitFill = async () => {
+    if (!fillPackageId || fillSlots.length === 0) return;
+    if (fillSlots.some((slot) => !slot.start_time)) {
+      setFillError("Complete all slot day/time fields.");
+      return;
+    }
+    setFillError(null);
+    setBusyKey("fill");
+    try {
+      const response = await authFetch("/api/teacher/online/attendance/package-slots/fill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          package_id: fillPackageId,
+          slots: fillSlots,
+        }),
+      });
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(data.error || "Failed to fill slots");
+      setFillOpen(false);
+      setFillPackageId("");
+      setFillSlots([]);
+      setFillError(null);
+      setError(null);
+      await loadAttendance();
+    } catch (caughtError) {
+      setFillError(caughtError instanceof Error ? caughtError.message : "Failed to fill slots");
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
   const unassignSlot = async (pill: PlannerPill) => {
-    const confirmed = window.confirm(`Unassign slot for ${pill.student_name}?`);
+    // Find the package to show slot count warning
+    const pkg = payload?.weekly_packages.find((p) => p.id === pill.package_id);
+    const slotsAfter = pkg ? pkg.slots.length - 1 : 0;
+    const totalRequired = pkg?.sessions_per_week ?? 0;
+    const warning = pkg && slotsAfter < totalRequired
+      ? `\nThis student has a ${totalRequired}x/week package. After unassigning, only ${slotsAfter} of ${totalRequired} slots will remain.`
+      : "";
+    const confirmed = window.confirm(`Unassign slot for ${pill.student_name}?${warning}`);
     if (!confirmed) return;
     setBusyKey(`unassign:${pill.package_slot_id}`);
     try {
@@ -419,18 +536,20 @@ export default function TeacherOnlineAttendancePage() {
         {payload?.warning ? (
           <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">{payload.warning}</Card>
         ) : null}
-        {unassignedStudents.length > 0 ? (
+        {pendingAssignments.length > 0 ? (
           <Card className="border-rose-200 bg-rose-50/90 p-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-rose-500">Unassigned Students</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-rose-500">
+                  Packages Waiting For Slot Assignment
+                </p>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {unassignedStudents.map((student) => (
+                  {pendingAssignments.map((assignment) => (
                     <span
-                      key={student.id}
+                      key={assignment.id}
                       className="rounded-full border border-rose-200 bg-white px-3 py-1 text-sm font-semibold text-rose-700"
                     >
-                      {student.name}
+                      {assignment.student_name} • {assignment.course_name}
                     </span>
                   ))}
                 </div>
@@ -439,15 +558,38 @@ export default function TeacherOnlineAttendancePage() {
                 className="self-start"
                 onClick={() => {
                   setScheduleOpen(true);
-                  setScheduleStudentId(unassignedStudents[0]?.id ?? "");
-                  setScheduleCourseId("");
+                  setScheduleAssignmentId(pendingAssignments[0]?.id ?? "");
                   setScheduleSlots([]);
                   setScheduleError(null);
                 }}
-                disabled={!payload || payload.scheduler.courses.length === 0}
+                disabled={pendingAssignments.length === 0}
               >
-                Schedule Student
+                Assign Slot
               </Button>
+            </div>
+          </Card>
+        ) : null}
+        {underScheduledPackages.length > 0 ? (
+          <Card className="border-amber-200 bg-amber-50/90 p-4">
+            <p className="text-xs font-medium uppercase tracking-widest text-amber-500">
+              Incomplete Slots
+            </p>
+            <div className="mt-2 space-y-2">
+              {underScheduledPackages.map((pkg) => (
+                <div key={pkg.id} className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm text-amber-900">
+                    <span className="font-semibold">{pkg.student_name}</span>
+                    {" "}&middot;{" "}{pkg.course_name}
+                    {" "}<span className="text-amber-600">({pkg.slots.length}/{pkg.sessions_per_week} slots assigned)</span>
+                  </p>
+                  <Button
+                    className="self-start bg-amber-600 text-white hover:bg-amber-700"
+                    onClick={() => openFillModal(pkg.id)}
+                  >
+                    Fill Slots
+                  </Button>
+                </div>
+              ))}
             </div>
           </Card>
         ) : null}
@@ -548,7 +690,37 @@ export default function TeacherOnlineAttendancePage() {
 
         <section className="space-y-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <h2 className="text-lg font-semibold text-slate-900">Class Today</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-lg font-semibold text-slate-900">
+                {classView === "today" ? "Class Today" : "This Month"}
+              </h2>
+              <div className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5">
+                <button
+                  type="button"
+                  className={cn(
+                    "rounded-[10px] px-3 py-1.5 text-xs font-medium transition",
+                    classView === "today"
+                      ? "bg-slate-900 text-white shadow-sm"
+                      : "text-slate-500 hover:text-slate-700",
+                  )}
+                  onClick={() => setClassView("today")}
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  className={cn(
+                    "rounded-[10px] px-3 py-1.5 text-xs font-medium transition",
+                    classView === "month"
+                      ? "bg-slate-900 text-white shadow-sm"
+                      : "text-slate-500 hover:text-slate-700",
+                  )}
+                  onClick={() => setClassView("month")}
+                >
+                  This Month
+                </button>
+              </div>
+            </div>
             <div className="flex flex-wrap items-center gap-3 lg:justify-end">
               <input
                 type="month"
@@ -564,52 +736,154 @@ export default function TeacherOnlineAttendancePage() {
               />
             </div>
           </div>
-          {loading ? (
-            <Card className="p-4 text-sm text-slate-500">Loading today queue...</Card>
-          ) : (payload?.today_queue ?? []).length === 0 ? (
-            <Card className="p-4 text-sm text-slate-500">No online sessions scheduled for today.</Card>
+
+          {classView === "today" ? (
+            <>
+              {loading ? (
+                <Card className="p-4 text-sm text-slate-500">Loading today queue...</Card>
+              ) : (payload?.today_queue ?? []).length === 0 ? (
+                <Card className="p-4 text-sm text-slate-500">No online sessions scheduled for today.</Card>
+              ) : (
+                (payload?.today_queue ?? []).map((occurrence) => (
+                  <Card key={occurrence.id ?? `${occurrence.package_slot_id}:${occurrence.session_date}`} className="p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{occurrence.student_name}</p>
+                        <p className="text-xs text-slate-500">{occurrence.course_name}</p>
+                        <p className="mt-1 text-xs font-medium text-sky-700">
+                          {occurrence.session_date} • {timeLabel(occurrence.start_time)}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={cn(
+                            "rounded-full px-2 py-1 text-xs font-semibold",
+                            occurrence.attendance_status === "present"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : occurrence.attendance_status === "absent"
+                                ? "bg-rose-100 text-rose-700"
+                                : "bg-slate-100 text-slate-600",
+                          )}
+                        >
+                          {occurrence.attendance_status ?? "unmarked"}
+                        </span>
+                        <Button
+                          className="h-8 rounded-lg bg-emerald-600 px-3 text-xs text-white hover:bg-emerald-700"
+                          disabled={busyKey === `mark:${occurrence.id}`}
+                          onClick={() => void markAttendance(occurrence, "present")}
+                        >
+                          Present
+                        </Button>
+                        <Button
+                          className="h-8 rounded-lg bg-rose-600 px-3 text-xs text-white hover:bg-rose-700"
+                          disabled={busyKey === `mark:${occurrence.id}`}
+                          onClick={() => void markAttendance(occurrence, "absent")}
+                        >
+                          Absent
+                        </Button>
+                      </div>
+                    </div>
+                  </Card>
+                ))
+              )}
+            </>
           ) : (
-            (payload?.today_queue ?? []).map((occurrence) => (
-              <Card key={occurrence.id ?? `${occurrence.package_slot_id}:${occurrence.session_date}`} className="p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900">{occurrence.student_name}</p>
-                    <p className="text-xs text-slate-500">{occurrence.course_name}</p>
-                    <p className="mt-1 text-xs font-medium text-sky-700">
-                      {occurrence.session_date} • {timeLabel(occurrence.start_time)}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={cn(
-                        "rounded-full px-2 py-1 text-xs font-semibold",
-                        occurrence.attendance_status === "present"
-                          ? "bg-emerald-100 text-emerald-700"
-                          : occurrence.attendance_status === "absent"
-                            ? "bg-rose-100 text-rose-700"
-                            : "bg-slate-100 text-slate-600",
-                      )}
-                    >
-                      {occurrence.attendance_status ?? "unmarked"}
-                    </span>
-                    <Button
-                      className="h-8 rounded-lg bg-emerald-600 px-3 text-xs text-white hover:bg-emerald-700"
-                      disabled={busyKey === `mark:${occurrence.id}`}
-                      onClick={() => void markAttendance(occurrence, "present")}
-                    >
-                      Present
-                    </Button>
-                    <Button
-                      className="h-8 rounded-lg bg-rose-600 px-3 text-xs text-white hover:bg-rose-700"
-                      disabled={busyKey === `mark:${occurrence.id}`}
-                      onClick={() => void markAttendance(occurrence, "absent")}
-                    >
-                      Absent
-                    </Button>
-                  </div>
-                </div>
-              </Card>
-            ))
+            <>
+              {loading ? (
+                <Card className="p-4 text-sm text-slate-500">Loading monthly sessions...</Card>
+              ) : monthlyByDate.length === 0 ? (
+                <Card className="p-4 text-sm text-slate-500">No sessions for this month.</Card>
+              ) : (
+                monthlyByDate.map(([dateStr, occurrences]) => {
+                  const isToday = dateStr === todayDateStr;
+                  const allMarked = occurrences.every((o) => o.attendance_status !== null);
+                  const hasUnmarked = occurrences.some((o) => o.attendance_status === null);
+                  const isPast = dateStr < todayDateStr;
+
+                  return (
+                    <div key={dateStr} className="space-y-2">
+                      <div
+                        className={cn(
+                          "flex items-center gap-2 rounded-xl px-3 py-2",
+                          isToday
+                            ? "bg-sky-50 border border-sky-200"
+                            : hasUnmarked
+                              ? "bg-amber-50 border border-amber-200"
+                              : isPast && allMarked
+                                ? "bg-slate-50 border border-slate-100"
+                                : "bg-white border border-slate-200",
+                        )}
+                      >
+                        <h3 className={cn(
+                          "text-sm font-semibold",
+                          isToday ? "text-sky-800" : hasUnmarked ? "text-amber-800" : "text-slate-700",
+                        )}>
+                          {formatDateHeading(dateStr)}
+                        </h3>
+                        {isToday ? (
+                          <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-700">
+                            Today
+                          </span>
+                        ) : null}
+                        {hasUnmarked ? (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700">
+                            {occurrences.filter((o) => o.attendance_status === null).length} unmarked
+                          </span>
+                        ) : null}
+                      </div>
+
+                      {occurrences.map((occurrence) => (
+                        <Card
+                          key={occurrence.id ?? `${occurrence.package_slot_id}:${occurrence.session_date}`}
+                          className={cn(
+                            "p-4",
+                            isPast && allMarked ? "opacity-60" : "",
+                          )}
+                        >
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <p className="text-sm font-semibold text-slate-900">{occurrence.student_name}</p>
+                              <p className="text-xs text-slate-500">{occurrence.course_name}</p>
+                              <p className="mt-1 text-xs font-medium text-sky-700">
+                                {timeRangeLabel(occurrence.start_time, occurrence.duration_minutes)}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={cn(
+                                  "rounded-full px-2 py-1 text-xs font-semibold",
+                                  occurrence.attendance_status === "present"
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : occurrence.attendance_status === "absent"
+                                      ? "bg-rose-100 text-rose-700"
+                                      : "bg-slate-100 text-slate-600",
+                                )}
+                              >
+                                {occurrence.attendance_status ?? "unmarked"}
+                              </span>
+                              <Button
+                                className="h-8 rounded-lg bg-emerald-600 px-3 text-xs text-white hover:bg-emerald-700"
+                                disabled={busyKey === `mark:${occurrence.id}`}
+                                onClick={() => void markAttendance(occurrence, "present")}
+                              >
+                                Present
+                              </Button>
+                              <Button
+                                className="h-8 rounded-lg bg-rose-600 px-3 text-xs text-white hover:bg-rose-700"
+                                disabled={busyKey === `mark:${occurrence.id}`}
+                                onClick={() => void markAttendance(occurrence, "absent")}
+                              >
+                                Absent
+                              </Button>
+                            </div>
+                          </div>
+                        </Card>
+                      ))}
+                    </div>
+                  );
+                })
+              )}
+            </>
           )}
         </section>
       </main>
@@ -625,8 +899,8 @@ export default function TeacherOnlineAttendancePage() {
 
       <Modal
         open={scheduleOpen}
-        title="Schedule Student"
-        description="Assign weekly day/time slots for an assigned online student."
+        title="Assign Slot"
+        description="Assign weekly day/time slots for an admin-assigned package."
         onClose={() => setScheduleOpen(false)}
         footer={
           <div className="flex items-center justify-end gap-3">
@@ -640,50 +914,49 @@ export default function TeacherOnlineAttendancePage() {
         }
       >
         <div className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div>
             <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">Student</label>
+              <label className="mb-2 block text-sm font-medium text-slate-700">Assigned Package</label>
               <select
-                value={scheduleStudentId}
+                value={scheduleAssignmentId}
                 onChange={(event) => {
-                  setScheduleStudentId(event.target.value);
+                  setScheduleAssignmentId(event.target.value);
                   setScheduleError(null);
                 }}
                 className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm"
               >
-                <option value="">Select student</option>
-                {unassignedStudents.map((student) => (
-                  <option key={student.id} value={student.id}>
-                    {student.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">Course</label>
-              <select
-                value={scheduleCourseId}
-                onChange={(event) => {
-                  setScheduleCourseId(event.target.value);
-                  setScheduleError(null);
-                }}
-                className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm"
-              >
-                <option value="">Select course</option>
-                {(payload?.scheduler.courses ?? []).map((course) => (
-                  <option key={course.id} value={course.id}>
-                    {course.name}
+                <option value="">Select assigned package</option>
+                {pendingAssignments.map((assignment) => (
+                  <option key={assignment.id} value={assignment.id}>
+                    {assignment.student_name} • {assignment.course_name}
                   </option>
                 ))}
               </select>
             </div>
           </div>
 
-          {selectedCourse ? (
+          {selectedAssignment ? (
+            <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 sm:grid-cols-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Student</p>
+                <p className="mt-1 font-semibold text-slate-900">{selectedAssignment.student_name}</p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Course</p>
+                <p className="mt-1 font-semibold text-slate-900">{selectedAssignment.course_name}</p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Weekly Slots</p>
+                <p className="mt-1 font-semibold text-slate-900">{selectedAssignment.sessions_per_week}</p>
+              </div>
+            </div>
+          ) : null}
+
+          {selectedAssignment ? (
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              Course requires <span className="font-semibold text-slate-900">{selectedCourse.sessions_per_week}</span>{" "}
-              weekly slot(s).
+              Assigned package requires{" "}
+              <span className="font-semibold text-slate-900">{selectedAssignment.sessions_per_week}</span> weekly
+              slot(s).
             </div>
           ) : null}
 
@@ -740,52 +1013,157 @@ export default function TeacherOnlineAttendancePage() {
         description={selectedPill ? `${selectedPill.course_name} slot actions` : undefined}
         onClose={() => setSelectedPill(null)}
       >
-        {selectedPill ? (
+        {selectedPill ? (() => {
+          const pillPkg = payload?.weekly_packages.find((p) => p.id === selectedPill.package_id);
+          const activeSlotCount = pillPkg?.slots.length ?? 0;
+          const requiredSlots = pillPkg?.sessions_per_week ?? 0;
+          const isUnderScheduled = pillPkg && activeSlotCount < requiredSlots;
+          return (
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                <p className="font-medium text-slate-900">Student: {selectedPill.student_name}</p>
+                <p className="mt-1">
+                  Course: <span className="font-medium text-slate-900">{selectedPill.course_name}</span>
+                </p>
+                <p className="mt-1">
+                  Current slot: {dayById.get(selectedPill.day_of_week)?.label ?? selectedPill.day_of_week} •{" "}
+                  {timeRangeLabel(selectedPill.start_time, selectedPill.duration_minutes)}
+                </p>
+                {pillPkg ? (
+                  <p className={cn("mt-1 font-medium", isUnderScheduled ? "text-amber-700" : "text-slate-700")}>
+                    Slots assigned: {activeSlotCount} of {requiredSlots}
+                    {isUnderScheduled ? " !" : ""}
+                  </p>
+                ) : null}
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-700">Move to another available time</label>
+                <div className="flex gap-2">
+                  <select
+                    value={moveTargetSlotId}
+                    onChange={(event) => setMoveTargetSlotId(event.target.value)}
+                    className="h-11 flex-1 rounded-2xl border border-slate-200 bg-white px-3 text-sm"
+                  >
+                    <option value="">Select target slot</option>
+                    {moveCandidates.map((slot) => (
+                      <option key={slot.slot_template_id} value={slot.slot_template_id}>
+                        {(dayById.get(slot.day_of_week)?.label ?? slot.day_of_week) +
+                          " • " +
+                          timeRangeLabel(slot.start_time, slot.duration_minutes)}
+                      </option>
+                    ))}
+                  </select>
+                  <Button onClick={() => void moveTimeSlot()} disabled={busyKey === `move:${selectedPill.package_slot_id}`}>
+                    Move
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="border-rose-200 text-rose-700 hover:bg-rose-50"
+                    disabled={busyKey === `unassign:${selectedPill.package_slot_id}`}
+                    onClick={() => void unassignSlot(selectedPill)}
+                  >
+                    {busyKey === `unassign:${selectedPill.package_slot_id}` ? "Unassigning..." : "Unassign"}
+                  </Button>
+                </div>
+                {moveCandidates.length === 0 ? (
+                  <p className="mt-2 text-xs text-slate-500">No available target slots for this course.</p>
+                ) : null}
+              </div>
+
+              {isUnderScheduled ? (
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 transition hover:bg-amber-100"
+                  onClick={() => openFillModal(selectedPill.package_id)}
+                >
+                  <span className="font-semibold">{requiredSlots - activeSlotCount} slot(s) missing</span>
+                  <span className="ml-auto text-amber-600">Fill remaining slots &rarr;</span>
+                </button>
+              ) : null}
+            </div>
+          );
+        })() : null}
+      </Modal>
+
+      <Modal
+        open={fillOpen}
+        title="Fill Missing Slots"
+        description={fillPackage ? `${fillPackage.student_name} • ${fillPackage.course_name}` : undefined}
+        onClose={() => setFillOpen(false)}
+        footer={
+          <div className="flex items-center justify-end gap-3">
+            <Button variant="outline" onClick={() => setFillOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => void submitFill()} disabled={busyKey === "fill"}>
+              {busyKey === "fill" ? "Saving..." : "Save Slots"}
+            </Button>
+          </div>
+        }
+      >
+        {fillPackage ? (
           <div className="space-y-4">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              <p className="font-medium text-slate-900">Student: {selectedPill.student_name}</p>
-              <p className="mt-1">
-                Course: <span className="font-medium text-slate-900">{selectedPill.course_name}</span>
+              <p className="font-medium text-slate-900">
+                Currently assigned: {fillPackage.slots.length} of {fillPackage.sessions_per_week} weekly slots
               </p>
-              <p className="mt-1">
-                Current slot: {dayById.get(selectedPill.day_of_week)?.label ?? selectedPill.day_of_week} •{" "}
-                {timeRangeLabel(selectedPill.start_time, selectedPill.duration_minutes)}
-              </p>
+              <div className="mt-2 space-y-1">
+                {fillPackage.slots.map((slot) => (
+                  <p key={slot.id} className="text-xs text-slate-500">
+                    {DAY_OPTIONS.find((d) => d.value === slot.day_of_week_snapshot)?.label ?? slot.day_of_week_snapshot}{" "}
+                    • {timeRangeLabel(slot.start_time_snapshot, slot.duration_minutes_snapshot)}
+                  </p>
+                ))}
+              </div>
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">Move to another available time</label>
-              <div className="flex gap-2">
-                <select
-                  value={moveTargetSlotId}
-                  onChange={(event) => setMoveTargetSlotId(event.target.value)}
-                  className="h-11 flex-1 rounded-2xl border border-slate-200 bg-white px-3 text-sm"
-                >
-                  <option value="">Select target slot</option>
-                  {moveCandidates.map((slot) => (
-                    <option key={slot.slot_template_id} value={slot.slot_template_id}>
-                      {(dayById.get(slot.day_of_week)?.label ?? slot.day_of_week) +
-                        " • " +
-                        timeRangeLabel(slot.start_time, slot.duration_minutes)}
-                    </option>
-                  ))}
-                </select>
-                <Button onClick={() => void moveTimeSlot()} disabled={busyKey === `move:${selectedPill.package_slot_id}`}>
-                  Move
-                </Button>
-                <Button
-                  variant="outline"
-                  className="border-rose-200 text-rose-700 hover:bg-rose-50"
-                  disabled={busyKey === `unassign:${selectedPill.package_slot_id}`}
-                  onClick={() => void unassignSlot(selectedPill)}
-                >
-                  {busyKey === `unassign:${selectedPill.package_slot_id}` ? "Unassigning..." : "Unassign"}
-                </Button>
+              <label className="mb-2 block text-sm font-medium text-slate-700">
+                Add {fillMissingCount} more slot{fillMissingCount > 1 ? "s" : ""}
+              </label>
+              <div className="space-y-2">
+                {fillSlots.map((slot, index) => (
+                  <div key={`fill-${index}`} className="grid gap-2 sm:grid-cols-2">
+                    <select
+                      value={slot.day_of_week}
+                      onChange={(event) => {
+                        const dayOfWeek = Number(event.target.value);
+                        setFillSlots((current) =>
+                          current.map((item, i) => (i === index ? { ...item, day_of_week: dayOfWeek } : item)),
+                        );
+                        setFillError(null);
+                      }}
+                      className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm"
+                    >
+                      {DAY_OPTIONS.map((day) => (
+                        <option key={day.label} value={day.value}>
+                          {day.label}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="time"
+                      value={slot.start_time}
+                      onChange={(event) => {
+                        const startTime = event.target.value;
+                        setFillSlots((current) =>
+                          current.map((item, i) => (i === index ? { ...item, start_time: startTime } : item)),
+                        );
+                        setFillError(null);
+                      }}
+                      className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm"
+                    />
+                  </div>
+                ))}
               </div>
-              {moveCandidates.length === 0 ? (
-                <p className="mt-2 text-xs text-slate-500">No available target slots for this course.</p>
-              ) : null}
             </div>
+
+            {fillError ? (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                {fillError}
+              </div>
+            ) : null}
           </div>
         ) : null}
       </Modal>

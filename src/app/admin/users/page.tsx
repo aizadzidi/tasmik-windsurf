@@ -20,7 +20,7 @@ type UserRow = {
   id: string;
   name: string | null;
   email: string | null;
-  role: "admin" | "teacher" | "parent";
+  role: "admin" | "teacher" | "parent" | "general_worker";
   created_at?: string | null;
   linked_children?: Array<{
     id: string;
@@ -51,7 +51,13 @@ type SortOption =
   | "registered-newest"
   | "registered-oldest";
 
-const ROLE_OPTIONS: UserRow["role"][] = ["admin", "teacher", "parent"];
+const ROLE_OPTIONS: UserRow["role"][] = ["admin", "teacher", "general_worker", "parent"];
+const ROLE_LABELS: Record<UserRow["role"], string> = {
+  admin: "Admin",
+  teacher: "Teacher",
+  general_worker: "General Worker",
+  parent: "Parent",
+};
 const ASSIGNMENT_LABELS: Record<AssignmentValue, string> = {
   campus: "Campus",
   online: "Online",
@@ -612,6 +618,7 @@ export default function AdminUsersPage() {
                   <option value="all">All roles</option>
                   <option value="admin">Admin</option>
                   <option value="teacher">Teacher</option>
+                  <option value="general_worker">General Worker</option>
                   <option value="parent">Parent</option>
                   <option value="unassigned-parent">Unassigned Parent</option>
                 </select>
@@ -762,7 +769,7 @@ export default function AdminUsersPage() {
                               >
                                 {ROLE_OPTIONS.map((role) => (
                                   <option key={role} value={role}>
-                                    {role}
+                                    {ROLE_LABELS[role]}
                                   </option>
                                 ))}
                               </select>

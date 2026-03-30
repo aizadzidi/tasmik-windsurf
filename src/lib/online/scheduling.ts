@@ -1,27 +1,28 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { isMissingColumnError } from "@/lib/online/db";
+import {
+  fetchOnlineStudentPackageAssignments,
+  isMissingPackageAssignmentsSetupError,
+  SCHEDULABLE_ASSIGNMENT_STATUSES,
+} from "@/lib/online/packageAssignments";
+import type { OnlineTeacherSchedulerOptions } from "@/types/online";
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/;
 const MONTH_PATTERN = /^(\d{4})-(\d{2})$/;
-const ACTIVE_ENROLLMENT_STATUSES = ["active", "paused", "pending_payment"] as const;
 const ACTIVE_PACKAGE_STATUSES = ["active", "pending_payment", "draft"] as const;
-const DEFAULT_SLOT_DURATION_MINUTES = 30;
 
 type ClientLike = Pick<SupabaseClient, "from">;
 
-type StudentCandidate = {
+type AssignmentRow = {
   id: string;
-  name: string;
-  parent_name: string | null;
-  parent_contact_number: string | null;
-};
-
-type CourseWithDuration = {
-  id: string;
-  name: string;
-  sessions_per_week: number;
-  monthly_fee_cents: number;
-  default_slot_duration_minutes: number;
+  student_id: string;
+  course_id: string;
+  teacher_id: string;
+  status: "draft" | "pending_payment" | "active" | "paused" | "cancelled";
+  effective_from: string;
+  effective_to: string | null;
+  sessions_per_week_snapshot: number;
+  duration_minutes_snapshot: number;
+  monthly_fee_cents_snapshot: number;
 };
 
 type SlotTemplateRow = {
@@ -40,31 +41,9 @@ export type TeacherScheduleSlotInput = {
 export type TeacherScheduleRequest = {
   tenantId: string;
   teacherId: string;
-  studentId: string;
-  courseId: string;
+  assignmentId: string;
   month: string;
   slots: TeacherScheduleSlotInput[];
-};
-
-export type TeacherSchedulerStudentOption = {
-  id: string;
-  name: string;
-  parent_name: string | null;
-  parent_contact_number: string | null;
-};
-
-export type TeacherSchedulerCourseOption = {
-  id: string;
-  name: string;
-  sessions_per_week: number;
-  monthly_fee_cents: number;
-  duration_minutes: number;
-};
-
-export type TeacherSchedulerOptions = {
-  students: TeacherSchedulerStudentOption[];
-  courses: TeacherSchedulerCourseOption[];
-  slot_capacity: "single_student";
 };
 
 const normalizeStartTime = (value: string) => {
@@ -100,103 +79,6 @@ const uniqueSlotInputs = (slots: TeacherScheduleSlotInput[]) => {
   }
 
   return normalized;
-};
-
-const fetchOnlineProgramIds = async (client: ClientLike, tenantId: string) => {
-  const programRes = await client
-    .from("programs")
-    .select("id")
-    .eq("tenant_id", tenantId)
-    .in("type", ["online", "hybrid"]);
-  if (programRes.error) throw programRes.error;
-
-  return (programRes.data ?? [])
-    .map((row) => row.id as string | null)
-    .filter((value): value is string => Boolean(value));
-};
-
-const fetchEligibleTeacherStudents = async (client: ClientLike, tenantId: string, teacherId: string) => {
-  const onlineProgramIds = await fetchOnlineProgramIds(client, tenantId);
-  if (onlineProgramIds.length === 0) return [] as StudentCandidate[];
-
-  const enrollmentRes = await client
-    .from("enrollments")
-    .select("student_id")
-    .eq("tenant_id", tenantId)
-    .in("program_id", onlineProgramIds)
-    .in("status", [...ACTIVE_ENROLLMENT_STATUSES]);
-  if (enrollmentRes.error) throw enrollmentRes.error;
-
-  const studentIds = Array.from(
-    new Set(
-      (enrollmentRes.data ?? [])
-        .map((row) => row.student_id as string | null)
-        .filter((value): value is string => Boolean(value)),
-    ),
-  );
-  if (studentIds.length === 0) return [] as StudentCandidate[];
-
-  const studentRes = await client
-    .from("students")
-    .select("id, name, parent_name, parent_contact_number, record_type")
-    .eq("tenant_id", tenantId)
-    .eq("assigned_teacher_id", teacherId)
-    .in("id", studentIds)
-    .order("name", { ascending: true });
-  if (studentRes.error) throw studentRes.error;
-
-  return (studentRes.data ?? [])
-    .filter((row) => (row.record_type ?? null) !== "prospect")
-    .map((row) => ({
-      id: String(row.id),
-      name: row.name ?? "Student",
-      parent_name: row.parent_name ?? null,
-      parent_contact_number: row.parent_contact_number ?? null,
-    }));
-};
-
-const fetchActiveCourses = async (client: ClientLike, tenantId: string) => {
-  const selectColumns =
-    "id, name, sessions_per_week, monthly_fee_cents, is_active, default_slot_duration_minutes";
-  const courseRes = await client
-    .from("online_courses")
-    .select(selectColumns)
-    .eq("tenant_id", tenantId)
-    .eq("is_active", true)
-    .order("name", { ascending: true });
-
-  if (!courseRes.error) {
-    return (courseRes.data ?? []).map((row) => ({
-      id: String(row.id),
-      name: row.name ?? "Online Course",
-      sessions_per_week: Math.max(Number(row.sessions_per_week) || 1, 1),
-      monthly_fee_cents: Number(row.monthly_fee_cents) || 0,
-      default_slot_duration_minutes:
-        Number(row.default_slot_duration_minutes) > 0
-          ? Number(row.default_slot_duration_minutes)
-          : DEFAULT_SLOT_DURATION_MINUTES,
-    })) as CourseWithDuration[];
-  }
-
-  if (!isMissingColumnError(courseRes.error, "default_slot_duration_minutes", "online_courses")) {
-    throw courseRes.error;
-  }
-
-  const fallbackRes = await client
-    .from("online_courses")
-    .select("id, name, sessions_per_week, monthly_fee_cents, is_active")
-    .eq("tenant_id", tenantId)
-    .eq("is_active", true)
-    .order("name", { ascending: true });
-  if (fallbackRes.error) throw fallbackRes.error;
-
-  return (fallbackRes.data ?? []).map((row) => ({
-    id: String(row.id),
-    name: row.name ?? "Online Course",
-    sessions_per_week: Math.max(Number(row.sessions_per_week) || 1, 1),
-    monthly_fee_cents: Number(row.monthly_fee_cents) || 0,
-    default_slot_duration_minutes: DEFAULT_SLOT_DURATION_MINUTES,
-  })) as CourseWithDuration[];
 };
 
 const resolveTemplate = async (params: {
@@ -238,30 +120,55 @@ const resolveTemplate = async (params: {
   return createRes.data as SlotTemplateRow;
 };
 
+const isPackageActiveForMonth = (
+  row: { effective_month: string; effective_to: string | null },
+  monthStart: string,
+) => row.effective_month <= monthStart && (row.effective_to === null || row.effective_to >= monthStart);
+
+const isMonthWithinAssignment = (assignment: Pick<AssignmentRow, "effective_from" | "effective_to">, monthStart: string) => {
+  const effectiveFrom = assignment.effective_from.slice(0, 10);
+  if (effectiveFrom > monthStart) return false;
+  if (assignment.effective_to && assignment.effective_to.slice(0, 10) < monthStart) return false;
+  return true;
+};
+
 export const buildTeacherSchedulerOptions = async (params: {
   client: ClientLike;
   tenantId: string;
   teacherId: string;
-}): Promise<TeacherSchedulerOptions> => {
-  const [students, courses] = await Promise.all([
-    fetchEligibleTeacherStudents(params.client, params.tenantId, params.teacherId),
-    fetchActiveCourses(params.client, params.tenantId),
-  ]);
+}): Promise<OnlineTeacherSchedulerOptions> => {
+  const { rows } = await fetchOnlineStudentPackageAssignments({
+    client: params.client,
+    tenantId: params.tenantId,
+    teacherId: params.teacherId,
+    statuses: SCHEDULABLE_ASSIGNMENT_STATUSES,
+  });
 
+  const todayKey = new Date().toISOString().slice(0, 10);
   return {
-    students: students.map((student) => ({
-      id: student.id,
-      name: student.name,
-      parent_name: student.parent_name,
-      parent_contact_number: student.parent_contact_number,
-    })),
-    courses: courses.map((course) => ({
-      id: course.id,
-      name: course.name,
-      sessions_per_week: course.sessions_per_week,
-      monthly_fee_cents: course.monthly_fee_cents,
-      duration_minutes: course.default_slot_duration_minutes,
-    })),
+    pending_assignments: rows
+      .filter((row) => row.schedule_state === "waiting_for_slot" || row.schedule_state === "partially_scheduled")
+      .filter((row) => !row.effective_to || row.effective_to >= todayKey)
+      .sort((left, right) => {
+        const byStudent = left.student_name.localeCompare(right.student_name);
+        if (byStudent !== 0) return byStudent;
+        return left.course_name.localeCompare(right.course_name);
+      })
+      .map((row) => ({
+        id: row.id,
+        student_id: row.student_id,
+        student_name: row.student_name,
+        parent_name: row.parent_name,
+        parent_contact_number: row.parent_contact_number,
+        course_id: row.course_id,
+        course_name: row.course_name,
+        status: row.status,
+        sessions_per_week: row.sessions_per_week_snapshot,
+        monthly_fee_cents: row.monthly_fee_cents_snapshot,
+        duration_minutes: row.duration_minutes_snapshot,
+        effective_from: row.effective_from,
+        effective_to: row.effective_to,
+      })),
     slot_capacity: "single_student",
   };
 };
@@ -280,23 +187,33 @@ export const createTeacherRecurringSchedule = async (
     throw new Error("At least one slot is required.");
   }
 
-  const schedulerOptions = await buildTeacherSchedulerOptions({
-    client,
-    tenantId: payload.tenantId,
-    teacherId: payload.teacherId,
-  });
-  const selectedStudent = schedulerOptions.students.find((student) => student.id === payload.studentId);
-  if (!selectedStudent) {
-    throw new Error("Student must be assigned to this teacher and enrolled in online/hybrid.");
+  const assignmentRes = await client
+    .from("online_student_package_assignments")
+    .select(
+      "id, student_id, course_id, teacher_id, status, effective_from, effective_to, sessions_per_week_snapshot, duration_minutes_snapshot, monthly_fee_cents_snapshot"
+    )
+    .eq("tenant_id", payload.tenantId)
+    .eq("id", payload.assignmentId)
+    .maybeSingle();
+  if (assignmentRes.error) {
+    if (isMissingPackageAssignmentsSetupError(assignmentRes.error)) {
+      throw new Error("Online package assignments are not configured yet. Run the latest migration first.");
+    }
+    throw assignmentRes.error;
   }
 
-  const selectedCourse = schedulerOptions.courses.find((course) => course.id === payload.courseId);
-  if (!selectedCourse) {
-    throw new Error("Course is not available for scheduling.");
+  const assignment = assignmentRes.data as AssignmentRow | null;
+  if (!assignment?.id || assignment.teacher_id !== payload.teacherId) {
+    throw new Error("Package assignment not found for this teacher.");
   }
-
-  if (slots.length !== selectedCourse.sessions_per_week) {
-    throw new Error(`This course requires exactly ${selectedCourse.sessions_per_week} weekly slot(s).`);
+  if (!SCHEDULABLE_ASSIGNMENT_STATUSES.includes(assignment.status)) {
+    throw new Error("Only active or pending payment package assignments can be scheduled.");
+  }
+  if (!isMonthWithinAssignment(assignment, monthStart)) {
+    throw new Error("Package assignment is not active for the selected month.");
+  }
+  if (slots.length !== assignment.sessions_per_week_snapshot) {
+    throw new Error(`This package requires exactly ${assignment.sessions_per_week_snapshot} weekly slot(s).`);
   }
 
   const templateRows = await Promise.all(
@@ -304,10 +221,10 @@ export const createTeacherRecurringSchedule = async (
       resolveTemplate({
         client,
         tenantId: payload.tenantId,
-        courseId: payload.courseId,
+        courseId: assignment.course_id,
         dayOfWeek: slot.day_of_week,
         startTime: slot.start_time,
-        durationMinutes: selectedCourse.duration_minutes,
+        durationMinutes: assignment.duration_minutes_snapshot,
       }),
     ),
   );
@@ -315,7 +232,9 @@ export const createTeacherRecurringSchedule = async (
 
   const activePackagesRes = await client
     .from("online_recurring_packages")
-    .select("id, student_id, course_id, effective_month, effective_to")
+    .select(
+      "id, student_id, course_id, teacher_id, student_package_assignment_id, effective_month, effective_to, status"
+    )
     .eq("tenant_id", payload.tenantId)
     .eq("teacher_id", payload.teacherId)
     .in("status", [...ACTIVE_PACKAGE_STATUSES]);
@@ -325,17 +244,16 @@ export const createTeacherRecurringSchedule = async (
     id: string;
     student_id: string;
     course_id: string;
+    teacher_id: string;
+    student_package_assignment_id: string | null;
     effective_month: string;
     effective_to: string | null;
+    status: string;
   }>;
-  const monthActivePackages = activePackages.filter(
-    (row) =>
-      row.effective_month <= monthStart &&
-      (row.effective_to === null || row.effective_to >= monthStart),
-  );
+  const monthActivePackages = activePackages.filter((row) => isPackageActiveForMonth(row, monthStart));
 
   const monthActivePackageIds = monthActivePackages.map((row) => row.id);
-  const slotsByPackageId = new Map<string, number>();
+  const activeSlotCountByPackageId = new Map<string, number>();
   if (monthActivePackageIds.length > 0) {
     const activePackageSlotsRes = await client
       .from("online_recurring_package_slots")
@@ -348,15 +266,24 @@ export const createTeacherRecurringSchedule = async (
     (activePackageSlotsRes.data ?? []).forEach((row) => {
       const packageId = String(row.package_id ?? "");
       if (!packageId) return;
-      slotsByPackageId.set(packageId, (slotsByPackageId.get(packageId) ?? 0) + 1);
+      activeSlotCountByPackageId.set(packageId, (activeSlotCountByPackageId.get(packageId) ?? 0) + 1);
     });
   }
 
-  const monthScheduledPackages = monthActivePackages.filter((row) => (slotsByPackageId.get(row.id) ?? 0) > 0);
-  const existingPackage = monthScheduledPackages.find((row) => row.student_id === payload.studentId) ?? null;
+  const existingPackage =
+    monthActivePackages.find((row) => row.student_package_assignment_id === assignment.id) ??
+    monthActivePackages.find(
+      (row) =>
+        !row.student_package_assignment_id &&
+        row.student_id === assignment.student_id &&
+        row.course_id === assignment.course_id &&
+        row.teacher_id === assignment.teacher_id,
+    ) ??
+    null;
 
-  const activePackageIds = monthScheduledPackages
+  const activePackageIds = monthActivePackages
     .filter((row) => row.id !== existingPackage?.id)
+    .filter((row) => (activeSlotCountByPackageId.get(row.id) ?? 0) > 0)
     .map((row) => row.id);
   if (activePackageIds.length > 0) {
     const slotConflictRes = await client
@@ -374,6 +301,7 @@ export const createTeacherRecurringSchedule = async (
   }
 
   const timestamp = new Date().toISOString();
+  const recurringStatus = assignment.status === "pending_payment" ? "pending_payment" : "active";
   let packageData: Record<string, unknown> | null = null;
   let packageSlotsData: Array<Record<string, unknown>> = [];
 
@@ -381,11 +309,14 @@ export const createTeacherRecurringSchedule = async (
     const packageUpdateRes = await client
       .from("online_recurring_packages")
       .update({
-        course_id: payload.courseId,
-        status: "active",
-        source: "teacher_direct",
-        sessions_per_week: selectedCourse.sessions_per_week,
-        monthly_fee_cents_snapshot: selectedCourse.monthly_fee_cents,
+        student_id: assignment.student_id,
+        course_id: assignment.course_id,
+        teacher_id: assignment.teacher_id,
+        student_package_assignment_id: assignment.id,
+        status: recurringStatus,
+        source: "admin_assignment_teacher_schedule",
+        sessions_per_week: assignment.sessions_per_week_snapshot,
+        monthly_fee_cents_snapshot: assignment.monthly_fee_cents_snapshot,
         updated_at: timestamp,
         updated_by: payload.teacherId,
       })
@@ -434,9 +365,7 @@ export const createTeacherRecurringSchedule = async (
         duration_minutes_snapshot: template.duration_minutes,
         status: "active" as const,
       }));
-      const insertRes = await client
-        .from("online_recurring_package_slots")
-        .insert(insertRows);
+      const insertRes = await client.from("online_recurring_package_slots").insert(insertRows);
       if (insertRes.error) throw insertRes.error;
     }
 
@@ -468,15 +397,16 @@ export const createTeacherRecurringSchedule = async (
       .from("online_recurring_packages")
       .insert({
         tenant_id: payload.tenantId,
-        student_id: payload.studentId,
-        course_id: payload.courseId,
-        teacher_id: payload.teacherId,
-        status: "active",
-        source: "teacher_direct",
+        student_id: assignment.student_id,
+        course_id: assignment.course_id,
+        teacher_id: assignment.teacher_id,
+        student_package_assignment_id: assignment.id,
+        status: recurringStatus,
+        source: "admin_assignment_teacher_schedule",
         effective_month: monthStart,
-        effective_from: monthStart,
-        sessions_per_week: selectedCourse.sessions_per_week,
-        monthly_fee_cents_snapshot: selectedCourse.monthly_fee_cents,
+        effective_from: assignment.effective_from > monthStart ? assignment.effective_from : monthStart,
+        sessions_per_week: assignment.sessions_per_week_snapshot,
+        monthly_fee_cents_snapshot: assignment.monthly_fee_cents_snapshot,
         notes: null,
         created_by: payload.teacherId,
         updated_by: payload.teacherId,
@@ -531,5 +461,177 @@ export const createTeacherRecurringSchedule = async (
   return {
     package: packageData,
     package_slots: packageSlotsData,
+  };
+};
+
+export type FillPackageSlotsRequest = {
+  tenantId: string;
+  teacherId: string;
+  packageId: string;
+  slots: TeacherScheduleSlotInput[];
+};
+
+export const fillPackageSlots = async (
+  client: ClientLike,
+  payload: FillPackageSlotsRequest,
+) => {
+  const slots = uniqueSlotInputs(payload.slots ?? []);
+  if (slots.length === 0) {
+    throw new Error("At least one slot is required.");
+  }
+
+  const packageRes = await client
+    .from("online_recurring_packages")
+    .select(
+      "id, student_id, course_id, teacher_id, student_package_assignment_id, status, effective_month, effective_from, effective_to, sessions_per_week, monthly_fee_cents_snapshot"
+    )
+    .eq("tenant_id", payload.tenantId)
+    .eq("id", payload.packageId)
+    .maybeSingle();
+  if (packageRes.error) throw packageRes.error;
+
+  const pkg = packageRes.data as {
+    id: string;
+    student_id: string;
+    course_id: string;
+    teacher_id: string;
+    student_package_assignment_id: string | null;
+    status: string;
+    effective_month: string;
+    effective_from: string;
+    effective_to: string | null;
+    sessions_per_week: number;
+    monthly_fee_cents_snapshot: number;
+  } | null;
+
+  if (!pkg?.id || pkg.teacher_id !== payload.teacherId) {
+    throw new Error("Package not found for this teacher.");
+  }
+  if (pkg.status !== "active" && pkg.status !== "pending_payment" && pkg.status !== "draft") {
+    throw new Error("Only active packages can have slots filled.");
+  }
+
+  // Count existing active slots
+  const activeSlotsRes = await client
+    .from("online_recurring_package_slots")
+    .select("id, slot_template_id")
+    .eq("tenant_id", payload.tenantId)
+    .eq("package_id", pkg.id)
+    .eq("status", "active");
+  if (activeSlotsRes.error) throw activeSlotsRes.error;
+
+  const existingActiveCount = (activeSlotsRes.data ?? []).length;
+  if (existingActiveCount + slots.length > pkg.sessions_per_week) {
+    throw new Error(
+      `Package requires ${pkg.sessions_per_week} weekly slot(s). Already has ${existingActiveCount} active. Cannot add ${slots.length} more.`
+    );
+  }
+
+  // Look up assignment for duration info
+  let durationMinutes = 30; // fallback
+  if (pkg.student_package_assignment_id) {
+    const assignmentRes = await client
+      .from("online_student_package_assignments")
+      .select("duration_minutes_snapshot")
+      .eq("id", pkg.student_package_assignment_id)
+      .maybeSingle();
+    if (!assignmentRes.error && assignmentRes.data) {
+      durationMinutes = (assignmentRes.data as { duration_minutes_snapshot: number }).duration_minutes_snapshot || 30;
+    }
+  }
+
+  // Resolve templates for each new slot
+  const templateRows = await Promise.all(
+    slots.map((slot) =>
+      resolveTemplate({
+        client,
+        tenantId: payload.tenantId,
+        courseId: pkg.course_id,
+        dayOfWeek: slot.day_of_week,
+        startTime: slot.start_time,
+        durationMinutes,
+      }),
+    ),
+  );
+  const templateIds = templateRows.map((row) => row.id);
+
+  // Check for conflicts with other packages for this teacher (only overlapping date ranges)
+  let otherPackagesQuery = client
+    .from("online_recurring_packages")
+    .select("id, effective_month, effective_to")
+    .eq("tenant_id", payload.tenantId)
+    .eq("teacher_id", payload.teacherId)
+    .neq("id", pkg.id)
+    .in("status", ["active", "pending_payment", "draft"]);
+
+  // Only consider packages that start before this package ends
+  if (pkg.effective_to) {
+    otherPackagesQuery = otherPackagesQuery.lte("effective_month", pkg.effective_to);
+  }
+
+  const otherPackagesRes = await otherPackagesQuery;
+  if (otherPackagesRes.error) throw otherPackagesRes.error;
+
+  // Filter out packages that end before this package starts
+  const otherPackageIds = (otherPackagesRes.data ?? [])
+    .filter((row) => !row.effective_to || row.effective_to >= pkg.effective_month)
+    .map((row) => String(row.id));
+  if (otherPackageIds.length > 0) {
+    const conflictRes = await client
+      .from("online_recurring_package_slots")
+      .select("id")
+      .eq("tenant_id", payload.tenantId)
+      .in("package_id", otherPackageIds)
+      .eq("status", "active")
+      .in("slot_template_id", templateIds)
+      .limit(1);
+    if (conflictRes.error) throw conflictRes.error;
+    if ((conflictRes.data ?? []).length > 0) {
+      throw new Error("One or more selected slot times are already scheduled for this teacher.");
+    }
+  }
+
+  // Also check for duplicates within the same package
+  const existingTemplateIds = (activeSlotsRes.data ?? []).map((row) => String(row.slot_template_id));
+  const duplicateTemplates = templateIds.filter((id) => existingTemplateIds.includes(id));
+  if (duplicateTemplates.length > 0) {
+    throw new Error("One or more selected slots are already assigned to this package.");
+  }
+
+  // Insert new package slots
+  const timestamp = new Date().toISOString();
+  const slotInsertRows = templateRows.map((template) => ({
+    tenant_id: payload.tenantId,
+    package_id: pkg.id,
+    slot_template_id: template.id,
+    day_of_week_snapshot: template.day_of_week,
+    start_time_snapshot: template.start_time,
+    duration_minutes_snapshot: template.duration_minutes,
+    status: "active" as const,
+  }));
+  const insertRes = await client
+    .from("online_recurring_package_slots")
+    .insert(slotInsertRows)
+    .select("*");
+  if (insertRes.error) throw insertRes.error;
+
+  // Update teacher availability preferences
+  const availabilityRows = templateIds.map((slotTemplateId) => ({
+    tenant_id: payload.tenantId,
+    teacher_id: payload.teacherId,
+    slot_template_id: slotTemplateId,
+    is_available: true,
+    last_assigned_at: timestamp,
+  }));
+  const availabilityRes = await client
+    .from("online_teacher_slot_preferences")
+    .upsert(availabilityRows, { onConflict: "tenant_id,slot_template_id,teacher_id" });
+  if (availabilityRes.error) throw availabilityRes.error;
+
+  return {
+    package_id: pkg.id,
+    new_slots: insertRes.data ?? [],
+    total_active_slots: existingActiveCount + slots.length,
+    sessions_per_week: pkg.sessions_per_week,
   };
 };

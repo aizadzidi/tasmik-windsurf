@@ -27,5 +27,14 @@ export async function authFetch(input: RequestInfo | URL, init: RequestInit = {}
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  return fetch(input, { ...init, headers });
+  const method = (init.method ?? "GET").toUpperCase();
+
+  return fetch(input, {
+    ...init,
+    headers,
+    // Authenticated app data should prefer fresh reads unless a caller opts into caching explicitly.
+    ...(init.cache === undefined && (method === "GET" || method === "HEAD")
+      ? { cache: "no-store" as RequestCache }
+      : {}),
+  });
 }

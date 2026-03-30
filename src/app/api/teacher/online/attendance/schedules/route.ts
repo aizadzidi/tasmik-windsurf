@@ -5,8 +5,7 @@ import { requireAuthenticatedTenantUser } from "@/lib/requestAuth";
 import { supabaseService } from "@/lib/supabaseServiceClient";
 
 type CreateScheduleBody = {
-  student_id?: string;
-  course_id?: string;
+  assignment_id?: string;
   month?: string;
   slots?: TeacherScheduleSlotInput[];
 };
@@ -43,14 +42,13 @@ export async function POST(request: NextRequest) {
     }
 
     const body = (await request.json()) as CreateScheduleBody;
-    const studentId = (body.student_id ?? "").trim();
-    const courseId = (body.course_id ?? "").trim();
+    const assignmentId = (body.assignment_id ?? "").trim();
     const month = (body.month ?? "").trim();
     const slots = Array.isArray(body.slots) ? body.slots : [];
 
-    if (!studentId || !courseId || !month || slots.length === 0) {
+    if (!assignmentId || !month || slots.length === 0) {
       return NextResponse.json(
-        { error: "student_id, course_id, month, and slots are required." },
+        { error: "assignment_id, month, and slots are required." },
         { status: 400 },
       );
     }
@@ -58,8 +56,7 @@ export async function POST(request: NextRequest) {
     const payload = await createTeacherRecurringSchedule(supabaseService, {
       tenantId: auth.tenantId,
       teacherId: auth.userId,
-      studentId,
-      courseId,
+      assignmentId,
       month,
       slots,
     });

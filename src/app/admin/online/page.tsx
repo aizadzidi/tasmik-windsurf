@@ -18,6 +18,38 @@ type OnlineStudent = {
   parent_contact_number?: string | null;
   crm_stage?: string | null;
   crm_status_reason?: string | null;
+  package_assignments?: PackageAssignmentSummary[];
+};
+
+type PackageAssignmentSummary = {
+  id: string;
+  course_id: string;
+  course_name: string;
+  teacher_id: string;
+  teacher_name: string;
+  status: string;
+  effective_from: string;
+  effective_to: string | null;
+  schedule_state: string;
+};
+
+type PackageAssignmentDetail = PackageAssignmentSummary & {
+  student_id: string;
+  student_name: string;
+  parent_name: string | null;
+  parent_contact_number: string | null;
+  sessions_per_week_snapshot: number;
+  duration_minutes_snapshot: number;
+  monthly_fee_cents_snapshot: number;
+  notes: string | null;
+};
+
+type CourseOption = {
+  id: string;
+  name: string;
+  sessions_per_week?: number | null;
+  monthly_fee_cents?: number | null;
+  is_active?: boolean;
 };
 
 type Teacher = {
@@ -30,6 +62,11 @@ type RegistryPayload = {
   teachers?: Teacher[];
 };
 
+type PackageAssignmentsPayload = {
+  assignments?: PackageAssignmentDetail[];
+  warning?: string;
+};
+
 type EditStudentForm = {
   name: string;
   assigned_teacher_id: string;
@@ -39,7 +76,40 @@ type EditStudentForm = {
   crm_status_reason: string;
 };
 
+type PackageForm = {
+  course_id: string;
+  teacher_id: string;
+  status: string;
+  effective_from: string;
+  notes: string;
+};
+
+type PackageFormMode = "hidden" | "create" | "edit";
+
 const FALLBACK_STAGES = ["interested", "active", "pending_payment", "paused", "discontinued"];
+const PACKAGE_STATUS_OPTIONS = ["active", "pending_payment", "paused", "draft"];
+const packageStatusLabel = (status: string) => formatStageLabel(status || "draft");
+const scheduleStateLabel = (state: string) =>
+  state === "scheduled" ? "Scheduled" : state === "partially_scheduled" ? "Partially Scheduled" : state === "cancelled" ? "Cancelled" : "Waiting For Slot";
+const defaultPackageForm = (): PackageForm => ({
+  course_id: "",
+  teacher_id: "",
+  status: "active",
+  effective_from: new Date().toISOString().slice(0, 7),
+  notes: "",
+});
+
+const toPackageAssignmentSummary = (assignment: PackageAssignmentDetail): PackageAssignmentSummary => ({
+  id: assignment.id,
+  course_id: assignment.course_id,
+  course_name: assignment.course_name,
+  teacher_id: assignment.teacher_id,
+  teacher_name: assignment.teacher_name,
+  status: assignment.status,
+  effective_from: assignment.effective_from,
+  effective_to: assignment.effective_to,
+  schedule_state: assignment.schedule_state,
+});
 
 const extractError = (payload: unknown, fallback: string) => {
   if (payload && typeof payload === "object" && "error" in payload) {
@@ -65,8 +135,11 @@ const formatStageLabel = (stage: string) =>
 export default function AdminOnlinePage() {
   const [students, setStudents] = useState<OnlineStudent[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [courses, setCourses] = useState<CourseOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [packageBusy, setPackageBusy] = useState(false);
+  const [packageLoading, setPackageLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -89,8 +162,16 @@ export default function AdminOnlinePage() {
     crm_stage: "interested",
     crm_status_reason: "",
   });
+  const [packageStudentId, setPackageStudentId] = useState<string | null>(null);
+  const [packageAssignments, setPackageAssignments] = useState<PackageAssignmentDetail[]>([]);
+  const [editingPackageId, setEditingPackageId] = useState<string | null>(null);
+  const [packageFormMode, setPackageFormMode] = useState<PackageFormMode>("hidden");
+  const [packageForm, setPackageForm] = useState<PackageForm>(defaultPackageForm);
+  const [packageError, setPackageError] = useState("");
+  const [packageSuccess, setPackageSuccess] = useState("");
 
   const studentListRef = useRef<HTMLDivElement | null>(null);
+  const packageFormRef = useRef<HTMLDivElement | null>(null);
 
   const refreshData = useCallback(
     async (withLoading = true) => {
@@ -98,18 +179,21 @@ export default function AdminOnlinePage() {
       setError("");
 
       try {
-        const [studentsRes, registryRes] = await Promise.all([
+        const [studentsRes, registryRes, coursesRes] = await Promise.all([
           authFetch("/api/admin/online/students"),
           authFetch("/api/admin/online/registry"),
+          authFetch("/api/admin/online/courses"),
         ]);
 
-        const [studentsPayload, registryPayload] = await Promise.all([
+        const [studentsPayload, registryPayload, coursesPayload] = await Promise.all([
           studentsRes.json(),
           registryRes.json(),
+          coursesRes.json(),
         ]);
 
         const failures: string[] = [];
         const registry = registryPayload as RegistryPayload;
+        const coursesData = coursesPayload as { courses?: CourseOption[] };
 
         if (!studentsRes.ok) {
           failures.push(extractError(studentsPayload, "Failed to load online students"));
@@ -124,6 +208,12 @@ export default function AdminOnlinePage() {
           failures.push(extractError(registryPayload, "Failed to load online registry"));
         } else {
           setTeachers(Array.isArray(registry.teachers) ? registry.teachers : []);
+        }
+
+        if (!coursesRes.ok) {
+          failures.push(extractError(coursesPayload, "Failed to load online courses"));
+        } else {
+          setCourses(Array.isArray(coursesData.courses) ? coursesData.courses : []);
         }
 
         if (failures.length > 0) {
@@ -235,9 +325,200 @@ export default function AdminOnlinePage() {
     window.setTimeout(() => setSuccess(""), 3000);
   };
 
+  const clearPackageSuccessSoon = () => {
+    window.setTimeout(() => setPackageSuccess(""), 3000);
+  };
+
   const scrollToStudentList = useCallback(() => {
     studentListRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
+
+  const resetPackageForm = useCallback(
+    (
+      student?: OnlineStudent | null,
+      assignment?: PackageAssignmentDetail | null,
+      mode: PackageFormMode = assignment ? "edit" : "create"
+    ) => {
+      setEditingPackageId(assignment?.id ?? null);
+      setPackageFormMode(mode);
+      setPackageForm({
+        course_id: assignment?.course_id ?? courses.find((course) => course.is_active !== false)?.id ?? "",
+        teacher_id: assignment?.teacher_id ?? student?.assigned_teacher_id ?? teachers[0]?.id ?? "",
+        status: assignment?.status ?? "active",
+        effective_from: assignment?.effective_from?.slice(0, 7) ?? new Date().toISOString().slice(0, 7),
+        notes: assignment?.notes ?? "",
+      });
+    },
+    [courses, teachers]
+  );
+
+  const loadPackageAssignments = useCallback(async (studentId: string) => {
+    setPackageLoading(true);
+    setError("");
+    try {
+      const response = await authFetch(
+        `/api/admin/online/package-assignments?student_id=${encodeURIComponent(studentId)}`
+      );
+      const payload = (await response.json()) as PackageAssignmentsPayload & { error?: string };
+      if (!response.ok) {
+        throw new Error(extractError(payload, "Failed to load package assignments"));
+      }
+      const assignments = Array.isArray(payload.assignments) ? payload.assignments : [];
+      setPackageAssignments(assignments);
+      return assignments;
+    } catch (packageError) {
+      setError(packageError instanceof Error ? packageError.message : "Failed to load package assignments");
+      setPackageAssignments([]);
+      return [];
+    } finally {
+      setPackageLoading(false);
+    }
+  }, []);
+
+  const openPackageManager = useCallback(
+    async (student: OnlineStudent) => {
+      if (packageStudentId === student.id) {
+        setPackageStudentId(null);
+        setPackageAssignments([]);
+        setPackageError("");
+        setPackageSuccess("");
+        resetPackageForm(null, null, "hidden");
+        return;
+      }
+      setPackageStudentId(student.id);
+      setPackageAssignments([]);
+      setPackageError("");
+      setPackageSuccess("");
+      resetPackageForm(student, null, "hidden");
+      const assignments = await loadPackageAssignments(student.id);
+      if (assignments.length === 0) {
+        resetPackageForm(student, null, "create");
+      }
+    },
+    [loadPackageAssignments, packageStudentId, resetPackageForm]
+  );
+
+  const handleEditPackageAssignment = (student: OnlineStudent, assignment: PackageAssignmentDetail) => {
+    setPackageError("");
+    setPackageSuccess("");
+    resetPackageForm(student, assignment, "edit");
+    window.setTimeout(() => packageFormRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 100);
+  };
+
+  const handleAddPackageAssignment = (student: OnlineStudent) => {
+    resetPackageForm(student, null, "create");
+  };
+
+  const handleDismissPackageForm = (student: OnlineStudent) => {
+    resetPackageForm(student, null, packageAssignments.length === 0 ? "create" : "hidden");
+  };
+
+  const submitPackageAssignment = async () => {
+    if (!packageStudentId) return;
+    if (!packageForm.course_id || !packageForm.teacher_id) {
+      setPackageError("Course and teacher are required for a package assignment.");
+      return;
+    }
+
+    setPackageBusy(true);
+    setPackageError("");
+    setPackageSuccess("");
+
+    try {
+      const wasEditing = Boolean(editingPackageId);
+      const url = editingPackageId
+        ? `/api/admin/online/package-assignments/${encodeURIComponent(editingPackageId)}`
+        : "/api/admin/online/package-assignments";
+      const response = await authFetch(url, {
+        method: editingPackageId ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(editingPackageId ? {} : { student_id: packageStudentId }),
+          course_id: packageForm.course_id,
+          teacher_id: packageForm.teacher_id,
+          status: packageForm.status,
+          effective_from: packageForm.effective_from,
+          notes: packageForm.notes.trim() || null,
+        }),
+      });
+      const payload = (await response.json()) as { assignment?: PackageAssignmentDetail; error?: string };
+      if (!response.ok) {
+        throw new Error(extractError(payload, "Failed to save package assignment"));
+      }
+
+      const returnedAssignment = payload.assignment;
+      if (returnedAssignment) {
+        const nextSummary = toPackageAssignmentSummary(returnedAssignment);
+        setPackageAssignments((current) => {
+          if (wasEditing) {
+            return current.map((assignment) =>
+              assignment.id === returnedAssignment.id ? returnedAssignment : assignment
+            );
+          }
+          return [returnedAssignment, ...current];
+        });
+        setStudents((current) =>
+          current.map((student) => {
+            if (student.id !== packageStudentId) return student;
+            const currentAssignments = student.package_assignments ?? [];
+            const nextAssignments = wasEditing
+              ? currentAssignments.some((assignment) => assignment.id === nextSummary.id)
+                ? currentAssignments.map((assignment) =>
+                    assignment.id === nextSummary.id ? nextSummary : assignment
+                  )
+                : [nextSummary, ...currentAssignments]
+              : [nextSummary, ...currentAssignments];
+            return {
+              ...student,
+              package_assignments: nextAssignments,
+            };
+          })
+        );
+      }
+
+      await refreshData(false);
+      const assignments = await loadPackageAssignments(packageStudentId);
+      const currentStudent = students.find((student) => student.id === packageStudentId) ?? null;
+      resetPackageForm(currentStudent, null, assignments.length === 0 ? "create" : "hidden");
+      setPackageSuccess(wasEditing ? "Package assignment updated successfully." : "Package assignment added successfully.");
+      clearPackageSuccessSoon();
+    } catch (caughtError) {
+      setPackageError(caughtError instanceof Error ? caughtError.message : "Failed to save package assignment");
+    } finally {
+      setPackageBusy(false);
+    }
+  };
+
+  const deletePackageAssignment = async (assignmentId: string) => {
+    if (!packageStudentId) return;
+    const confirmed = window.confirm("Cancel this package assignment?");
+    if (!confirmed) return;
+
+    setPackageBusy(true);
+    setPackageError("");
+    setPackageSuccess("");
+    try {
+      const response = await authFetch(
+        `/api/admin/online/package-assignments/${encodeURIComponent(assignmentId)}`,
+        { method: "DELETE" }
+      );
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(extractError(payload, "Failed to cancel package assignment"));
+      }
+
+      await refreshData(false);
+      const assignments = await loadPackageAssignments(packageStudentId);
+      const currentStudent = students.find((student) => student.id === packageStudentId) ?? null;
+      resetPackageForm(currentStudent, null, assignments.length === 0 ? "create" : "hidden");
+      setPackageSuccess("Package assignment cancelled successfully.");
+      clearPackageSuccessSoon();
+    } catch (caughtError) {
+      setPackageError(caughtError instanceof Error ? caughtError.message : "Failed to cancel package assignment");
+    } finally {
+      setPackageBusy(false);
+    }
+  };
 
   const handleStageChartSelect = useCallback(
     (stageKey: string) => {
@@ -537,167 +818,441 @@ export default function AdminOnlinePage() {
                     Status Reason
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                    Packages
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 bg-white">
                 {filteredStudents.map((student) => (
-                  <tr key={student.id}>
-                    {editStudentId === student.id ? (
-                      <td className="px-4 py-3" colSpan={6}>
-                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                          <div>
-                            <label className="mb-1 block text-xs font-medium text-gray-700">Student Name</label>
-                            <input
-                              type="text"
-                              className="w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm"
-                              value={editStudentForm.name}
-                              onChange={(event) =>
-                                setEditStudentForm((prev) => ({ ...prev, name: event.target.value }))
-                              }
-                            />
+                  <React.Fragment key={student.id}>
+                    <tr>
+                      {editStudentId === student.id ? (
+                        <td className="px-4 py-3" colSpan={7}>
+                          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-gray-700">Student Name</label>
+                              <input
+                                type="text"
+                                className="w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm"
+                                value={editStudentForm.name}
+                                onChange={(event) =>
+                                  setEditStudentForm((prev) => ({ ...prev, name: event.target.value }))
+                                }
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-gray-700">Teacher</label>
+                              <select
+                                className="w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm"
+                                value={editStudentForm.assigned_teacher_id}
+                                onChange={(event) =>
+                                  setEditStudentForm((prev) => ({
+                                    ...prev,
+                                    assigned_teacher_id: event.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="">No teacher assigned</option>
+                                {teachers.map((teacher) => (
+                                  <option key={teacher.id} value={teacher.id}>
+                                    {teacher.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-gray-700">Parent Name</label>
+                              <input
+                                type="text"
+                                className="w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm"
+                                value={editStudentForm.parent_name}
+                                onChange={(event) =>
+                                  setEditStudentForm((prev) => ({ ...prev, parent_name: event.target.value }))
+                                }
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-gray-700">Parent Contact</label>
+                              <input
+                                type="text"
+                                className="w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm"
+                                value={editStudentForm.parent_contact_number}
+                                onChange={(event) =>
+                                  setEditStudentForm((prev) => ({
+                                    ...prev,
+                                    parent_contact_number: event.target.value,
+                                  }))
+                                }
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-gray-700">CRM Stage</label>
+                              <select
+                                className="w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm"
+                                value={editStudentForm.crm_stage}
+                                onChange={(event) =>
+                                  setEditStudentForm((prev) => ({ ...prev, crm_stage: event.target.value }))
+                                }
+                              >
+                                {stageOptions.map((stage) => (
+                                  <option key={stage} value={stage}>
+                                    {formatStageLabel(stage)}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-gray-700">Status Reason</label>
+                              <input
+                                type="text"
+                                className="w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm"
+                                value={editStudentForm.crm_status_reason}
+                                onChange={(event) =>
+                                  setEditStudentForm((prev) => ({
+                                    ...prev,
+                                    crm_status_reason: event.target.value,
+                                  }))
+                                }
+                              />
+                            </div>
                           </div>
-                          <div>
-                            <label className="mb-1 block text-xs font-medium text-gray-700">Teacher</label>
-                            <select
-                              className="w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm"
-                              value={editStudentForm.assigned_teacher_id}
-                              onChange={(event) =>
-                                setEditStudentForm((prev) => ({
-                                  ...prev,
-                                  assigned_teacher_id: event.target.value,
-                                }))
-                              }
-                            >
-                              <option value="">No teacher assigned</option>
-                              {teachers.map((teacher) => (
-                                <option key={teacher.id} value={teacher.id}>
-                                  {teacher.name}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs font-medium text-gray-700">Parent Name</label>
-                            <input
-                              type="text"
-                              className="w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm"
-                              value={editStudentForm.parent_name}
-                              onChange={(event) =>
-                                setEditStudentForm((prev) => ({ ...prev, parent_name: event.target.value }))
-                              }
-                            />
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs font-medium text-gray-700">Parent Contact</label>
-                            <input
-                              type="text"
-                              className="w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm"
-                              value={editStudentForm.parent_contact_number}
-                              onChange={(event) =>
-                                setEditStudentForm((prev) => ({
-                                  ...prev,
-                                  parent_contact_number: event.target.value,
-                                }))
-                              }
-                            />
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs font-medium text-gray-700">CRM Stage</label>
-                            <select
-                              className="w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm"
-                              value={editStudentForm.crm_stage}
-                              onChange={(event) =>
-                                setEditStudentForm((prev) => ({ ...prev, crm_stage: event.target.value }))
-                              }
-                            >
-                              {stageOptions.map((stage) => (
-                                <option key={stage} value={stage}>
-                                  {formatStageLabel(stage)}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs font-medium text-gray-700">Status Reason</label>
-                            <input
-                              type="text"
-                              className="w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm"
-                              value={editStudentForm.crm_status_reason}
-                              onChange={(event) =>
-                                setEditStudentForm((prev) => ({
-                                  ...prev,
-                                  crm_status_reason: event.target.value,
-                                }))
-                              }
-                            />
-                          </div>
-                        </div>
-                        <div className="mt-4 flex flex-col items-start gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleSaveEditStudent(student.id)}
-                            disabled={busy}
-                            className="rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
-                          >
-                            {busy ? "Saving..." : "Save"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setEditStudentId(null)}
-                            className="rounded bg-gray-500 px-3 py-1 text-sm text-white hover:bg-gray-600"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </td>
-                    ) : (
-                      <>
-                        <td className="px-4 py-3 font-medium text-gray-900">{student.name}</td>
-                        <td className="px-4 py-3 text-gray-600">
-                          {student.parent_name || "-"}
-                          {student.parent_contact_number ? ` (${student.parent_contact_number})` : ""}
-                        </td>
-                        <td className="px-4 py-3 text-gray-600">
-                          {student.assigned_teacher_id ? teacherById.get(student.assigned_teacher_id) ?? "-" : "-"}
-                        </td>
-                        <td className="px-4 py-3 text-gray-600">{formatStageLabel(normalizeStageKey(student.crm_stage))}</td>
-                        <td className="px-4 py-3 text-gray-600">{student.crm_status_reason ?? "-"}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex flex-col gap-2">
+                          <div className="mt-4 flex flex-col items-start gap-2">
                             <button
                               type="button"
-                              onClick={() => handleStartEditStudent(student)}
+                              onClick={() => handleSaveEditStudent(student.id)}
                               disabled={busy}
-                              className="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700 disabled:opacity-50"
+                              className="rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
                             >
-                              Edit
+                              {busy ? "Saving..." : "Save"}
                             </button>
                             <button
                               type="button"
-                              onClick={() => handleDeleteStudent(student.id)}
-                              disabled={busy}
-                              className="rounded bg-red-600 px-3 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50"
+                              onClick={() => setEditStudentId(null)}
+                              className="rounded bg-gray-500 px-3 py-1 text-sm text-white hover:bg-gray-600"
                             >
-                              Delete
+                              Cancel
                             </button>
                           </div>
                         </td>
-                      </>
-                    )}
-                  </tr>
+                      ) : (
+                        <>
+                          <td className="px-4 py-3 font-medium text-gray-900">{student.name}</td>
+                          <td className="px-4 py-3 text-gray-600">
+                            {student.parent_name || "-"}
+                            {student.parent_contact_number ? ` (${student.parent_contact_number})` : ""}
+                          </td>
+                          <td className="px-4 py-3 text-gray-600">
+                            {student.assigned_teacher_id ? teacherById.get(student.assigned_teacher_id) ?? "-" : "-"}
+                          </td>
+                          <td className="px-4 py-3 text-gray-600">
+                            {formatStageLabel(normalizeStageKey(student.crm_stage))}
+                          </td>
+                          <td className="px-4 py-3 text-gray-600">{student.crm_status_reason ?? "-"}</td>
+                          <td className="px-4 py-3 text-gray-600">
+                            <div className="flex flex-wrap gap-2">
+                              {(student.package_assignments ?? []).slice(0, 2).map((assignment) => (
+                                <span
+                                  key={assignment.id}
+                                  className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700"
+                                >
+                                  {assignment.course_name} • {scheduleStateLabel(assignment.schedule_state)}
+                                </span>
+                              ))}
+                              {(student.package_assignments ?? []).length === 0 ? (
+                                <span className="text-xs text-gray-400">No package assigned</span>
+                              ) : null}
+                              {(student.package_assignments ?? []).length > 2 ? (
+                                <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600">
+                                  +{(student.package_assignments ?? []).length - 2} more
+                                </span>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-col gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleStartEditStudent(student)}
+                                disabled={busy}
+                                className="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700 disabled:opacity-50"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void openPackageManager(student)}
+                                disabled={packageBusy}
+                                className="rounded border border-slate-300 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                              >
+                                {packageStudentId === student.id ? "Hide Packages" : "Show Packages"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteStudent(student.id)}
+                                disabled={busy}
+                                className="rounded bg-red-600 px-3 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                    {packageStudentId === student.id && editStudentId !== student.id ? (
+                      <tr>
+                        <td colSpan={7} className="bg-slate-50 px-4 py-4">
+                          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                              <div>
+                                <h3 className="text-lg font-semibold text-slate-900">Package Assignments</h3>
+                                <p className="text-sm text-slate-500">
+                                  Assign course and teacher here. Slot scheduling happens later.
+                                </p>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+                                  {student.name}
+                                </span>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleAddPackageAssignment(student)}
+                                  disabled={packageBusy || packageLoading}
+                                >
+                                  Add Package
+                                </Button>
+                              </div>
+                            </div>
+
+                            {packageError && (
+                              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                                {packageError}
+                              </div>
+                            )}
+                            {packageSuccess && (
+                              <div className="mt-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+                                {packageSuccess}
+                              </div>
+                            )}
+
+                            <div className="mt-5">
+                              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                                Current Assignments
+                              </p>
+                              {packageLoading ? (
+                                <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                                  Loading package assignments...
+                                </div>
+                              ) : packageAssignments.length === 0 ? (
+                                <div className="mt-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                                  No package assignments yet.
+                                </div>
+                              ) : (
+                                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                                  {packageAssignments.map((assignment) => (
+                                    <div
+                                      key={assignment.id}
+                                      className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4"
+                                    >
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span className="text-sm font-semibold text-slate-900">
+                                          {assignment.course_name}
+                                        </span>
+                                        <span className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-600">
+                                          {packageStatusLabel(assignment.status)}
+                                        </span>
+                                        <span className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-rose-600">
+                                          {scheduleStateLabel(assignment.schedule_state)}
+                                        </span>
+                                      </div>
+                                      <p className="mt-2 text-sm text-slate-600">
+                                        Teacher: <span className="font-medium text-slate-900">{assignment.teacher_name}</span>
+                                      </p>
+                                      <p className="mt-1 text-sm text-slate-600">
+                                        Start: <span className="font-medium text-slate-900">{assignment.effective_from}</span>
+                                      </p>
+                                      <p className="mt-1 text-sm text-slate-600">
+                                        Weekly Slots:{" "}
+                                        <span className="font-medium text-slate-900">
+                                          {assignment.sessions_per_week_snapshot}
+                                        </span>
+                                      </p>
+                                      {assignment.notes ? (
+                                        <p className="mt-1 text-sm text-slate-600">{assignment.notes}</p>
+                                      ) : null}
+                                      <div className="mt-4 flex gap-2">
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          onClick={() => handleEditPackageAssignment(student, assignment)}
+                                          disabled={packageBusy}
+                                        >
+                                          Edit Details
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          className="bg-rose-600 text-white hover:bg-rose-700"
+                                          onClick={() => void deletePackageAssignment(assignment.id)}
+                                          disabled={packageBusy}
+                                        >
+                                          Cancel Package
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            {packageFormMode !== "hidden" ? (
+                              <div ref={packageFormRef} className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                  <div>
+                                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                                      {packageFormMode === "edit" ? "Edit Package" : "Add Package"}
+                                    </p>
+                                    <h4 className="mt-1 text-base font-semibold text-slate-900">
+                                      {packageFormMode === "edit"
+                                        ? "Update this assignment"
+                                        : "Create a new package assignment"}
+                                    </h4>
+                                    <p className="mt-1 text-sm text-slate-500">
+                                      {packageFormMode === "edit"
+                                        ? "Change the course, teacher, or status for the selected assignment."
+                                        : "Use this form only when you need to add another package for this student."}
+                                    </p>
+                                  </div>
+                                  {packageAssignments.length > 0 ? (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleDismissPackageForm(student)}
+                                      disabled={packageBusy}
+                                    >
+                                      {packageFormMode === "edit" ? "Cancel Edit" : "Hide Form"}
+                                    </Button>
+                                  ) : null}
+                                </div>
+
+                                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                                  <div>
+                                    <label className="mb-1 block text-xs font-medium text-slate-700">Course / Offer</label>
+                                    <select
+                                      className="w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm"
+                                      value={packageForm.course_id}
+                                      onChange={(event) =>
+                                        setPackageForm((prev) => ({ ...prev, course_id: event.target.value }))
+                                      }
+                                    >
+                                      <option value="">Select course</option>
+                                      {courses
+                                        .filter((course) => course.is_active !== false || course.id === packageForm.course_id)
+                                        .map((course) => (
+                                          <option key={course.id} value={course.id}>
+                                            {course.name}{course.is_active === false ? " (inactive)" : ""}
+                                          </option>
+                                        ))}
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label className="mb-1 block text-xs font-medium text-slate-700">Teacher</label>
+                                    <select
+                                      className="w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm"
+                                      value={packageForm.teacher_id}
+                                      onChange={(event) =>
+                                        setPackageForm((prev) => ({ ...prev, teacher_id: event.target.value }))
+                                      }
+                                    >
+                                      <option value="">Select teacher</option>
+                                      {teachers.map((teacher) => (
+                                        <option key={teacher.id} value={teacher.id}>
+                                          {teacher.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label className="mb-1 block text-xs font-medium text-slate-700">Status</label>
+                                    <select
+                                      className="w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm"
+                                      value={packageForm.status}
+                                      onChange={(event) =>
+                                        setPackageForm((prev) => ({ ...prev, status: event.target.value }))
+                                      }
+                                    >
+                                      {PACKAGE_STATUS_OPTIONS.map((status) => (
+                                        <option key={status} value={status}>
+                                          {packageStatusLabel(status)}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label className="mb-1 block text-xs font-medium text-slate-700">Start Month</label>
+                                    <input
+                                      type="month"
+                                      className="w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm"
+                                      value={packageForm.effective_from}
+                                      onChange={(event) =>
+                                        setPackageForm((prev) => ({ ...prev, effective_from: event.target.value }))
+                                      }
+                                    />
+                                  </div>
+                                  <div className="md:col-span-2">
+                                    <label className="mb-1 block text-xs font-medium text-slate-700">Notes</label>
+                                    <textarea
+                                      className="w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm"
+                                      rows={3}
+                                      value={packageForm.notes}
+                                      onChange={(event) =>
+                                        setPackageForm((prev) => ({ ...prev, notes: event.target.value }))
+                                      }
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="mt-4 flex flex-wrap gap-2">
+                                  <Button
+                                    type="button"
+                                    onClick={() => void submitPackageAssignment()}
+                                    disabled={packageBusy}
+                                    className="bg-emerald-600 text-white hover:bg-emerald-700"
+                                  >
+                                    {packageBusy ? "Saving..." : packageFormMode === "edit" ? "Update Package" : "Save Package"}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={() => resetPackageForm(student, null, "create")}
+                                    disabled={packageBusy}
+                                  >
+                                    Reset Form
+                                  </Button>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </React.Fragment>
                 ))}
                 {loading && (
                   <tr>
-                    <td colSpan={6} className="py-8 text-center text-gray-500">
+                    <td colSpan={7} className="py-8 text-center text-gray-500">
                       Loading online students...
                     </td>
                   </tr>
                 )}
                 {!loading && filteredStudents.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="py-8 text-center text-gray-500">
+                    <td colSpan={7} className="py-8 text-center text-gray-500">
                       No online students match the current filters.
                     </td>
                   </tr>

@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(npm run build:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(npx tsc:*)",
+      "mcp__claude_ai_Supabase__list_projects",
+      "Bash(grep NEXT_PUBLIC_SUPABASE_URL .env* 2>/dev/null | head -3)",
+      "Bash(curl -s http://localhost:3000/api/admin/online/courses -H \"Authorization: Bearer test\" 2>/dev/null | python3 -m json.tool 2>/dev/null | head -30)",
+      "Bash(grep -l \"authFetch\" /Users/aizadhazidi/Desktop/CascadeProjects/tasmik-windsurf/src/lib/*.ts 2>/dev/null | head -1 | xargs cat | head -50)"
     ]
   }
 }

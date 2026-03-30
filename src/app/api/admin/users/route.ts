@@ -370,9 +370,9 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    if (!['admin', 'teacher', 'parent'].includes(role)) {
+    if (!['admin', 'teacher', 'parent', 'general_worker'].includes(role)) {
       return NextResponse.json(
-        { error: 'Invalid role. Must be admin, teacher, or parent' },
+        { error: 'Invalid role. Must be admin, teacher, parent, or general_worker' },
         { status: 400 }
       );
     }

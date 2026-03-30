@@ -1,0 +1,228 @@
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuthenticatedTenantUser } from "@/lib/requestAuth";
+import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
+
+function countBusinessDays(start: string, end: string): number {
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  let count = 0;
+  const current = new Date(startDate);
+  while (current <= endDate) {
+    const day = current.getDay();
+    if (day !== 0 && day !== 6) count++;
+    current.setDate(current.getDate() + 1);
+  }
+  return count;
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const auth = await requireAuthenticatedTenantUser(request);
+    if (!auth.ok) return auth.response;
+
+    const { userId, tenantId } = auth;
+    const { searchParams } = new URL(request.url);
+    const year = searchParams.get("year");
+
+    const applications = await adminOperationSimple(async (client) => {
+      let query = client
+        .from("leave_applications")
+        .select("*")
+        .eq("tenant_id", tenantId)
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+
+      if (year) {
+        query = query
+          .gte("start_date", `${year}-01-01`)
+          .lte("start_date", `${year}-12-31`);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return data;
+    });
+
+    return NextResponse.json(applications);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Failed to fetch leave applications";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const auth = await requireAuthenticatedTenantUser(request);
+    if (!auth.ok) return auth.response;
+
+    const { userId, tenantId } = auth;
+    const { searchParams } = new URL(request.url);
+    const applicationId = searchParams.get("id");
+
+    if (!applicationId) {
+      return NextResponse.json(
+        { error: "Application id is required" },
+        { status: 400 }
+      );
+    }
+
+    await adminOperationSimple(async (client) => {
+      // Fetch the application — must belong to this user and be pending
+      const { data: app, error: fetchErr } = await client
+        .from("leave_applications")
+        .select("id, user_id, tenant_id, status")
+        .eq("id", applicationId)
+        .eq("tenant_id", tenantId)
+        .eq("user_id", userId)
+        .single();
+
+      if (fetchErr || !app) throw new Error("Application not found");
+      if (app.status !== "pending") {
+        throw new Error("Only pending applications can be cancelled");
+      }
+
+      const { error: deleteErr } = await client
+        .from("leave_applications")
+        .delete()
+        .eq("id", applicationId);
+
+      if (deleteErr) throw deleteErr;
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Failed to cancel application";
+    const status = message.includes("not found") ? 404 : message.includes("Only pending") ? 400 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const auth = await requireAuthenticatedTenantUser(request);
+    if (!auth.ok) return auth.response;
+
+    const { userId, tenantId } = auth;
+    const body = await request.json();
+    const { leave_type, start_date, end_date, reason } = body;
+
+    if (!leave_type || !start_date || !end_date) {
+      return NextResponse.json(
+        { error: "leave_type, start_date, and end_date are required" },
+        { status: 400 }
+      );
+    }
+
+    if (new Date(start_date) > new Date(end_date)) {
+      return NextResponse.json(
+        { error: "start_date must be before or equal to end_date" },
+        { status: 400 }
+      );
+    }
+
+    const total_days = countBusinessDays(start_date, end_date);
+    if (total_days <= 0) {
+      return NextResponse.json(
+        { error: "Selected date range has no business days" },
+        { status: 400 }
+      );
+    }
+
+    const application = await adminOperationSimple(async (client) => {
+      // Check balance (skip for unpaid_leave)
+      if (leave_type !== "unpaid_leave") {
+        const year = new Date(start_date).getFullYear();
+        let { data: balance } = await client
+          .from("leave_balances")
+          .select("*")
+          .eq("tenant_id", tenantId)
+          .eq("user_id", userId)
+          .eq("leave_type", leave_type)
+          .eq("year", year)
+          .maybeSingle();
+
+        // Auto-initialize balance if missing
+        if (!balance) {
+          // Resolve user position
+          const { data: userRow } = await client
+            .from("users")
+            .select("role")
+            .eq("id", userId)
+            .maybeSingle();
+
+          const roleToPosition: Record<string, string> = {
+            school_admin: "admin",
+            admin: "admin",
+            teacher: "teacher",
+            general_worker: "general_worker",
+          };
+          const position = roleToPosition[userRow?.role ?? ""] ?? "teacher";
+
+          // Look up entitlement for this position + leave type
+          const { data: entitlement } = await client
+            .from("leave_entitlements")
+            .select("days_per_year")
+            .eq("tenant_id", tenantId)
+            .eq("position", position)
+            .eq("leave_type", leave_type)
+            .maybeSingle();
+
+          const entitled_days = entitlement?.days_per_year ?? 0;
+
+          // Create the balance row
+          const { data: created, error: createErr } = await client
+            .from("leave_balances")
+            .upsert(
+              {
+                tenant_id: tenantId,
+                user_id: userId,
+                leave_type,
+                year,
+                entitled_days,
+                used_days: 0,
+              },
+              { onConflict: "tenant_id,user_id,leave_type,year" }
+            )
+            .select()
+            .single();
+
+          if (createErr) throw createErr;
+          balance = created;
+        }
+
+        if (balance.entitled_days > 0) {
+          const remaining = balance.entitled_days - balance.used_days;
+          if (total_days > remaining) {
+            throw new Error(
+              `Insufficient balance. You have ${remaining} day(s) remaining for this leave type.`
+            );
+          }
+        }
+      }
+
+      const { data, error } = await client
+        .from("leave_applications")
+        .insert({
+          tenant_id: tenantId,
+          user_id: userId,
+          leave_type,
+          start_date,
+          end_date,
+          total_days,
+          reason: reason || null,
+          status: "pending",
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    });
+
+    return NextResponse.json(application, { status: 201 });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Failed to apply for leave";
+    const status = message.includes("Insufficient balance") ? 400 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
+}

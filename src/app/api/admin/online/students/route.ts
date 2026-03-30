@@ -6,6 +6,7 @@ import {
   enforceTenantPlanLimit,
   TenantPlanLimitExceededError,
 } from "@/lib/planLimits";
+import { fetchOnlineStudentPackageAssignments } from "@/lib/online/packageAssignments";
 
 type CreateOnlineStudentBody = {
   name?: string;
@@ -20,6 +21,18 @@ type CreateOnlineStudentBody = {
 
 type EnrollmentRow = {
   student_id: string | null;
+};
+
+type StudentPackageSummary = {
+  id: string;
+  course_id: string;
+  course_name: string;
+  teacher_id: string;
+  teacher_name: string;
+  status: string;
+  effective_from: string;
+  effective_to: string | null;
+  schedule_state: string;
 };
 
 const adminErrorDetails = (error: unknown, fallback: string) => {
@@ -96,7 +109,33 @@ export async function GET(request: NextRequest) {
         .order("name", { ascending: true });
       if (studentError) throw studentError;
 
-      return (students ?? []).filter((student) => student.record_type !== "prospect");
+      const filteredStudents = (students ?? []).filter((student) => student.record_type !== "prospect");
+      const assignmentResult = await fetchOnlineStudentPackageAssignments({
+        client,
+        tenantId,
+        studentIds: filteredStudents.map((student) => String(student.id)),
+      });
+      const packageSummariesByStudentId = new Map<string, StudentPackageSummary[]>();
+      assignmentResult.rows.forEach((row) => {
+        const current = packageSummariesByStudentId.get(row.student_id) ?? [];
+        current.push({
+          id: row.id,
+          course_id: row.course_id,
+          course_name: row.course_name,
+          teacher_id: row.teacher_id,
+          teacher_name: row.teacher_name,
+          status: row.status,
+          effective_from: row.effective_from,
+          effective_to: row.effective_to,
+          schedule_state: row.schedule_state,
+        });
+        packageSummariesByStudentId.set(row.student_id, current);
+      });
+
+      return filteredStudents.map((student) => ({
+        ...student,
+        package_assignments: packageSummariesByStudentId.get(String(student.id)) ?? [],
+      }));
     });
 
     return NextResponse.json(payload);

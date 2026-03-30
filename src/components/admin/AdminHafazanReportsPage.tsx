@@ -239,9 +239,16 @@ export default function AdminHafazanReportsPage({
 
   // Get current user ID (for modals that need it)
   useEffect(() => {
-    // Since we're using API routes, we don't need to fetch user ID from Supabase
-    // Set a dummy ID or handle this in the modal components
-    setCurrentUserId('admin-user');
+    const fetchUserId = async () => {
+      const { createClient } = await import("@supabase/supabase-js");
+      const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      );
+      const { data } = await supabase.auth.getUser();
+      if (data?.user?.id) setCurrentUserId(data.user.id);
+    };
+    fetchUserId();
   }, []);
 
   // Modal handler functions
@@ -759,6 +766,7 @@ export default function AdminHafazanReportsPage({
               }}
               onSuccess={refreshData}
               userId={currentUserId}
+              apiEndpoint="/api/admin/reports/submit"
               suggestions={quickModalData.suggestions}
             />
           )}
