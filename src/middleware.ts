@@ -17,21 +17,26 @@ export function middleware(request: NextRequest) {
   if (isRecovery && (hasAuthCode || hasTokenHash || hasAccessToken) && pathname !== '/reset-password') {
     console.log('Middleware: Detected auth redirect, redirecting to reset-password')
     console.log('Auth params found:', { hasAuthCode, hasTokenHash, hasAccessToken, authType })
-    
+
     // Build the reset-password URL with all parameters
     const resetUrl = new URL('/reset-password', request.url)
-    
+
     // Copy all search parameters to the reset URL
     searchParams.forEach((value, key) => {
       resetUrl.searchParams.set(key, value)
     })
-    
+
     // Also copy hash parameters if they exist
     if (request.nextUrl.hash) {
       resetUrl.hash = request.nextUrl.hash
     }
-    
+
     return NextResponse.redirect(resetUrl)
+  }
+
+  // Redirect legacy /parent-signup to /join?role=parent
+  if (pathname === '/parent-signup') {
+    return NextResponse.redirect(new URL('/join?role=parent', request.url))
   }
 
   const isClassDomain = isLegacySchoolHost(hostname)

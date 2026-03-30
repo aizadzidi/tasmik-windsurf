@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
@@ -10,28 +10,24 @@ import { Button } from "@/components/ui/Button";
 import { Alert } from "@/components/ui/Alert";
 
 type LoginPageClientProps = {
-  enableLegacySignup: boolean;
   tenantBaseDomain: string;
 };
 
 function isTenantHost(hostname: string, tenantBaseDomain: string): boolean {
   const host = hostname.toLowerCase();
   if (host === "class.akademialkhayr.com") return true;
+  if (host === "localhost" || host === "127.0.0.1") return true;
   if (host === tenantBaseDomain) return false;
   return host.endsWith(`.${tenantBaseDomain}`);
 }
 
 export default function LoginPageClient({
-  enableLegacySignup,
   tenantBaseDomain,
 }: LoginPageClientProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [info, setInfo] = useState("");
-  const [isSignUp, setIsSignUp] = useState(false);
   const [tenantHostDetected, setTenantHostDetected] = useState(false);
   const router = useRouter();
 
@@ -59,11 +55,6 @@ export default function LoginPageClient({
       window.location.replace(resetUrl.toString());
     }
   }, []);
-
-  const canShowLegacySignup = useMemo(
-    () => enableLegacySignup && isSignUp,
-    [enableLegacySignup, isSignUp]
-  );
 
   async function ensureProfile(accessToken: string) {
     const controller = new AbortController();
@@ -124,48 +115,8 @@ export default function LoginPageClient({
     e.preventDefault();
     setLoading(true);
     setError("");
-    setInfo("");
 
     try {
-      if (canShowLegacySignup) {
-        if (!name.trim()) {
-          setError("Please enter your name.");
-          return;
-        }
-
-        const { data, error: signUpError } = await supabase.auth.signUp({ email, password });
-        if (signUpError) {
-          setError(signUpError.message);
-          return;
-        }
-
-        const userId = data.user?.id;
-        if (userId) {
-          const { error: dbError } = await supabase.from("users").insert([
-            { id: userId, name: name.trim(), email, role: "parent" },
-          ]);
-          if (dbError) {
-            setError(dbError.message);
-            return;
-          }
-        }
-
-        if (!data.session) {
-          setInfo("Please verify your email before signing in.");
-          return;
-        }
-
-        const accessToken =
-          data.session?.access_token ||
-          (await supabase.auth.getSession()).data.session?.access_token ||
-          null;
-        if (accessToken) {
-          await ensureProfile(accessToken);
-        }
-        router.push("/parent");
-        return;
-      }
-
       const { data, error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -217,37 +168,18 @@ export default function LoginPageClient({
             Al Khayr <span className="text-blue-600">Class</span>
           </h1>
           <p className="text-gray-700 text-sm">
-            {canShowLegacySignup
-              ? "Create your account to continue."
-              : "Welcome back! Please sign in to continue."}
+            Welcome back! Please sign in to continue.
           </p>
         </div>
 
         <div className="bg-white/30 backdrop-blur-xl border border-white/40 rounded-2xl shadow-2xl p-8">
           <div className="mb-6">
             <h2 className="text-xl font-bold text-gray-900 text-center">
-              {canShowLegacySignup ? "Create Account" : "Sign In"}
+              Sign In
             </h2>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {canShowLegacySignup ? (
-              <Input
-                type="text"
-                placeholder="Full Name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-                className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all"
-              />
-            ) : null}
-
-            {info ? (
-              <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-sm text-blue-800">
-                {info}
-              </div>
-            ) : null}
-
             <Input
               type="email"
               placeholder="Email Address"
@@ -282,8 +214,6 @@ export default function LoginPageClient({
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
                   Processing...
                 </div>
-              ) : canShowLegacySignup ? (
-                "Create Account"
               ) : (
                 "Sign In"
               )}
@@ -291,41 +221,19 @@ export default function LoginPageClient({
           </form>
 
           <div className="mt-6 text-center space-y-3">
-            {enableLegacySignup ? (
-              <button
-                type="button"
-                onClick={() => setIsSignUp((prev) => !prev)}
-                className="text-blue-600 hover:text-blue-700 font-medium transition-colors block w-full"
-              >
-                {canShowLegacySignup
-                  ? "Already have an account? Sign In"
-                  : "Need an account? Use legacy sign up"}
-              </button>
-            ) : (
-              <p className="text-sm text-gray-600">
-                School onboarding is available at{" "}
-                <Link href="/signup" className="font-medium text-blue-600 hover:text-blue-700">
-                  /signup
-                </Link>
-                .
-              </p>
-            )}
+            <Link
+              href="/forgot-password"
+              className="text-blue-600 hover:text-blue-700 font-medium transition-colors block text-sm"
+            >
+              Forgot your password?
+            </Link>
 
-            {!canShowLegacySignup ? (
+            {tenantHostDetected ? (
               <Link
-                href="/forgot-password"
-                className="text-blue-600 hover:text-blue-700 font-medium transition-colors block text-sm"
-              >
-                Forgot your password?
-              </Link>
-            ) : null}
-
-            {!canShowLegacySignup && tenantHostDetected ? (
-              <Link
-                href="/parent-signup"
+                href="/join"
                 className="text-emerald-700 hover:text-emerald-800 font-medium transition-colors block text-sm"
               >
-                Parent? Create your account on this school
+                New here? Join this school
               </Link>
             ) : null}
           </div>
@@ -333,7 +241,7 @@ export default function LoginPageClient({
       </div>
 
       <footer className="z-20 w-full text-center text-sm text-gray-500 mt-8 pb-4">
-        © {new Date().getFullYear()} Akademi Al Khayr. Powered by Supabase &amp; Next.js.
+        &copy; {new Date().getFullYear()} Akademi Al Khayr. Powered by Supabase &amp; Next.js.
       </footer>
 
       <style jsx global>{`

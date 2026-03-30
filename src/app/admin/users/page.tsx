@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ADMIN_PAGE_PERMISSIONS } from "@/lib/adminAccess";
 import { authFetch } from "@/lib/authFetch";
-import { MoreHorizontal, SlidersHorizontal } from "lucide-react";
+import { MoreHorizontal, SlidersHorizontal, UserPlus, Copy, X, Trash2 } from "lucide-react";
 
 type UserRow = {
   id: string;
@@ -87,6 +87,24 @@ export default function AdminUsersPage() {
   const [selectedChildByParent, setSelectedChildByParent] = useState<Record<string, string>>({});
   const [parentLinkSavingByParent, setParentLinkSavingByParent] = useState<Record<string, boolean>>({});
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
+  // Invite teacher state
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteMaxUses, setInviteMaxUses] = useState(20);
+  const [inviteExpiresInDays, setInviteExpiresInDays] = useState(30);
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
+  const [invites, setInvites] = useState<Array<{
+    id: string;
+    code: string;
+    max_uses: number;
+    use_count: number;
+    expires_at: string;
+    is_active: boolean;
+    created_at: string;
+  }>>([]);
+  const [invitesLoading, setInvitesLoading] = useState(false);
+  const [inviteError, setInviteError] = useState("");
   const updateControllers = useRef<Map<string, AbortController>>(new Map());
   const updateRequestIds = useRef<Map<string, number>>(new Map());
   const assignmentControllers = useRef<Map<string, AbortController>>(new Map());
@@ -586,17 +604,93 @@ export default function AdminUsersPage() {
     setExpandedAdminAccess((prev) => ({ ...prev, [userId]: false }));
   };
 
+  // ── Invite teacher functions ──────────────────────────────────────
+  const fetchInvites = useCallback(async () => {
+    setInvitesLoading(true);
+    try {
+      const res = await authFetch("/api/admin/invites");
+      if (res.ok) {
+        const data = await res.json();
+        setInvites(Array.isArray(data) ? data : []);
+      }
+    } catch {
+      // silent
+    } finally {
+      setInvitesLoading(false);
+    }
+  }, []);
+
+  const openInviteModal = useCallback(() => {
+    setShowInviteModal(true);
+    setInviteLink(null);
+    setInviteCopied(false);
+    setInviteError("");
+    setInviteMaxUses(20);
+    setInviteExpiresInDays(30);
+    fetchInvites();
+  }, [fetchInvites]);
+
+  const generateInvite = useCallback(async () => {
+    setInviteLoading(true);
+    setInviteError("");
+    try {
+      const res = await authFetch("/api/admin/invites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ max_uses: inviteMaxUses, expires_in_days: inviteExpiresInDays }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setInviteError(data?.error || "Failed to generate invite.");
+        return;
+      }
+      const host = typeof window !== "undefined" ? window.location.host : "";
+      setInviteLink(`${window.location.protocol}//${host}/join/${data.code}`);
+      fetchInvites();
+    } catch {
+      setInviteError("Failed to generate invite.");
+    } finally {
+      setInviteLoading(false);
+    }
+  }, [inviteMaxUses, inviteExpiresInDays, fetchInvites]);
+
+  const copyInviteLink = useCallback(() => {
+    if (!inviteLink) return;
+    navigator.clipboard.writeText(inviteLink).then(() => {
+      setInviteCopied(true);
+      setTimeout(() => setInviteCopied(false), 2000);
+    });
+  }, [inviteLink]);
+
+  const revokeInvite = useCallback(async (id: string) => {
+    try {
+      await authFetch(`/api/admin/invites/${id}`, { method: "DELETE" });
+      fetchInvites();
+    } catch {
+      // silent
+    }
+  }, [fetchInvites]);
+
 
   return (
     <div className="min-h-screen bg-gray-50">
       <AdminNavbar />
       <main className="mx-auto w-full max-w-7xl px-4 md:px-8 py-10">
         <div className="w-full space-y-6">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">User Roles</h1>
-            <p className="text-sm text-slate-600">
-              Assign roles for teachers, parents, and admins.
-            </p>
+          <div className="flex items-start justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900">User Roles</h1>
+              <p className="text-sm text-slate-600">
+                Assign roles for teachers, parents, and admins.
+              </p>
+            </div>
+            <Button
+              onClick={openInviteModal}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              <UserPlus className="h-4 w-4" />
+              Invite Teacher
+            </Button>
           </div>
 
           <Card className="p-4">
@@ -976,6 +1070,144 @@ export default function AdminUsersPage() {
           </Card>
         </div>
       </main>
+
+      {/* Invite Teacher Modal */}
+      {showInviteModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="relative w-full max-w-lg mx-4 rounded-2xl bg-white p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <button
+              type="button"
+              onClick={() => setShowInviteModal(false)}
+              className="absolute right-4 top-4 rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <h2 className="text-lg font-bold text-slate-900 mb-1">Invite Teacher</h2>
+            <p className="text-sm text-slate-500 mb-5">
+              Generate an invite link to share with teachers.
+            </p>
+
+            {inviteError ? (
+              <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+                {inviteError}
+              </div>
+            ) : null}
+
+            {inviteLink ? (
+              <div className="mb-5 space-y-3">
+                <label className="block text-sm font-medium text-slate-700">Invite Link</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    readOnly
+                    value={inviteLink}
+                    className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-mono"
+                  />
+                  <Button
+                    onClick={copyInviteLink}
+                    className="flex items-center gap-1.5 text-sm"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    {inviteCopied ? "Copied!" : "Copy"}
+                  </Button>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Share this link with teachers via WhatsApp or email.
+                </p>
+              </div>
+            ) : (
+              <div className="mb-5 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Max uses
+                  </label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={1000}
+                    value={inviteMaxUses}
+                    onChange={(e) => setInviteMaxUses(Number(e.target.value) || 20)}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-slate-400 mt-1">How many teachers can use this link</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Expires in (days)
+                  </label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={inviteExpiresInDays}
+                    onChange={(e) => setInviteExpiresInDays(Number(e.target.value) || 30)}
+                    className="w-full"
+                  />
+                </div>
+                <Button
+                  onClick={generateInvite}
+                  disabled={inviteLoading}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  {inviteLoading ? "Generating..." : "Generate Invite Link"}
+                </Button>
+              </div>
+            )}
+
+            {/* Active invites list */}
+            <div className="border-t border-slate-100 pt-4">
+              <h3 className="text-sm font-semibold text-slate-700 mb-3">Active Invites</h3>
+              {invitesLoading ? (
+                <p className="text-sm text-slate-400">Loading...</p>
+              ) : invites.filter((i) => i.is_active).length === 0 ? (
+                <p className="text-sm text-slate-400">No active invites.</p>
+              ) : (
+                <div className="space-y-2">
+                  {invites.filter((inv) => inv.is_active).map((inv) => {
+                    const isExpired = new Date(inv.expires_at) < new Date();
+                    const isExhausted = inv.use_count >= inv.max_uses;
+                    const isUsable = !isExpired && !isExhausted;
+                    return (
+                      <div
+                        key={inv.id}
+                        className={`flex items-center justify-between rounded-lg border px-3 py-2 text-sm ${
+                          isUsable
+                            ? "border-slate-200 bg-white"
+                            : "border-slate-100 bg-slate-50 opacity-60"
+                        }`}
+                      >
+                        <div>
+                          <span className="font-mono font-medium text-slate-800">{inv.code}</span>
+                          <span className="ml-2 text-slate-400">
+                            {inv.use_count}/{inv.max_uses} used
+                          </span>
+                          {!inv.is_active ? (
+                            <span className="ml-2 text-red-500 text-xs">Revoked</span>
+                          ) : isExpired ? (
+                            <span className="ml-2 text-amber-600 text-xs">Expired</span>
+                          ) : isExhausted ? (
+                            <span className="ml-2 text-amber-600 text-xs">Exhausted</span>
+                          ) : null}
+                        </div>
+                        {inv.is_active ? (
+                          <button
+                            type="button"
+                            onClick={() => revokeInvite(inv.id)}
+                            className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                            title="Revoke invite"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

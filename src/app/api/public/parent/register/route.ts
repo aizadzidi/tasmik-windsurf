@@ -4,12 +4,15 @@ import { getRequestHost, isPublicSaasRegistrationHost } from "@/lib/hostResoluti
 import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdminClient";
 import {
+  asTrimmedText,
   enforcePublicRateLimit,
   hashForRateLimit,
+  isAuthUserAlreadyExistsError,
   isValidEmail,
   isValidPassword,
   jsonError,
   normalizeEmail,
+  pickUuidScalar,
 } from "@/lib/publicApi";
 
 type ParentRegisterBody = {
@@ -18,38 +21,6 @@ type ParentRegisterBody = {
   password?: unknown;
   phone?: unknown;
 };
-
-function asTrimmedText(value: unknown, maxLength: number): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  return trimmed.slice(0, maxLength);
-}
-
-function pickUuidScalar(data: unknown): string | null {
-  if (typeof data === "string" && data.length > 0) return data;
-  if (Array.isArray(data) && data.length > 0) {
-    const first = data[0];
-    if (typeof first === "string" && first.length > 0) return first;
-    if (first && typeof first === "object") {
-      const value = (first as Record<string, unknown>).find_auth_user_id_by_email;
-      if (typeof value === "string" && value.length > 0) return value;
-    }
-  }
-  if (data && typeof data === "object") {
-    const value = (data as Record<string, unknown>).find_auth_user_id_by_email;
-    if (typeof value === "string" && value.length > 0) return value;
-  }
-  return null;
-}
-
-function isAuthUserAlreadyExistsError(message: string): boolean {
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes("already") &&
-    (normalized.includes("registered") || normalized.includes("exists"))
-  );
-}
 
 export async function POST(request: NextRequest) {
   const requestId = crypto.randomUUID();
