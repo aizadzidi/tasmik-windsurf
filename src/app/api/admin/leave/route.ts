@@ -175,6 +175,69 @@ export async function PUT(request: NextRequest) {
                 updated_at: new Date().toISOString(),
               })
               .eq("id", balance.id);
+          } else {
+            // Balance row doesn't exist yet — create it with the correct used_days
+            // Look up entitled_days from entitlements
+            const { data: userRow } = await client
+              .from("users")
+              .select("role")
+              .eq("id", app.user_id)
+              .maybeSingle();
+
+            const { data: profileRow } = await client
+              .from("user_profiles")
+              .select("role")
+              .eq("user_id", app.user_id)
+              .eq("tenant_id", tenantId)
+              .maybeSingle();
+
+            const roleToPosition: Record<string, string> = {
+              school_admin: "admin",
+              admin: "admin",
+              teacher: "teacher",
+              general_worker: "general_worker",
+            };
+            const position =
+              roleToPosition[userRow?.role ?? ""] ??
+              roleToPosition[profileRow?.role ?? ""] ??
+              "teacher";
+
+            const { data: entitlement } = await client
+              .from("leave_entitlements")
+              .select("days_per_year")
+              .eq("tenant_id", tenantId)
+              .eq("position", position)
+              .eq("leave_type", app.leave_type)
+              .maybeSingle();
+
+            // Count ALL approved applications for this user/type/year
+            // (including the one just approved) to avoid undercounting
+            const { data: allApproved } = await client
+              .from("leave_applications")
+              .select("total_days, start_date")
+              .eq("tenant_id", tenantId)
+              .eq("user_id", app.user_id)
+              .eq("leave_type", app.leave_type)
+              .eq("status", "approved");
+
+            let totalUsed = 0;
+            for (const a of allApproved ?? []) {
+              if (new Date(a.start_date).getFullYear() === year) totalUsed += a.total_days;
+            }
+
+            await client
+              .from("leave_balances")
+              .upsert(
+                {
+                  tenant_id: tenantId,
+                  user_id: app.user_id,
+                  leave_type: app.leave_type,
+                  year,
+                  entitled_days: entitlement?.days_per_year ?? 0,
+                  used_days: totalUsed,
+                },
+                { onConflict: "tenant_id,user_id,leave_type,year" }
+              );
           }
         } else if ((action === "reject" || action === "cancel") && previousStatus === "approved") {
           // Restore balance

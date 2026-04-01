@@ -128,7 +128,26 @@ export async function GET(request: NextRequest) {
         if (upsertErr) throw upsertErr;
       }
 
-      // ── Step 5: Fetch all balances for current year ──
+      // ── Step 5: Reconcile used_days from actual approved applications ──
+      const { data: approvedApps, error: approvedErr } = await client
+        .from("leave_applications")
+        .select("user_id, leave_type, total_days, start_date")
+        .eq("tenant_id", tenantId)
+        .eq("status", "approved")
+        .in("user_id", staffUserIds);
+
+      if (approvedErr) throw approvedErr;
+
+      // Build a map of actual used days: userId__leaveType__year → total
+      const actualUsed = new Map<string, number>();
+      for (const app of approvedApps ?? []) {
+        const appYear = new Date(app.start_date).getFullYear();
+        if (appYear !== currentYear) continue;
+        const key = `${app.user_id}__${app.leave_type}`;
+        actualUsed.set(key, (actualUsed.get(key) ?? 0) + app.total_days);
+      }
+
+      // Fetch all balances for current year
       const { data: balances, error: balErr } = await client
         .from("leave_balances")
         .select("*")
@@ -138,6 +157,28 @@ export async function GET(request: NextRequest) {
 
       if (balErr) throw balErr;
       if (!balances || balances.length === 0) return [];
+
+      // Fix any mismatched used_days
+      const usedFixUpdates: { id: string; used_days: number }[] = [];
+      for (const bal of balances) {
+        const key = `${bal.user_id}__${bal.leave_type}`;
+        const correctUsed = actualUsed.get(key) ?? 0;
+        if (bal.used_days !== correctUsed) {
+          usedFixUpdates.push({ id: bal.id, used_days: correctUsed });
+          bal.used_days = correctUsed;
+        }
+      }
+
+      if (usedFixUpdates.length > 0) {
+        await Promise.all(
+          usedFixUpdates.map((fix) =>
+            client
+              .from("leave_balances")
+              .update({ used_days: fix.used_days, updated_at: new Date().toISOString() })
+              .eq("id", fix.id)
+          )
+        );
+      }
 
       const userMap = new Map(
         allUsers.map((u) => [u.id, { name: u.name, email: u.email, role: u.role }])

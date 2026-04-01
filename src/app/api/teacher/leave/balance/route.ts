@@ -23,6 +23,34 @@ export async function GET(request: NextRequest) {
       if (existingErr) throw existingErr;
 
       if (existing && existing.length > 0) {
+        // Reconcile used_days from actual approved applications
+        const { data: approvedApps, error: approvedErr } = await client
+          .from("leave_applications")
+          .select("leave_type, total_days, start_date")
+          .eq("tenant_id", tenantId)
+          .eq("user_id", userId)
+          .eq("status", "approved");
+
+        if (approvedErr) throw approvedErr;
+
+        const actualUsed = new Map<string, number>();
+        for (const app of approvedApps ?? []) {
+          const appYear = new Date(app.start_date).getFullYear();
+          if (appYear !== year) continue;
+          actualUsed.set(app.leave_type, (actualUsed.get(app.leave_type) ?? 0) + app.total_days);
+        }
+
+        for (const bal of existing) {
+          const correctUsed = actualUsed.get(bal.leave_type) ?? 0;
+          if (bal.used_days !== correctUsed) {
+            await client
+              .from("leave_balances")
+              .update({ used_days: correctUsed, updated_at: new Date().toISOString() })
+              .eq("id", bal.id);
+            bal.used_days = correctUsed;
+          }
+        }
+
         // Sync entitled_days with latest entitlements in case admin changed them
         const { data: profile } = await client
           .from("user_profiles")
