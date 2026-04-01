@@ -45,6 +45,7 @@ type LatestReport = {
 type JuzTestEntry = {
   passed: boolean;
   juz_number: number;
+  juz_to?: number | null;
   test_date: string;
   total_percentage?: number;
   test_mode?: string | null;
@@ -182,7 +183,7 @@ export default function AdminHafazanReportsPage({
           // Latest test (passed or failed)
           const latestTest = student.juz_tests?.[0] || null;
           const highestTestedJuz =
-            student.juz_tests?.reduce((max, test) => Math.max(max, test.juz_number || 0), 0) || 0;
+            student.juz_tests?.reduce((max, test) => Math.max(max, test.juz_to || test.juz_number || 0), 0) || 0;
 
           const gap = Math.max(0, (memorizedForGap || 0) - highestTestedJuz);
 

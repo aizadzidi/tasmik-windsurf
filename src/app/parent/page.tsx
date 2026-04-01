@@ -173,7 +173,7 @@ export default function ParentPage() {
           // Get juz test data
           supabase
             .from("juz_tests")
-            .select("student_id, juz_number, test_date, passed, total_percentage, examiner_name, test_hizb, hizb_number, page_from, page_to")
+            .select("student_id, juz_number, juz_to, test_date, passed, total_percentage, examiner_name, test_hizb, hizb_number, page_from, page_to")
             .in("student_id", studentIds)
             .order("test_date", { ascending: false })
             .then(result => {
@@ -206,8 +206,8 @@ export default function ParentPage() {
           
           // Find highest passed test
           const passedTests = allStudentTests.filter(t => t.passed);
-          const highestPassedJuz = passedTests.length > 0 
-            ? Math.max(...passedTests.map(t => t.juz_number))
+          const highestPassedJuz = passedTests.length > 0
+            ? Math.max(...passedTests.map(t => t.juz_to || t.juz_number))
             : 0;
           
           const gap = highestMemorizedJuz - highestPassedJuz;

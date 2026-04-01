@@ -463,7 +463,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
             // Latest test by date (for display in table)
             supabase
               .from("juz_tests")
-              .select("juz_number, test_date, passed, total_percentage, examiner_name, test_hizb, hizb_number, page_from, page_to")
+              .select("juz_number, juz_to, test_date, passed, total_percentage, examiner_name, test_hizb, hizb_number, page_from, page_to")
               .eq("student_id", student.id)
               .order("test_date", { ascending: false })
               .order("id", { ascending: false })
@@ -475,13 +475,11 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
                 return result;
               }),
 
-            // Highest tested juz by number (for gap calculation)
+            // All juz tests for gap calculation (need to check both juz_number and juz_to)
             supabase
               .from("juz_tests")
-              .select("juz_number")
+              .select("juz_number, juz_to")
               .eq("student_id", student.id)
-              .order("juz_number", { ascending: false })
-              .limit(1)
               .then(result => {
                 if (result.error?.message?.includes('relation "public.juz_tests" does not exist')) {
                   return { data: [], error: null };
@@ -492,7 +490,9 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
 
           const highestMemorizedJuz = memorizationResult.data?.[0]?.juzuk || 0;
           const latestTest = latestByDateResult.data?.[0] || null;
-          const highestTestedJuz = highestTestedResult.data?.[0]?.juz_number || 0;
+          const highestTestedJuz = (highestTestedResult.data || []).reduce(
+            (max: number, t: { juz_number: number; juz_to?: number | null }) => Math.max(max, t.juz_to || t.juz_number || 0), 0
+          );
           
           const gap = highestMemorizedJuz - highestTestedJuz;
 
@@ -517,6 +517,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
             juz_test_gap?: number;
             latest_test_result?: {
               juz_number: number;
+              juz_to?: number | null;
               test_date: string;
               passed: boolean;
               total_percentage: number;
