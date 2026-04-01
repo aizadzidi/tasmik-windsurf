@@ -1,3 +1,5 @@
+import "server-only";
+
 import { createClient } from '@supabase/supabase-js';
 
 // SIMPLIFIED SERVICE ROLE CLIENT - NO RLS COMPLICATIONS

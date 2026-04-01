@@ -1,7 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedTenantUser } from "@/lib/requestAuth";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
+import {
+  ensureTeacherHasCampusLeaveAccess,
+  isTeacherLeaveAccessForbiddenError,
+} from "@/lib/teacherProgramScope";
 import { DEFAULT_ENTITLEMENTS } from "@/types/leave";
+
+async function assertTeacherCanAccessLeave(userId: string, tenantId: string) {
+  await adminOperationSimple(async (client) => {
+    await ensureTeacherHasCampusLeaveAccess(client, userId, tenantId);
+  });
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -9,6 +19,7 @@ export async function GET(request: NextRequest) {
     if (!auth.ok) return auth.response;
 
     const { userId, tenantId } = auth;
+    await assertTeacherCanAccessLeave(userId, tenantId);
     const year = new Date().getFullYear();
 
     const balances = await adminOperationSimple(async (client) => {
@@ -193,11 +204,13 @@ export async function GET(request: NextRequest) {
         "teacher";
 
       // Get entitlements for this position, auto-seed defaults if none exist
-      let { data: entitlements, error: entErr } = await client
+      const entitlementResult = await client
         .from("leave_entitlements")
         .select("*")
         .eq("tenant_id", tenantId)
         .eq("position", position);
+      let entitlements = entitlementResult.data;
+      const entErr = entitlementResult.error;
 
       if (entErr) throw entErr;
 
@@ -251,6 +264,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(balances);
   } catch (error: unknown) {
+    if (isTeacherLeaveAccessForbiddenError(error)) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     const message = error instanceof Error ? error.message : "Failed to fetch leave balances";
     return NextResponse.json({ error: message }, { status: 500 });
   }

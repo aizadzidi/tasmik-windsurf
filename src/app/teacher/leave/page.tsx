@@ -1,6 +1,8 @@
 "use client";
 import React, { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { authFetch } from "@/lib/authFetch";
+import { useTeachingModeContext } from "@/contexts/TeachingModeContext";
 import type { LeaveApplication, LeaveBalanceSummary, LeaveType } from "@/types/leave";
 import { LEAVE_TYPES } from "@/types/leave";
 
@@ -34,6 +36,8 @@ function countBusinessDays(start: string, end: string): number {
 }
 
 export default function TeacherLeavePage() {
+  const router = useRouter();
+  const { mode, programScope } = useTeachingModeContext();
   const [balances, setBalances] = useState<LeaveBalanceSummary[]>([]);
   const [applications, setApplications] = useState<LeaveApplication[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,6 +57,17 @@ export default function TeacherLeavePage() {
     startDate && endDate && new Date(startDate) <= new Date(endDate)
       ? countBusinessDays(startDate, endDate)
       : 0;
+
+  const hasCampusLeaveAccess =
+    programScope === "campus" ||
+    (programScope === "mixed" && mode === "campus") ||
+    (programScope === "unknown" && mode !== "online");
+
+  useEffect(() => {
+    if (programScope === "online" || (programScope === "mixed" && mode === "online")) {
+      router.replace("/teacher");
+    }
+  }, [mode, programScope, router]);
 
   const fetchBalances = useCallback(async () => {
     try {
@@ -91,13 +106,14 @@ export default function TeacherLeavePage() {
   }, []);
 
   useEffect(() => {
+    if (!hasCampusLeaveAccess) return;
     const load = async () => {
       setLoading(true);
       await Promise.all([fetchBalances(), fetchApplications()]);
       setLoading(false);
     };
     load();
-  }, [fetchBalances, fetchApplications]);
+  }, [fetchBalances, fetchApplications, hasCampusLeaveAccess]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -178,6 +194,10 @@ export default function TeacherLeavePage() {
     paternity_leave: { bg: "from-indigo-50 to-indigo-100/50", bar: "bg-indigo-500", icon: "text-indigo-600" },
     ihsan_leave: { bg: "from-amber-50 to-amber-100/50", bar: "bg-amber-500", icon: "text-amber-600" },
   };
+
+  if (!hasCampusLeaveAccess) {
+    return <main className="min-h-screen bg-[#F2F2F7] p-4 sm:p-6" />;
+  }
 
   if (loading) {
     return (

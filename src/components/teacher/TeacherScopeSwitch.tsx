@@ -24,6 +24,7 @@ export default function TeacherScopeSwitch() {
 
   // Campus-only pages that don't exist in online mode
   const isCampusOnlyPage =
+    pathname.startsWith("/teacher/leave") ||
     pathname.startsWith("/teacher/lesson") ||
     pathname.startsWith("/teacher/exam");
 
