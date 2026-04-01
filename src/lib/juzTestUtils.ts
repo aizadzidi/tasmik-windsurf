@@ -2,6 +2,7 @@ import { getPageRangeFromJuz } from "@/lib/quranMapping";
 
 export type JuzTestDisplayData = {
   juz_number: number;
+  juz_to?: number | null;
   test_hizb?: boolean | null;
   hizb_number?: number | null;
   page_from?: number | null;
@@ -40,6 +41,9 @@ export function getDisplayHizbNumber(test: JuzTestDisplayData): number | null {
 }
 
 export function formatJuzTestLabel(test: JuzTestDisplayData): string {
+  if (test.juz_to && test.juz_to !== test.juz_number) {
+    return `Juz ${test.juz_number} - ${test.juz_to}`;
+  }
   const hizbDisplay = getDisplayHizbNumber(test);
   if (test.test_hizb && hizbDisplay) {
     return `Hizb ${hizbDisplay}`;

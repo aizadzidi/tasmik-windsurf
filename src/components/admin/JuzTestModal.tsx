@@ -16,6 +16,7 @@ import {
   getBlockPages,
   getJuzTestModeLabel,
   getJuzTestPageRange,
+  getMultiJuzTestPageRange,
   getNormalQuestionCount,
   getPassThresholdByMode,
   getPmmmQuestionConfig,
@@ -74,6 +75,8 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
 }) => {
   const [loading, setLoading] = useState(false);
   const [selectedJuz, setSelectedJuz] = useState(defaultJuzNumber);
+  const [multiJuz, setMultiJuz] = useState(false);
+  const [juzTo, setJuzTo] = useState(defaultJuzNumber);
   const [formData, setFormData] = useState({
     halaqah_name: teacherName || "",
     page_from: 0,
@@ -124,9 +127,13 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
     [formData.test_hizb]
   );
 
+  const isMultiJuz = multiJuz && juzTo > selectedJuz;
+
   const pageRange = useMemo(
-    () => getJuzTestPageRange(selectedJuz, formData.test_hizb, formData.hizb_number),
-    [selectedJuz, formData.test_hizb, formData.hizb_number]
+    () => (multiJuz && juzTo > selectedJuz)
+      ? getMultiJuzTestPageRange(selectedJuz, juzTo)
+      : getJuzTestPageRange(selectedJuz, formData.test_hizb, formData.hizb_number),
+    [selectedJuz, juzTo, multiJuz, formData.test_hizb, formData.hizb_number]
   );
 
   useEffect(() => {
@@ -141,6 +148,8 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     setSelectedJuz(defaultJuzNumber);
+    setMultiJuz(false);
+    setJuzTo(defaultJuzNumber);
   }, [defaultJuzNumber, isOpen]);
 
   useEffect(() => {
@@ -507,14 +516,15 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
       const payload = {
         student_id: studentId,
         juz_number: selectedJuz,
+        juz_to: isMultiJuz ? juzTo : null,
         test_date: new Date().toISOString().split("T")[0],
         examiner_id: null,
         halaqah_name: formData.halaqah_name,
         page_from: formData.page_from,
         page_to: formData.page_to,
-        test_juz: formData.test_juz,
-        test_hizb: formData.test_hizb,
-        hizb_number: formData.test_hizb ? formData.hizb_number : null,
+        test_juz: isMultiJuz ? true : formData.test_juz,
+        test_hizb: isMultiJuz ? false : formData.test_hizb,
+        hizb_number: isMultiJuz ? null : (formData.test_hizb ? formData.hizb_number : null),
         test_mode: normalizedMode,
         section2_scores: section2Scores,
         tajweed_score: normalizedMode === "normal_memorization" ? 0 : tajweedScore,
@@ -559,10 +569,10 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
             <div>
               <h2 className="text-2xl font-bold">Akademi Al Khayr</h2>
               <p className="text-sm opacity-90">
-                Quranic Memorization Test Result for Academy Al Khayr - Juz {selectedJuz}
+                Quranic Memorization Test Result for Academy Al Khayr - {isMultiJuz ? `Juz ${selectedJuz} - ${juzTo}` : `Juz ${selectedJuz}`}
               </p>
               <p className="mt-1 text-xs opacity-75">
-                كشف نتج اختبار حفظ القرآن الكريم لأكاديمية الخير - الجزء {selectedJuz}
+                كشف نتج اختبار حفظ القرآن الكريم لأكاديمية الخير - {isMultiJuz ? `الجزء ${selectedJuz} - ${juzTo}` : `الجزء ${selectedJuz}`}
               </p>
             </div>
             <button
@@ -647,17 +657,59 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
                   <label className="mb-1 block text-sm font-medium text-gray-700">
                     Juz to test / الجزء المراد اختباره
                   </label>
-                  <select
-                    value={selectedJuz}
-                    onChange={(e) => setSelectedJuz(parseInt(e.target.value, 10))}
-                    className="w-full rounded border p-2 focus:ring-2 focus:ring-purple-400"
-                  >
-                    {Array.from({ length: 30 }, (_, index) => index + 1).map((juz) => (
-                      <option key={juz} value={juz}>
-                        Juz {juz} / الجزء {juz}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={selectedJuz}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        setSelectedJuz(val);
+                        if (val >= 30) setMultiJuz(false);
+                        if (juzTo <= val) setJuzTo(val + 1 <= 30 ? val + 1 : val);
+                      }}
+                      className="w-full rounded border p-2 focus:ring-2 focus:ring-purple-400"
+                    >
+                      {Array.from({ length: 30 }, (_, index) => index + 1).map((juz) => (
+                        <option key={juz} value={juz}>
+                          Juz {juz} / الجزء {juz}
+                        </option>
+                      ))}
+                    </select>
+                    {multiJuz && (
+                      <>
+                        <span className="text-sm font-medium text-gray-500">to</span>
+                        <select
+                          value={juzTo}
+                          onChange={(e) => setJuzTo(parseInt(e.target.value, 10))}
+                          className="w-full rounded border p-2 focus:ring-2 focus:ring-purple-400"
+                        >
+                          {Array.from({ length: 30 - selectedJuz }, (_, index) => selectedJuz + index + 1).map((juz) => (
+                            <option key={juz} value={juz}>
+                              Juz {juz} / الجزء {juz}
+                            </option>
+                          ))}
+                        </select>
+                      </>
+                    )}
+                  </div>
+                  <label className="mt-2 flex items-center gap-2 text-sm text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={multiJuz}
+                      disabled={selectedJuz >= 30}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setMultiJuz(checked);
+                        if (checked && juzTo <= selectedJuz) {
+                          setJuzTo(Math.min(selectedJuz + 1, 30));
+                        }
+                        if (checked) {
+                          setFormData((prev) => ({ ...prev, test_juz: true, test_hizb: false }));
+                        }
+                      }}
+                      className="rounded border-gray-300"
+                    />
+                    More than 1 Juz / أكثر من جزء واحد
+                  </label>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
@@ -716,6 +768,7 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
                     </button>
                     <button
                       type="button"
+                      disabled={isMultiJuz}
                       onClick={() =>
                         setFormData((prev) => ({
                           ...prev,
@@ -725,9 +778,11 @@ const JuzTestModal: React.FC<JuzTestModalProps> = ({
                         }))
                       }
                       className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
-                        formData.test_hizb
-                          ? "bg-slate-900 text-white"
-                          : "text-slate-600 hover:bg-slate-100"
+                        isMultiJuz
+                          ? "cursor-not-allowed text-slate-300"
+                          : formData.test_hizb
+                            ? "bg-slate-900 text-white"
+                            : "text-slate-600 hover:bg-slate-100"
                       }`}
                     >
                       Hizb

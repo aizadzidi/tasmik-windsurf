@@ -18,6 +18,7 @@ interface JuzTest {
   id: string;
   student_id: string;
   juz_number: number;
+  juz_to?: number | null;
   test_date: string;
   examiner_name?: string;
   passed: boolean;

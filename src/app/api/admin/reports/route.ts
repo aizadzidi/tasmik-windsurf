@@ -21,6 +21,7 @@ type MemorizationReportRow = {
 type JuzTestRow = {
   student_id: string;
   juz_number: number | null;
+  juz_to?: number | null;
   test_date?: string | null;
   passed?: boolean | null;
   total_percentage?: number | null;
@@ -140,7 +141,7 @@ export async function GET(request: NextRequest) {
           // Get juz test data (if table exists)
           client
             .from('juz_tests')
-            .select('student_id, juz_number, test_date, passed, total_percentage, examiner_name, test_mode, test_hizb, hizb_number, page_from, page_to')
+            .select('student_id, juz_number, juz_to, test_date, passed, total_percentage, examiner_name, test_mode, test_hizb, hizb_number, page_from, page_to')
             .in('student_id', scopedStudentIds)
             .order('test_date', { ascending: false })
             .order('id', { ascending: false })

@@ -9,6 +9,7 @@ type JuzTestPayload = {
   id?: string;
   student_id?: string;
   juz_number?: number;
+  juz_to?: number | null;
   test_mode?: unknown;
   [key: string]: unknown;
 };
@@ -171,6 +172,7 @@ export async function POST(request: NextRequest) {
           "remarks",
           "examiner_name",
           "test_mode",
+          "juz_to",
         ] as const;
 
         type PreservedField = (typeof fieldsToPreserve)[number];

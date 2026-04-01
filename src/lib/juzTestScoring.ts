@@ -1,4 +1,4 @@
-import { getPageRangeFromJuz } from "@/lib/quranMapping";
+import { getPageRangeFromJuz, getPageRangeFromJuzRange } from "@/lib/quranMapping";
 
 export type JuzTestMode = "pmmm" | "normal_memorization";
 
@@ -115,6 +115,15 @@ export function getNormalQuestionCount(isHizbTest: boolean): number {
 
 export function getPmmmQuestionConfig(isHizbTest: boolean): Record<PmmmCategoryKey, QuestionCategoryConfig> {
   return isHizbTest ? PMMM_HIZB_CONFIG : PMMM_JUZ_CONFIG;
+}
+
+export function getMultiJuzTestPageRange(
+  fromJuz: number,
+  toJuz: number
+): { from: number; to: number } {
+  const range = getPageRangeFromJuzRange(fromJuz, toJuz);
+  if (!range) return { from: 0, to: 0 };
+  return { from: range.startPage, to: range.endPage };
 }
 
 export function getJuzTestPageRange(

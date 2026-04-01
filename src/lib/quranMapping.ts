@@ -90,6 +90,19 @@ export function getPageRangeFromJuz(juz: number): { startPage: number; endPage: 
 }
 
 /**
+ * Get page range spanning a contiguous range of Juz
+ * @param fromJuz - Starting Juz number (1-30)
+ * @param toJuz - Ending Juz number (fromJuz-30)
+ * @returns Object with startPage and endPage, or null if invalid
+ */
+export function getPageRangeFromJuzRange(fromJuz: number, toJuz: number): { startPage: number; endPage: number } | null {
+  const fromRange = getPageRangeFromJuz(fromJuz);
+  const toRange = getPageRangeFromJuz(toJuz);
+  if (!fromRange || !toRange || fromJuz > toJuz) return null;
+  return { startPage: fromRange.startPage, endPage: toRange.endPage };
+}
+
+/**
  * Validate if a page range is within the same Juz
  * @param pageFrom - Starting page number
  * @param pageTo - Ending page number

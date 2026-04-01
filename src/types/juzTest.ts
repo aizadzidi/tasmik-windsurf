@@ -7,6 +7,7 @@ export type JuzTestSession = {
   scheduled_date: string;
   status: JuzTestStatus;
   juz_number?: number | null;
+  juz_to?: number | null;
   notes?: string | null;
   students?: {
     name?: string | null;
