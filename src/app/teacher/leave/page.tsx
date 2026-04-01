@@ -8,12 +8,16 @@ const LEAVE_TYPE_LABELS: Record<string, string> = {
   annual_leave: "Annual Leave",
   medical_leave: "Medical Leave",
   unpaid_leave: "Unpaid Leave",
+  maternity_leave: "Maternity Leave",
+  paternity_leave: "Paternity Leave",
+  ihsan_leave: "Ihsan Leave",
 };
 
 const STATUS_STYLES: Record<string, string> = {
   pending: "bg-amber-100 text-amber-800",
   approved: "bg-emerald-100 text-emerald-800",
   rejected: "bg-rose-100 text-rose-800",
+  cancelled: "bg-slate-200 text-slate-700",
 };
 
 function countBusinessDays(start: string, end: string): number {
@@ -65,6 +69,9 @@ export default function TeacherLeavePage() {
           is_unlimited: b.entitled_days === 0,
         })
       );
+      // Sort by LEAVE_TYPES order
+      const typeOrder = LEAVE_TYPES.map((lt) => lt.value);
+      summaries.sort((a, b) => typeOrder.indexOf(a.leave_type) - typeOrder.indexOf(b.leave_type));
       setBalances(summaries);
     } catch {
       // Silently handle - balances will show empty
@@ -127,15 +134,29 @@ export default function TeacherLeavePage() {
     }
   };
 
-  const handleCancel = async (appId: string) => {
-    if (!confirm("Cancel this leave application?")) return;
+  const handleCancel = async (appId: string, status: string) => {
+    const msg = status === "approved"
+      ? "Cancel this approved leave? Your balance will be restored."
+      : "Withdraw this leave application?";
+    if (!confirm(msg)) return;
     setCancellingId(appId);
     setError("");
     setSuccess("");
     try {
-      const res = await authFetch(`/api/teacher/leave?id=${appId}`, {
-        method: "DELETE",
-      });
+      let res;
+      if (status === "approved") {
+        // Cancel approved leave via PUT (sets status to "cancelled", restores balance)
+        res = await authFetch("/api/teacher/leave", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ application_id: appId }),
+        });
+      } else {
+        // Delete pending leave
+        res = await authFetch(`/api/teacher/leave?id=${appId}`, {
+          method: "DELETE",
+        });
+      }
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || "Failed to cancel");
@@ -153,6 +174,9 @@ export default function TeacherLeavePage() {
     annual_leave: { bg: "from-blue-50 to-blue-100/50", bar: "bg-blue-500", icon: "text-blue-600" },
     medical_leave: { bg: "from-emerald-50 to-emerald-100/50", bar: "bg-emerald-500", icon: "text-emerald-600" },
     unpaid_leave: { bg: "from-slate-50 to-slate-100/50", bar: "bg-slate-500", icon: "text-slate-600" },
+    maternity_leave: { bg: "from-pink-50 to-pink-100/50", bar: "bg-pink-500", icon: "text-pink-600" },
+    paternity_leave: { bg: "from-indigo-50 to-indigo-100/50", bar: "bg-indigo-500", icon: "text-indigo-600" },
+    ihsan_leave: { bg: "from-amber-50 to-amber-100/50", bar: "bg-amber-500", icon: "text-amber-600" },
   };
 
   if (loading) {
@@ -184,8 +208,9 @@ export default function TeacherLeavePage() {
           </p>
         </div>
 
-        {/* Balance Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {/* Balance Cards — horizontal slider */}
+        <div className="overflow-x-auto -mx-4 sm:-mx-6 px-4 sm:px-6 pb-2">
+          <div className="flex gap-4" style={{ minWidth: "min-content" }}>
           {balances.map((b) => {
             const colors = balanceColors[b.leave_type] ?? balanceColors.annual_leave;
             const percentage = b.is_unlimited
@@ -197,7 +222,7 @@ export default function TeacherLeavePage() {
             return (
               <div
                 key={b.leave_type}
-                className={`bg-gradient-to-br ${colors.bg} bg-white/80 backdrop-blur-md rounded-2xl shadow-lg p-5 border border-white/60`}
+                className={`bg-gradient-to-br ${colors.bg} bg-white/80 backdrop-blur-md rounded-2xl shadow-lg p-5 border border-white/60 min-w-[220px] w-[220px] flex-shrink-0`}
               >
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-semibold text-slate-700">{b.label}</h3>
@@ -234,6 +259,7 @@ export default function TeacherLeavePage() {
               </div>
             );
           })}
+          </div>
         </div>
 
         {/* Apply Form */}
@@ -383,9 +409,9 @@ export default function TeacherLeavePage() {
                         {app.review_remarks || "-"}
                       </td>
                       <td className="py-3 px-2 text-center">
-                        {app.status === "pending" ? (
+                        {app.status === "pending" || app.status === "approved" ? (
                           <button
-                            onClick={() => handleCancel(app.id)}
+                            onClick={() => handleCancel(app.id, app.status)}
                             disabled={cancellingId === app.id}
                             className="px-2.5 py-1 rounded-lg border border-rose-300 bg-white text-rose-600 text-xs font-semibold shadow-sm hover:bg-rose-50 hover:border-rose-400 hover:shadow transition disabled:opacity-50"
                           >

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedTenantUser } from "@/lib/requestAuth";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
+import { DEFAULT_ENTITLEMENTS } from "@/types/leave";
 
 export async function GET(request: NextRequest) {
   try {
@@ -21,7 +22,119 @@ export async function GET(request: NextRequest) {
 
       if (existingErr) throw existingErr;
 
-      if (existing && existing.length > 0) return existing;
+      if (existing && existing.length > 0) {
+        // Sync entitled_days with latest entitlements in case admin changed them
+        const { data: profile } = await client
+          .from("user_profiles")
+          .select("role")
+          .eq("user_id", userId)
+          .eq("tenant_id", tenantId)
+          .maybeSingle();
+
+        const roleMap: Record<string, string> = {
+          school_admin: "admin",
+          admin: "admin",
+          teacher: "teacher",
+          general_worker: "general_worker",
+        };
+
+        const { data: userRow } = await client
+          .from("users")
+          .select("role")
+          .eq("id", userId)
+          .maybeSingle();
+
+        // Prefer users.role (admin-controlled, always up-to-date)
+        // over user_profiles.role (tenant-scoped, can lag after role changes)
+        const pos =
+          roleMap[userRow?.role ?? ""] ??
+          roleMap[profile?.role ?? ""] ??
+          "teacher";
+
+        // Seed missing entitlements before fetching
+        const { data: allEntitlements } = await client
+          .from("leave_entitlements")
+          .select("position, leave_type")
+          .eq("tenant_id", tenantId);
+
+        const existingEntKeys = new Set(
+          (allEntitlements ?? []).map((e) => `${e.position}__${e.leave_type}`)
+        );
+        const missingEnts = DEFAULT_ENTITLEMENTS.filter(
+          (d) => !existingEntKeys.has(`${d.position}__${d.leave_type}`)
+        );
+        if (missingEnts.length > 0) {
+          await client
+            .from("leave_entitlements")
+            .upsert(
+              missingEnts.map((d) => ({ ...d, tenant_id: tenantId })),
+              { onConflict: "tenant_id,position,leave_type" }
+            );
+        }
+
+        const { data: entitlements } = await client
+          .from("leave_entitlements")
+          .select("leave_type, days_per_year")
+          .eq("tenant_id", tenantId)
+          .eq("position", pos);
+
+        if (entitlements && entitlements.length > 0) {
+          const entMap = new Map(entitlements.map((e) => [e.leave_type, e.days_per_year]));
+          const existingTypes = new Set(existing.map((b) => b.leave_type));
+
+          // Check for stale entitled_days
+          let needsUpdate = false;
+          for (const bal of existing) {
+            const latest = entMap.get(bal.leave_type);
+            if (latest !== undefined && latest !== bal.entitled_days) {
+              needsUpdate = true;
+              break;
+            }
+          }
+
+          // Check for missing balance rows (new leave types)
+          const missingRows = entitlements
+            .filter((ent) => !existingTypes.has(ent.leave_type))
+            .map((ent) => ({
+              tenant_id: tenantId,
+              user_id: userId,
+              leave_type: ent.leave_type,
+              year,
+              entitled_days: ent.days_per_year,
+              used_days: 0,
+            }));
+
+          if (needsUpdate) {
+            for (const ent of entitlements) {
+              await client
+                .from("leave_balances")
+                .update({ entitled_days: ent.days_per_year })
+                .eq("tenant_id", tenantId)
+                .eq("user_id", userId)
+                .eq("leave_type", ent.leave_type)
+                .eq("year", year);
+            }
+          }
+
+          if (missingRows.length > 0) {
+            await client
+              .from("leave_balances")
+              .upsert(missingRows, { onConflict: "tenant_id,user_id,leave_type,year" });
+          }
+
+          if (needsUpdate || missingRows.length > 0) {
+            const { data: refreshed } = await client
+              .from("leave_balances")
+              .select("*")
+              .eq("tenant_id", tenantId)
+              .eq("user_id", userId)
+              .eq("year", year);
+            return refreshed ?? existing;
+          }
+        }
+
+        return existing;
+      }
 
       // Lazy-initialize: get user's position from user_profiles
       const { data: profile } = await client
@@ -47,8 +160,8 @@ export async function GET(request: NextRequest) {
         .maybeSingle();
 
       const position =
-        roleToPosition[profile?.role ?? ""] ??
         roleToPosition[userRow?.role ?? ""] ??
+        roleToPosition[profile?.role ?? ""] ??
         "teacher";
 
       // Get entitlements for this position, auto-seed defaults if none exist
@@ -60,35 +173,31 @@ export async function GET(request: NextRequest) {
 
       if (entErr) throw entErr;
 
-      if (!entitlements || entitlements.length === 0) {
-        // Seed default entitlements for all positions
-        const defaults = [
-          { position: "admin", leave_type: "annual_leave", days_per_year: 14 },
-          { position: "admin", leave_type: "medical_leave", days_per_year: 14 },
-          { position: "admin", leave_type: "unpaid_leave", days_per_year: 0 },
-          { position: "teacher", leave_type: "annual_leave", days_per_year: 12 },
-          { position: "teacher", leave_type: "medical_leave", days_per_year: 14 },
-          { position: "teacher", leave_type: "unpaid_leave", days_per_year: 0 },
-          { position: "general_worker", leave_type: "annual_leave", days_per_year: 10 },
-          { position: "general_worker", leave_type: "medical_leave", days_per_year: 14 },
-          { position: "general_worker", leave_type: "unpaid_leave", days_per_year: 0 },
-        ];
+      // Seed missing default entitlements (handles both empty and new leave types)
+      const existingKeys = new Set(
+        (entitlements ?? []).map((e) => `${e.position}__${e.leave_type}`)
+      );
+      const missing = DEFAULT_ENTITLEMENTS.filter(
+        (d) => d.position === position && !existingKeys.has(`${d.position}__${d.leave_type}`)
+      );
 
+      if (missing.length > 0) {
+        // Only seed missing entitlements for THIS position to avoid overwriting other positions' custom values
         const { error: seedErr } = await client
           .from("leave_entitlements")
           .upsert(
-            defaults.map((d) => ({ ...d, tenant_id: tenantId })),
+            missing.map((d) => ({ ...d, tenant_id: tenantId })),
             { onConflict: "tenant_id,position,leave_type" }
           );
         if (seedErr) throw seedErr;
 
-        const { data: seeded, error: seededErr } = await client
+        const { data: refreshed, error: refreshErr } = await client
           .from("leave_entitlements")
           .select("*")
           .eq("tenant_id", tenantId)
           .eq("position", position);
-        if (seededErr) throw seededErr;
-        entitlements = seeded;
+        if (refreshErr) throw refreshErr;
+        entitlements = refreshed;
       }
 
       // Create balance records for this user + year

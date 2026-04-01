@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdminPermission } from "@/lib/adminPermissions";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
 import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
+import { SPECIAL_LEAVE_TYPES } from "@/types/leave";
 
 const resolveTenantIdOrThrow = async (
   request: NextRequest,
@@ -116,7 +117,13 @@ export async function PUT(request: NextRequest) {
       if (appErr || !app) throw new Error("Leave application not found");
 
       const previousStatus = app.status;
-      const newStatus = action === "approve" ? "approved" : action === "reject" ? "rejected" : "pending";
+
+      // Only approved applications can be cancelled
+      if (action === "cancel" && previousStatus !== "approved") {
+        throw new Error("Only approved applications can be cancelled");
+      }
+
+      const newStatus = action === "approve" ? "approved" : action === "reject" ? "rejected" : "cancelled";
 
       // Update the application
       const updateData: Record<string, unknown> = {
@@ -125,9 +132,11 @@ export async function PUT(request: NextRequest) {
       };
 
       if (action === "cancel") {
-        updateData.reviewed_by = null;
-        updateData.review_remarks = null;
-        updateData.reviewed_at = null;
+        // Preserve original review data (reviewed_by, reviewed_at) for audit trail
+        // Only update remarks if admin provides cancellation remarks
+        if (remarks) {
+          updateData.review_remarks = remarks;
+        }
       } else {
         updateData.reviewed_by = guard.userId;
         updateData.review_remarks = remarks || null;
@@ -144,7 +153,7 @@ export async function PUT(request: NextRequest) {
       if (updateErr) throw updateErr;
 
       // Adjust balance
-      if (app.leave_type !== "unpaid_leave") {
+      if (!SPECIAL_LEAVE_TYPES.has(app.leave_type)) {
         const year = new Date(app.start_date).getFullYear();
 
         if (action === "approve" && previousStatus !== "approved") {

@@ -25,32 +25,125 @@ export async function GET(request: NextRequest) {
     const data = await adminOperationSimple(async (client) => {
       const tenantId = await resolveTenantIdOrThrow(request, client);
 
-      // Fetch all leave balances for this tenant/year
+      // ── Step 1: Get ALL non-parent staff in this tenant ──
+      const { data: tenantProfiles, error: profilesErr } = await client
+        .from("user_profiles")
+        .select("user_id, role")
+        .eq("tenant_id", tenantId);
+
+      if (profilesErr) throw profilesErr;
+
+      const allTenantUserIds = (tenantProfiles ?? [])
+        .map((p) => p.user_id)
+        .filter(Boolean);
+
+      if (allTenantUserIds.length === 0) return [];
+
+      const { data: allUsers, error: allUsersErr } = await client
+        .from("users")
+        .select("id, name, email, role")
+        .in("id", allTenantUserIds)
+        .neq("role", "parent");
+
+      if (allUsersErr) throw allUsersErr;
+      if (!allUsers || allUsers.length === 0) return [];
+
+      const staffUserIds = allUsers.map((u) => u.id);
+
+      const profileRoleMap = new Map(
+        (tenantProfiles ?? []).map((p) => [p.user_id, p.role])
+      );
+
+      const roleToPosition: Record<string, string> = {
+        school_admin: "admin",
+        admin: "admin",
+        teacher: "teacher",
+        general_worker: "general_worker",
+      };
+
+      // ── Step 2: Fetch entitlements ──
+      const { data: entitlements } = await client
+        .from("leave_entitlements")
+        .select("position, leave_type, days_per_year")
+        .eq("tenant_id", tenantId);
+
+      const entMap = new Map(
+        (entitlements ?? []).map((e) => [`${e.position}__${e.leave_type}`, e.days_per_year])
+      );
+
+      // ── Step 3: Check which staff are missing balance rows for current year ──
+      const { data: existingBalances, error: existBalErr } = await client
+        .from("leave_balances")
+        .select("user_id, leave_type")
+        .eq("tenant_id", tenantId)
+        .eq("year", currentYear)
+        .in("user_id", staffUserIds);
+
+      if (existBalErr) throw existBalErr;
+
+      const existingKeys = new Set(
+        (existingBalances ?? []).map((b) => `${b.user_id}__${b.leave_type}`)
+      );
+
+      const leaveTypes = ["annual_leave", "medical_leave", "unpaid_leave", "maternity_leave", "paternity_leave", "ihsan_leave"];
+
+      const missingRows: {
+        tenant_id: string;
+        user_id: string;
+        leave_type: string;
+        year: number;
+        entitled_days: number;
+        used_days: number;
+      }[] = [];
+
+      for (const user of allUsers) {
+        const position =
+          roleToPosition[user.role ?? ""] ??
+          roleToPosition[profileRoleMap.get(user.id) ?? ""] ??
+          "teacher";
+
+        for (const lt of leaveTypes) {
+          if (!existingKeys.has(`${user.id}__${lt}`)) {
+            const entitled = entMap.get(`${position}__${lt}`) ?? 0;
+            missingRows.push({
+              tenant_id: tenantId,
+              user_id: user.id,
+              leave_type: lt,
+              year: currentYear,
+              entitled_days: entitled,
+              used_days: 0,
+            });
+          }
+        }
+      }
+
+      // ── Step 4: Bulk upsert missing rows (idempotent) ──
+      if (missingRows.length > 0) {
+        const { error: upsertErr } = await client
+          .from("leave_balances")
+          .upsert(missingRows, {
+            onConflict: "tenant_id,user_id,leave_type,year",
+          });
+
+        if (upsertErr) throw upsertErr;
+      }
+
+      // ── Step 5: Fetch all balances for current year ──
       const { data: balances, error: balErr } = await client
         .from("leave_balances")
         .select("*")
         .eq("tenant_id", tenantId)
-        .eq("year", currentYear);
+        .eq("year", currentYear)
+        .in("user_id", staffUserIds);
 
       if (balErr) throw balErr;
-
       if (!balances || balances.length === 0) return [];
 
-      // Get unique user IDs
-      const userIds = [...new Set(balances.map((b) => b.user_id).filter(Boolean))];
-
-      const { data: users, error: usersErr } = await client
-        .from("users")
-        .select("id, name, email, role")
-        .in("id", userIds);
-
-      if (usersErr) throw usersErr;
-
       const userMap = new Map(
-        (users ?? []).map((u) => [u.id, { name: u.name, email: u.email, role: u.role }])
+        allUsers.map((u) => [u.id, { name: u.name, email: u.email, role: u.role }])
       );
 
-      // Group balances by user
+      // ── Step 6: Group balances by user, sync entitled_days with current entitlements ──
       const grouped: Record<
         string,
         {
@@ -61,6 +154,8 @@ export async function GET(request: NextRequest) {
           balances: { leave_type: string; entitled_days: number; used_days: number }[];
         }
       > = {};
+
+      const staleUpdates: { userId: string; leaveType: string; entitledDays: number }[] = [];
 
       for (const b of balances) {
         if (!grouped[b.user_id]) {
@@ -73,11 +168,41 @@ export async function GET(request: NextRequest) {
             balances: [],
           };
         }
+
+        const user = userMap.get(b.user_id);
+        const profileRole = profileRoleMap.get(b.user_id);
+        const position =
+          roleToPosition[user?.role ?? ""] ??
+          roleToPosition[profileRole ?? ""] ??
+          "teacher";
+
+        const currentEntitled = entMap.get(`${position}__${b.leave_type}`);
+        const entitledDays = currentEntitled !== undefined ? currentEntitled : b.entitled_days;
+
+        if (entitledDays !== b.entitled_days) {
+          staleUpdates.push({ userId: b.user_id, leaveType: b.leave_type, entitledDays });
+        }
+
         grouped[b.user_id].balances.push({
           leave_type: b.leave_type,
-          entitled_days: b.entitled_days,
+          entitled_days: entitledDays,
           used_days: b.used_days,
         });
+      }
+
+      // Fix stale entitled_days in database
+      if (staleUpdates.length > 0) {
+        await Promise.all(
+          staleUpdates.map((upd) =>
+            client
+              .from("leave_balances")
+              .update({ entitled_days: upd.entitledDays })
+              .eq("tenant_id", tenantId)
+              .eq("user_id", upd.userId)
+              .eq("leave_type", upd.leaveType)
+              .eq("year", currentYear)
+          )
+        );
       }
 
       return Object.values(grouped);

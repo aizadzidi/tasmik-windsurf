@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedTenantUser } from "@/lib/requestAuth";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
+import { SPECIAL_LEAVE_TYPES } from "@/types/leave";
 
 function countBusinessDays(start: string, end: string): number {
   const startDate = new Date(start);
@@ -97,6 +98,86 @@ export async function DELETE(request: NextRequest) {
   }
 }
 
+export async function PUT(request: NextRequest) {
+  try {
+    const auth = await requireAuthenticatedTenantUser(request);
+    if (!auth.ok) return auth.response;
+
+    const { userId, tenantId } = auth;
+    const body = await request.json();
+    const { application_id } = body;
+
+    if (!application_id) {
+      return NextResponse.json(
+        { error: "application_id is required" },
+        { status: 400 }
+      );
+    }
+
+    await adminOperationSimple(async (client) => {
+      // Fetch the application — must belong to this user and be approved
+      const { data: app, error: fetchErr } = await client
+        .from("leave_applications")
+        .select("*")
+        .eq("id", application_id)
+        .eq("tenant_id", tenantId)
+        .eq("user_id", userId)
+        .single();
+
+      if (fetchErr || !app) throw new Error("Application not found");
+      if (app.status !== "approved") {
+        throw new Error("Only approved applications can be cancelled");
+      }
+
+      // Block cancel if leave period has already started
+      const today = new Date().toISOString().slice(0, 10);
+      if (app.start_date <= today) {
+        throw new Error("Cannot cancel leave that has already started");
+      }
+
+      // Set status to cancelled, preserve review data for audit trail
+      const { error: updateErr } = await client
+        .from("leave_applications")
+        .update({
+          status: "cancelled",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", application_id);
+
+      if (updateErr) throw updateErr;
+
+      // Restore balance
+      if (!SPECIAL_LEAVE_TYPES.has(app.leave_type)) {
+        const year = new Date(app.start_date).getFullYear();
+        const { data: balance } = await client
+          .from("leave_balances")
+          .select("*")
+          .eq("tenant_id", tenantId)
+          .eq("user_id", userId)
+          .eq("leave_type", app.leave_type)
+          .eq("year", year)
+          .maybeSingle();
+
+        if (balance) {
+          await client
+            .from("leave_balances")
+            .update({
+              used_days: Math.max(0, balance.used_days - app.total_days),
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", balance.id);
+        }
+      }
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Failed to cancel application";
+    const status = message.includes("not found") ? 404 : message.includes("Only approved") ? 400 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireAuthenticatedTenantUser(request);
@@ -130,7 +211,7 @@ export async function POST(request: NextRequest) {
 
     const application = await adminOperationSimple(async (client) => {
       // Check balance (skip for unpaid_leave)
-      if (leave_type !== "unpaid_leave") {
+      if (!SPECIAL_LEAVE_TYPES.has(leave_type)) {
         const year = new Date(start_date).getFullYear();
         let { data: balance } = await client
           .from("leave_balances")

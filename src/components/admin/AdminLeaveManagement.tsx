@@ -9,12 +9,16 @@ const LEAVE_TYPE_LABELS: Record<string, string> = {
   annual_leave: "Annual Leave",
   medical_leave: "Medical Leave",
   unpaid_leave: "Unpaid Leave",
+  maternity_leave: "Maternity Leave",
+  paternity_leave: "Paternity Leave",
+  ihsan_leave: "Ihsan Leave",
 };
 
 const STATUS_STYLES: Record<string, string> = {
   pending: "bg-amber-100 text-amber-800",
   approved: "bg-emerald-100 text-emerald-800",
   rejected: "bg-rose-100 text-rose-800",
+  cancelled: "bg-slate-200 text-slate-700",
 };
 
 interface StaffBalance {
@@ -188,7 +192,7 @@ export default function AdminLeaveManagement() {
       if (failed) throw new Error("Some entitlements failed to save");
 
       setSuccess("Entitlements saved successfully.");
-      await fetchEntitlements();
+      await Promise.all([fetchEntitlements(), fetchBalances()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save");
     } finally {
@@ -262,7 +266,7 @@ export default function AdminLeaveManagement() {
                 className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 w-full sm:w-64"
               />
               <div className="flex flex-wrap gap-2">
-                {["all", "pending", "approved", "rejected"].map((s) => (
+                {["all", "pending", "approved", "rejected", "cancelled"].map((s) => (
                   <button
                     key={s}
                     onClick={() => setStatusFilter(s)}
@@ -289,6 +293,8 @@ export default function AdminLeaveManagement() {
                       <th className="text-left py-3 px-2 font-semibold text-slate-600">Type</th>
                       <th className="text-left py-3 px-2 font-semibold text-slate-600">Dates</th>
                       <th className="text-center py-3 px-2 font-semibold text-slate-600">Days</th>
+                      <th className="text-left py-3 px-2 font-semibold text-slate-600">Reason</th>
+                      <th className="text-left py-3 px-2 font-semibold text-slate-600">Applied</th>
                       <th className="text-center py-3 px-2 font-semibold text-slate-600">Status</th>
                       <th className="text-center py-3 px-2 font-semibold text-slate-600">Actions</th>
                     </tr>
@@ -308,7 +314,6 @@ export default function AdminLeaveManagement() {
                               {app.user_name ?? "Unknown"}
                             </div>
                           </button>
-                          <div className="text-xs text-slate-500">{app.user_email}</div>
                           {app.user_role && (
                             <div className="text-xs text-slate-400 capitalize">{app.user_role}</div>
                           )}
@@ -330,6 +335,16 @@ export default function AdminLeaveManagement() {
                         </td>
                         <td className="py-3 px-2 text-center font-medium text-slate-800">
                           {app.total_days}
+                        </td>
+                        <td className="py-3 px-2 text-slate-500 text-xs max-w-[200px] truncate">
+                          {app.reason || "-"}
+                        </td>
+                        <td className="py-3 px-2 text-slate-500 text-xs whitespace-nowrap">
+                          {new Date(app.created_at).toLocaleDateString("en-MY", {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                          })}
                         </td>
                         <td className="py-3 px-2 text-center">
                           <span
@@ -409,9 +424,9 @@ export default function AdminLeaveManagement() {
                   <thead>
                     <tr className="border-b border-slate-200">
                       <th className="text-left py-3 px-2 font-semibold text-slate-600">Staff</th>
-                      <th className="text-center py-3 px-2 font-semibold text-slate-600">Annual Leave</th>
-                      <th className="text-center py-3 px-2 font-semibold text-slate-600">Medical Leave</th>
-                      <th className="text-center py-3 px-2 font-semibold text-slate-600">Unpaid Leave</th>
+                      {LEAVE_TYPES.map((lt) => (
+                        <th key={lt.value} className="text-center py-3 px-2 font-semibold text-slate-600">{lt.label}</th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
@@ -425,7 +440,7 @@ export default function AdminLeaveManagement() {
                             <div className="text-xs text-slate-400 capitalize">{staff.user_role}</div>
                           )}
                         </td>
-                        {["annual_leave", "medical_leave", "unpaid_leave"].map((lt) => {
+                        {LEAVE_TYPES.map(({ value: lt }) => {
                           const bal = getBalanceForType(staff, lt);
                           return (
                             <td key={lt} className="py-3 px-2 text-center">
@@ -609,7 +624,7 @@ export default function AdminLeaveManagement() {
 
             {/* Balance Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
-              {["annual_leave", "medical_leave", "unpaid_leave"].map((lt) => {
+              {LEAVE_TYPES.map(({ value: lt }) => {
                 const bal = getBalanceForType(selectedStaff, lt);
                 const used = bal?.used_days ?? 0;
                 const entitled = bal?.entitled_days ?? 0;
