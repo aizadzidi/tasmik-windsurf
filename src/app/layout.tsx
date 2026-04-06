@@ -1,5 +1,6 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import ServiceWorkerRegistrar from "@/components/ServiceWorkerRegistrar";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -12,9 +13,14 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+export const viewport: Viewport = {
+  themeColor: "#7c3aed",
+};
+
 export const metadata: Metadata = {
   title: "AlKhayr Class",
   description: "Islamic school management system for tracking student Quran memorization progress (Tasmik) and conducting assessments",
+  manifest: "/manifest.json",
   icons: {
     icon: [
       {
@@ -43,6 +49,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        <ServiceWorkerRegistrar />
         {children}
       </body>
     </html>

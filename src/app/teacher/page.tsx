@@ -10,6 +10,7 @@ import FullRecordsModal from "@/components/teacher/FullRecordsModal";
 import JuzTestProgressLineChart from "@/components/teacher/JuzTestProgressLineChart";
 import JuzTestHistoryModalViewOnly from "@/components/teacher/JuzTestHistoryModalViewOnly";
 import ScheduleTestModal from "@/components/teacher/ScheduleTestModal";
+import NotificationPrompt from "@/components/teacher/NotificationPrompt";
 import { notificationService } from "@/lib/notificationService";
 import { useTeachingModeContext } from "@/contexts/TeachingModeContext";
 import {
@@ -749,6 +750,13 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
               <p className="text-gray-600">Monitor and create reports for your students&apos; Quran memorization progress</p>
             </div>
           </header>
+
+          {/* Attendance Notification Prompt — campus and mixed teachers only */}
+          {userId && programScope !== "online" && (
+            <div className="mb-4">
+              <NotificationPrompt userId={userId} />
+            </div>
+          )}
 
           {/* Summary Cards - Simplified */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
