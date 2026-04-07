@@ -334,25 +334,19 @@ function TeacherAttendanceContent() {
 
   // --- Data Fetching ---
 
-  const fetchStudentRosterPaged = React.useCallback(async (teacherId: string | null) => {
+  const fetchStudentRosterPaged = React.useCallback(async () => {
     const allStudents: StudentRosterRow[] = [];
     let from = 0;
     const size = 1000;
 
     while (true) {
-      let query = supabase
+      const { data, error } = await supabase
         .from("students")
         .select("id, name, class_id, parent_id")
         .neq("record_type", "prospect")
         .not("class_id", "is", null)
         .order("name")
         .range(from, from + size - 1);
-
-      if (teacherId !== null) {
-        query = query.eq("assigned_teacher_id", teacherId);
-      }
-
-      const { data, error } = await query;
 
       if (error) throw error;
       if (data) allStudents.push(...data);
@@ -364,25 +358,7 @@ function TeacherAttendanceContent() {
   }, []);
 
   const fetchStudentRoster = React.useCallback(async () => {
-    const { data: authData } = await supabase.auth.getUser();
-    const teacherId = authData.user?.id ?? null;
-
-    if (!teacherId) {
-      return fetchStudentRosterPaged(null);
-    }
-
-    try {
-      const scopedStudents = await fetchStudentRosterPaged(teacherId);
-      if (scopedStudents.length > 0) {
-        return scopedStudents;
-      }
-
-      console.warn("Attendance roster fallback: no teacher-scoped students found, using legacy roster query.");
-      return fetchStudentRosterPaged(null);
-    } catch (error) {
-      console.warn("Attendance roster fallback: teacher-scoped query failed, using legacy roster query.", error);
-      return fetchStudentRosterPaged(null);
-    }
+    return fetchStudentRosterPaged();
   }, [fetchStudentRosterPaged]);
 
   const initData = React.useCallback(async () => {

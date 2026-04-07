@@ -91,18 +91,40 @@ const isSessionClosed = (state: CampusSessionState) =>
   state === "finalized" || state === "holiday" || state === "cancelled";
 
 const getTeacherClassIds = async (tenantId: string, teacherId: string) => {
-  const { data, error } = await supabaseService
-    .from("students")
-    .select("class_id")
-    .eq("tenant_id", tenantId)
-    .neq("record_type", "prospect")
-    .eq("assigned_teacher_id", teacherId)
-    .not("class_id", "is", null);
+  const [
+    { data: studentRows, error: studentError },
+    { data: templateRows, error: templateError },
+    { data: instanceRows, error: instanceError },
+  ] = await Promise.all([
+    supabaseService
+      .from("students")
+      .select("class_id")
+      .eq("tenant_id", tenantId)
+      .neq("record_type", "prospect")
+      .eq("assigned_teacher_id", teacherId)
+      .not("class_id", "is", null),
+    supabaseService
+      .from("campus_session_templates")
+      .select("class_id")
+      .eq("tenant_id", tenantId)
+      .eq("teacher_id", teacherId),
+    supabaseService
+      .from("campus_session_instances")
+      .select("class_id")
+      .eq("tenant_id", tenantId)
+      .eq("teacher_id", teacherId),
+  ]);
 
-  if (error) throw error;
+  if (studentError) throw studentError;
+  if (templateError) throw templateError;
+  if (instanceError) throw instanceError;
 
   return Array.from(
-    new Set((data ?? []).map((row) => row.class_id).filter((id): id is string => Boolean(id))),
+    new Set(
+      [...(studentRows ?? []), ...(templateRows ?? []), ...(instanceRows ?? [])]
+        .map((row) => row.class_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
   );
 };
 
@@ -201,19 +223,39 @@ export async function listTeacherSessionsByDate(
   date: string,
 ): Promise<TeacherSessionQueueItem[]> {
   const classIds = await getTeacherClassIds(tenantId, teacherId);
-  if (classIds.length === 0) return [];
+  const [{ data: teacherInstances, error: teacherInstancesError }, classScopedResponse] =
+    await Promise.all([
+      supabaseService
+        .from("campus_session_instances")
+        .select("*, classes(name), subjects(name), users(name)")
+        .eq("tenant_id", tenantId)
+        .eq("session_date", date)
+        .eq("teacher_id", teacherId)
+        .order("start_time", { ascending: true }),
+      classIds.length > 0
+        ? supabaseService
+            .from("campus_session_instances")
+            .select("*, classes(name), subjects(name), users(name)")
+            .eq("tenant_id", tenantId)
+            .eq("session_date", date)
+            .in("class_id", classIds)
+            .order("start_time", { ascending: true })
+        : Promise.resolve({ data: [], error: null }),
+    ]);
 
-  const { data: instances, error } = await supabaseService
-    .from("campus_session_instances")
-    .select("*, classes(name), subjects(name), users(name)")
-    .eq("tenant_id", tenantId)
-    .eq("session_date", date)
-    .in("class_id", classIds)
-    .order("start_time", { ascending: true });
+  if (teacherInstancesError) throw teacherInstancesError;
+  if (classScopedResponse.error) throw classScopedResponse.error;
 
-  if (error) throw error;
+  const rows = Array.from(
+    new Map(
+      ([...(teacherInstances ?? []), ...(classScopedResponse.data ?? [])] as CampusSessionInstance[]).map(
+        (row) => [row.id, row],
+      ),
+    ).values(),
+  );
 
-  const rows = (instances ?? []) as CampusSessionInstance[];
+  if (rows.length === 0) return [];
+
   const sessionIds = rows.map((row) => row.id);
   const { rosterCountMap, markBySessionMap } = await getSessionAggregateMaps(tenantId, sessionIds);
 
@@ -479,7 +521,6 @@ export async function getTeacherRiskStudents(
     .select("id, name, class_id, classes(name)")
     .eq("tenant_id", tenantId)
     .neq("record_type", "prospect")
-    .eq("assigned_teacher_id", teacherId)
     .in("class_id", classIds);
   if (rosterError) throw rosterError;
 
