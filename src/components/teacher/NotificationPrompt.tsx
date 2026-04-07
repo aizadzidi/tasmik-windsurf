@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { Bell, Check, X } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
 import {
   subscribeToPush,
   unsubscribeFromPush,
@@ -33,7 +32,7 @@ export default function NotificationPrompt({ userId }: NotificationPromptProps) 
         return;
       }
 
-      const status = await isSubscribed(userId);
+      const status = await isSubscribed();
       setSubscribed(status);
 
       // Clear dismiss flag if user later subscribed via another device/session
@@ -42,33 +41,17 @@ export default function NotificationPrompt({ userId }: NotificationPromptProps) 
       }
     }
     checkStatus();
-  }, [userId]);
+  }, [dismissKey]);
 
   const handleEnable = async () => {
     setLoading(true);
     setError(null);
     try {
-      // Get tenant_id from user_profiles (authoritative source)
-      const { data: profileData } = await supabase
-        .from("user_profiles")
-        .select("tenant_id")
-        .eq("user_id", userId)
-        .single();
-
-      const tenantId = profileData?.tenant_id || "";
-
-      const success = await subscribeToPush(userId, tenantId);
-      if (success) {
+      const result = await subscribeToPush();
+      if (result.ok) {
         setSubscribed(true);
       } else {
-        // Check why it failed
-        if (Notification.permission === "denied") {
-          setError("Notifications blocked. Please enable in browser settings.");
-        } else if (!process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY) {
-          setError("Push notification service not configured. Contact admin.");
-        } else {
-          setError("Failed to enable. Please try again.");
-        }
+        setError(result.error || "Failed to enable. Please try again.");
       }
     } catch {
       setError("Something went wrong. Please try again.");
@@ -79,10 +62,13 @@ export default function NotificationPrompt({ userId }: NotificationPromptProps) 
 
   const handleDisable = async () => {
     setLoading(true);
+    setError(null);
     try {
-      const success = await unsubscribeFromPush(userId);
-      if (success) {
+      const result = await unsubscribeFromPush();
+      if (result.ok) {
         setSubscribed(false);
+      } else {
+        setError(result.error || "Failed to disable. Please try again.");
       }
     } finally {
       setLoading(false);

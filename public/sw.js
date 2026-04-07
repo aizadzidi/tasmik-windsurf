@@ -17,8 +17,8 @@ self.addEventListener("push", (event) => {
 
   const options = {
     body: data.body || "You have a new notification",
-    icon: "/logo-akademi.png",
-    badge: "/logo-akademi.png",
+    icon: data.icon || "/pwa-icon-192.png",
+    badge: data.badge || "/notification-badge-96.png",
     tag: data.tag || "attendance-reminder",
     renotify: true,
     data: {

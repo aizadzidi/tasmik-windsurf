@@ -9,6 +9,9 @@ const nextConfig: NextConfig = {
     ignoreDuringBuilds: true,
   },
 
+  // Keep web-push as native Node.js module (webpack bundling breaks its crypto)
+  serverExternalPackages: ["web-push"],
+
   // Headers for service worker scope
   async headers() {
     return [
