@@ -127,6 +127,18 @@ const AdminNavbar = () => {
         </svg>
       )
     },
+    {
+      href: "/admin/payroll",
+      label: "Payroll",
+      permission: "admin:payroll",
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v2m0 8v2" />
+          <circle cx="12" cy="12" r="10" strokeWidth={2} />
+        </svg>
+      )
+    },
   ];
 
   const onlineNavItems = [
