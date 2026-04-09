@@ -10,6 +10,13 @@ type CreateScheduleBody = {
   slots?: TeacherScheduleSlotInput[];
 };
 
+type RouteErrorLike = {
+  code?: string;
+  details?: string | null;
+  hint?: string | null;
+  message?: string;
+};
+
 const getErrorStatus = (message: string) => {
   const normalized = message.toLowerCase();
   if (normalized.includes("forbidden")) return 403;
@@ -24,6 +31,23 @@ const getErrorStatus = (message: string) => {
   if (normalized.includes("already") || normalized.includes("not available")) return 409;
   if (normalized.includes("not found")) return 404;
   return 500;
+};
+
+const getErrorMessage = (error: unknown) => {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+  return "Failed to create schedule";
+};
+
+const isPackageSlotDuplicateError = (error: unknown) => {
+  if (!error || typeof error !== "object") return false;
+  const routeError = error as RouteErrorLike;
+  return (
+    routeError.code === "23505" &&
+    `${routeError.details ?? ""} ${routeError.message ?? ""}`.includes("online_recurring_package_slot_tenant_id_package_id_slot_tem_key")
+  );
 };
 
 export async function POST(request: NextRequest) {
@@ -64,7 +88,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(payload, { status: 201 });
   } catch (error: unknown) {
     console.error("Teacher schedule create error:", error);
-    const message = error instanceof Error ? error.message : "Failed to create schedule";
+    const message = getErrorMessage(error);
     if (
       isMissingRelationError(error as { message?: string }, "online_recurring_packages") ||
       isMissingRelationError(error as { message?: string }, "online_recurring_package_slots")
@@ -72,6 +96,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: "Recurring package storage is not ready yet. Run the online attendance v2 migration first." },
         { status: 503 },
+      );
+    }
+    if (isPackageSlotDuplicateError(error)) {
+      return NextResponse.json(
+        { error: "One or more selected slots are already assigned to this package. Refresh and try again." },
+        { status: 409 },
       );
     }
     return NextResponse.json({ error: message }, { status: getErrorStatus(message) });

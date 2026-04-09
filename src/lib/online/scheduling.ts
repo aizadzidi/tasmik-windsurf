@@ -33,6 +33,46 @@ type SlotTemplateRow = {
   duration_minutes: number;
 };
 
+type PackageSlotRow = {
+  id: string;
+  slot_template_id: string;
+  status: string;
+};
+
+const cancelUpcomingOccurrencesForPackageSlot = async (params: {
+  client: ClientLike;
+  tenantId: string;
+  packageSlotId: string;
+  timestamp: string;
+}) => {
+  const todayKey = params.timestamp.slice(0, 10);
+
+  const cancelFutureOccurrenceRes = await params.client
+    .from("online_recurring_occurrences")
+    .update({
+      cancelled_at: params.timestamp,
+      updated_at: params.timestamp,
+    })
+    .eq("tenant_id", params.tenantId)
+    .eq("package_slot_id", params.packageSlotId)
+    .is("cancelled_at", null)
+    .gt("session_date", todayKey);
+  if (cancelFutureOccurrenceRes.error) throw cancelFutureOccurrenceRes.error;
+
+  const cancelTodayUnmarkedOccurrenceRes = await params.client
+    .from("online_recurring_occurrences")
+    .update({
+      cancelled_at: params.timestamp,
+      updated_at: params.timestamp,
+    })
+    .eq("tenant_id", params.tenantId)
+    .eq("package_slot_id", params.packageSlotId)
+    .is("cancelled_at", null)
+    .eq("session_date", todayKey)
+    .is("attendance_status", null);
+  if (cancelTodayUnmarkedOccurrenceRes.error) throw cancelTodayUnmarkedOccurrenceRes.error;
+};
+
 export type TeacherScheduleSlotInput = {
   day_of_week: number;
   start_time: string;
@@ -79,6 +119,12 @@ const uniqueSlotInputs = (slots: TeacherScheduleSlotInput[]) => {
   }
 
   return normalized;
+};
+
+const assertUniqueTemplateIds = (templateIds: string[]) => {
+  if (new Set(templateIds).size !== templateIds.length) {
+    throw new Error("Duplicate day/time slots are not allowed in the same schedule.");
+  }
 };
 
 const resolveTemplate = async (params: {
@@ -229,6 +275,7 @@ export const createTeacherRecurringSchedule = async (
     ),
   );
   const templateIds = templateRows.map((row) => row.id);
+  assertUniqueTemplateIds(templateIds);
 
   const activePackagesRes = await client
     .from("online_recurring_packages")
@@ -304,6 +351,14 @@ export const createTeacherRecurringSchedule = async (
   const recurringStatus = assignment.status === "pending_payment" ? "pending_payment" : "active";
   let packageData: Record<string, unknown> | null = null;
   let packageSlotsData: Array<Record<string, unknown>> = [];
+  const slotUpdateForTemplate = (template: SlotTemplateRow) => ({
+    slot_template_id: template.id,
+    day_of_week_snapshot: template.day_of_week,
+    start_time_snapshot: template.start_time,
+    duration_minutes_snapshot: template.duration_minutes,
+    status: "active" as const,
+    updated_at: timestamp,
+  });
 
   if (existingPackage) {
     const packageUpdateRes = await client
@@ -329,32 +384,54 @@ export const createTeacherRecurringSchedule = async (
 
     const existingSlotsRes = await client
       .from("online_recurring_package_slots")
-      .select("id")
+      .select("id, slot_template_id, status")
       .eq("tenant_id", payload.tenantId)
       .eq("package_id", existingPackage.id)
-      .eq("status", "active")
       .order("created_at", { ascending: true });
     if (existingSlotsRes.error) throw existingSlotsRes.error;
 
-    const existingSlots = (existingSlotsRes.data ?? []) as Array<{ id: string }>;
-    const reusableSlots = existingSlots.slice(0, templateRows.length);
-    for (let index = 0; index < reusableSlots.length; index += 1) {
+    const existingSlots = (existingSlotsRes.data ?? []) as PackageSlotRow[];
+    const existingSlotByTemplateId = new Map<string, PackageSlotRow>();
+    existingSlots.forEach((slot) => {
+      const current = existingSlotByTemplateId.get(slot.slot_template_id);
+      if (!current || (current.status !== "active" && slot.status === "active")) {
+        existingSlotByTemplateId.set(slot.slot_template_id, slot);
+      }
+    });
+
+    const matchedSlotIds = new Set<string>();
+    for (const template of templateRows) {
+      const matchingSlot = existingSlotByTemplateId.get(template.id);
+      if (!matchingSlot) continue;
+      matchedSlotIds.add(matchingSlot.id);
       const updateSlotRes = await client
         .from("online_recurring_package_slots")
-        .update({
-          slot_template_id: templateRows[index].id,
-          day_of_week_snapshot: templateRows[index].day_of_week,
-          start_time_snapshot: templateRows[index].start_time,
-          duration_minutes_snapshot: templateRows[index].duration_minutes,
-          status: "active",
-          updated_at: timestamp,
-        })
+        .update(slotUpdateForTemplate(template))
         .eq("tenant_id", payload.tenantId)
-        .eq("id", reusableSlots[index].id);
+        .eq("id", matchingSlot.id);
       if (updateSlotRes.error) throw updateSlotRes.error;
     }
 
-    const templatesToInsert = templateRows.slice(reusableSlots.length);
+    const templatesToAssign = templateRows.filter((template) => !existingSlotByTemplateId.has(template.id));
+    const reusableSlots = existingSlots.filter((slot) => !matchedSlotIds.has(slot.id));
+    const reusableSlotsToUpdate = reusableSlots.slice(0, templatesToAssign.length);
+
+    for (let index = 0; index < reusableSlotsToUpdate.length; index += 1) {
+      await cancelUpcomingOccurrencesForPackageSlot({
+        client,
+        tenantId: payload.tenantId,
+        packageSlotId: reusableSlotsToUpdate[index].id,
+        timestamp,
+      });
+      const updateSlotRes = await client
+        .from("online_recurring_package_slots")
+        .update(slotUpdateForTemplate(templatesToAssign[index]))
+        .eq("tenant_id", payload.tenantId)
+        .eq("id", reusableSlotsToUpdate[index].id);
+      if (updateSlotRes.error) throw updateSlotRes.error;
+    }
+
+    const templatesToInsert = templatesToAssign.slice(reusableSlotsToUpdate.length);
     if (templatesToInsert.length > 0) {
       const insertRows = templatesToInsert.map((template) => ({
         tenant_id: payload.tenantId,
@@ -369,8 +446,16 @@ export const createTeacherRecurringSchedule = async (
       if (insertRes.error) throw insertRes.error;
     }
 
-    const staleSlotIds = existingSlots.slice(templateRows.length).map((slot) => slot.id);
+    const staleSlotIds = reusableSlots.slice(reusableSlotsToUpdate.length).map((slot) => slot.id);
     if (staleSlotIds.length > 0) {
+      for (const staleSlotId of staleSlotIds) {
+        await cancelUpcomingOccurrencesForPackageSlot({
+          client,
+          tenantId: payload.tenantId,
+          packageSlotId: staleSlotId,
+          timestamp,
+        });
+      }
       const cancelRes = await client
         .from("online_recurring_package_slots")
         .update({
@@ -554,6 +639,7 @@ export const fillPackageSlots = async (
     ),
   );
   const templateIds = templateRows.map((row) => row.id);
+  assertUniqueTemplateIds(templateIds);
 
   // Check for conflicts with other packages for this teacher (only overlapping date ranges)
   let otherPackagesQuery = client

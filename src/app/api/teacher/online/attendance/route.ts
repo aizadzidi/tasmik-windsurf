@@ -114,9 +114,42 @@ export async function GET(request: NextRequest) {
     });
 
     let monthlyOccurrences: TeacherOccurrenceRow[] = occurrenceDrafts;
+
+    // Strip attendance/cancellation fields so upsert only touches scheduling columns.
+    // This preserves attendance_status, attendance_notes, recorded_at on existing rows
+    // while still allowing cancelled rows to be resurrected with updated scheduling data.
+    const upsertSafeDrafts = occurrenceDrafts.map(
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      ({ attendance_status, attendance_notes, recorded_at, cancelled_at, ...scheduling }) => scheduling,
+    );
     const upsertRes = await supabaseService
       .from("online_recurring_occurrences")
-      .upsert(occurrenceDrafts, { onConflict: "tenant_id,package_slot_id,session_date" });
+      .upsert(upsertSafeDrafts, { onConflict: "tenant_id,package_slot_id,session_date" });
+
+    // Resurrect cancelled rows that now match active drafts (e.g. slot moved to
+    // same weekday with a different time — the upsert updated scheduling columns
+    // but cancelled_at was stripped, so clear it explicitly).
+    if (!upsertRes.error && occurrenceDrafts.length > 0) {
+      const timestamp = new Date().toISOString();
+      const draftDatesBySlotId = new Map<string, Set<string>>();
+
+      occurrenceDrafts.forEach((draft) => {
+        const dates = draftDatesBySlotId.get(draft.package_slot_id) ?? new Set<string>();
+        dates.add(draft.session_date);
+        draftDatesBySlotId.set(draft.package_slot_id, dates);
+      });
+
+      for (const [packageSlotId, sessionDates] of draftDatesBySlotId) {
+        const resurrectRes = await supabaseService
+          .from("online_recurring_occurrences")
+          .update({ cancelled_at: null, updated_at: timestamp })
+          .eq("tenant_id", auth.tenantId)
+          .eq("package_slot_id", packageSlotId)
+          .in("session_date", [...sessionDates])
+          .not("cancelled_at", "is", null);
+        if (resurrectRes.error) throw resurrectRes.error;
+      }
+    }
 
     if (!upsertRes.error) {
       const selectRes = await supabaseService

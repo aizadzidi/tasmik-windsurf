@@ -77,6 +77,7 @@ type TeacherPayload = {
     student_name: string;
     course_id: string;
     course_name: string;
+    student_package_assignment_id?: string | null;
     sessions_per_week: number;
     slots: Array<{
       id: string;
@@ -110,15 +111,6 @@ const DAY_OPTIONS = [
 const currentMonthKey = () => {
   const now = new Date();
   return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
-};
-
-const startOfCurrentWeek = () => {
-  const now = new Date();
-  const current = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const day = current.getUTCDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  current.setUTCDate(current.getUTCDate() + diff);
-  return current.toISOString().slice(0, 10);
 };
 
 const timeLabel = (value: string) => value.slice(0, 5);
@@ -160,23 +152,109 @@ const getCourseTone = (courseName: string) => {
   return "border-slate-200 bg-slate-50 text-slate-700";
 };
 
+const getCourseCalendarFill = (courseName: string) => {
+  if (/hafazan|tahfiz/i.test(courseName)) return "bg-emerald-500 text-white shadow-sm ring-1 ring-emerald-400/50";
+  if (/islamic|islam|muamalah/i.test(courseName)) return "bg-sky-500 text-white shadow-sm ring-1 ring-sky-400/50";
+  return "bg-slate-600 text-white shadow-sm ring-1 ring-slate-400/50";
+};
+
+type CalendarCell = {
+  day: number;
+  dateStr: string;
+  inMonth: boolean;
+};
+
+const buildCalendarGrid = (monthKey: string): CalendarCell[][] => {
+  const [year, mon] = monthKey.split("-").map(Number);
+  const daysInMonth = new Date(Date.UTC(year, mon, 0)).getUTCDate();
+  const firstDayOfWeek = (new Date(Date.UTC(year, mon - 1, 1)).getUTCDay() + 6) % 7;
+
+  const weeks: CalendarCell[][] = [];
+  let week: CalendarCell[] = [];
+
+  for (let i = 0; i < firstDayOfWeek; i++) {
+    week.push({ day: 0, dateStr: "", inMonth: false });
+  }
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${String(mon).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    week.push({ day: d, dateStr, inMonth: true });
+    if (week.length === 7) {
+      weeks.push(week);
+      week = [];
+    }
+  }
+
+  if (week.length > 0) {
+    while (week.length < 7) week.push({ day: 0, dateStr: "", inMonth: false });
+    weeks.push(week);
+  }
+
+  return weeks;
+};
+
+type StudentCalendarData = {
+  student_id: string;
+  student_name: string;
+  occurrencesByDate: Map<string, OccurrenceRow[]>;
+};
+
+type SelectedCalendarDay = {
+  studentId: string;
+  dateStr: string;
+};
+
 const buildDefaultSlots = (count: number): SlotDraft[] =>
   Array.from({ length: count }, (_, index) => ({
     day_of_week: DAY_OPTIONS[index % DAY_OPTIONS.length].value,
     start_time: "08:00",
   }));
 
+const getSlotDraftValidationError = (slots: SlotDraft[], expectedCount?: number) => {
+  if (typeof expectedCount === "number" && slots.length !== expectedCount) {
+    return `Enter exactly ${expectedCount} valid weekly slot(s).`;
+  }
+
+  const keys = new Set<string>();
+  for (const slot of slots) {
+    if (!slot.start_time) {
+      return "Complete all slot day/time fields.";
+    }
+    const key = `${slot.day_of_week}:${slot.start_time}`;
+    if (keys.has(key)) {
+      return "Duplicate day/time slots are not allowed in the same schedule.";
+    }
+    keys.add(key);
+  }
+
+  return null;
+};
+
+const formatDateHeading = (dateStr: string) => {
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.toLocaleDateString("en-GB", {
+    weekday: "long",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+};
+
 export default function TeacherOnlineAttendancePage() {
   const [teacherId, setTeacherId] = useState<string | null>(null);
   const { programScope } = useTeachingModeContext();
   const [month, setMonth] = useState(currentMonthKey());
-  const [week, setWeek] = useState(startOfCurrentWeek());
   const [payload, setPayload] = useState<TeacherPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [selectedPill, setSelectedPill] = useState<PlannerPill | null>(null);
-  const [moveTargetSlotId, setMoveTargetSlotId] = useState("");
+  const [rescheduleExpanded, setRescheduleExpanded] = useState(false);
+  const [rescheduleSlots, setRescheduleSlots] = useState<SlotDraft[]>([]);
+  const [rescheduleError, setRescheduleError] = useState<string | null>(null);
+  const [confirmUnassign, setConfirmUnassign] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -189,7 +267,9 @@ export default function TeacherOnlineAttendancePage() {
   const [scheduleSlots, setScheduleSlots] = useState<SlotDraft[]>([]);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
 
-  const [classView, setClassView] = useState<"today" | "month">("today");
+  const [classView, setClassView] = useState<"daily" | "monthly">("daily");
+  const [expandedStudents, setExpandedStudents] = useState<Set<string>>(new Set());
+  const [selectedCalendarDay, setSelectedCalendarDay] = useState<SelectedCalendarDay | null>(null);
   const [fillOpen, setFillOpen] = useState(false);
   const [fillPackageId, setFillPackageId] = useState("");
   const [fillSlots, setFillSlots] = useState<SlotDraft[]>([]);
@@ -212,11 +292,13 @@ export default function TeacherOnlineAttendancePage() {
     };
   }, []);
 
-  const loadAttendance = useCallback(async () => {
-    setLoading(true);
+  const loadAttendance = useCallback(async (options?: { preservePayloadOnError?: boolean; showLoading?: boolean }) => {
+    const preservePayloadOnError = options?.preservePayloadOnError ?? false;
+    const showLoading = options?.showLoading ?? true;
+    if (showLoading) setLoading(true);
     setError(null);
     try {
-      const response = await authFetch(`/api/teacher/online/attendance?month=${month}&week=${week}`);
+      const response = await authFetch(`/api/teacher/online/attendance?month=${month}`);
       const data = (await response.json()) as TeacherPayload & { error?: string };
       if (!response.ok) {
         throw new Error(data.error || "Failed to fetch online attendance");
@@ -224,11 +306,13 @@ export default function TeacherOnlineAttendancePage() {
       setPayload(data);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load attendance");
-      setPayload(null);
+      if (!preservePayloadOnError) {
+        setPayload(null);
+      }
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
-  }, [month, week]);
+  }, [month]);
 
   useEffect(() => {
     if (!teacherId) return;
@@ -296,48 +380,110 @@ export default function TeacherOnlineAttendancePage() {
     });
   }, [selectedAssignment]);
 
-  const moveCandidates = useMemo(() => {
-    if (!selectedPill || !payload) return [] as EmptySlot[];
-    return payload.weekly_slot_actions
-      .flatMap((day) => day.empty_slots)
-      .filter((slot) => slot.course_id === selectedPill.course_id && slot.is_available);
-  }, [payload, selectedPill]);
+  // Reset slot action state when selected pill changes
+  useEffect(() => {
+    setRescheduleExpanded(false);
+    setRescheduleSlots([]);
+    setRescheduleError(null);
+    setConfirmUnassign(false);
+  }, [selectedPill]);
 
-  const todayDateStr = useMemo(() => {
-    const now = new Date();
-    return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(now.getUTCDate()).padStart(2, "0")}`;
-  }, []);
+  const sortedTodayQueue = useMemo(() => {
+    return [...(payload?.today_queue ?? [])].sort((a, b) => a.start_time.localeCompare(b.start_time));
+  }, [payload?.today_queue]);
 
-  const monthlyByDate = useMemo(() => {
-    const grouped = new Map<string, OccurrenceRow[]>();
+  const monthlyByStudent = useMemo<StudentCalendarData[]>(() => {
+    const map = new Map<string, StudentCalendarData>();
     for (const occ of payload?.monthly_occurrences ?? []) {
-      const list = grouped.get(occ.session_date) ?? [];
-      list.push(occ);
-      grouped.set(occ.session_date, list);
+      let entry = map.get(occ.student_id);
+      if (!entry) {
+        entry = { student_id: occ.student_id, student_name: occ.student_name, occurrencesByDate: new Map() };
+        map.set(occ.student_id, entry);
+      }
+      const dateList = entry.occurrencesByDate.get(occ.session_date) ?? [];
+      dateList.push(occ);
+      entry.occurrencesByDate.set(occ.session_date, dateList);
     }
-    return Array.from(grouped.entries()).sort(([a], [b]) => a.localeCompare(b));
+    return Array.from(map.values()).sort((a, b) => a.student_name.localeCompare(b.student_name));
   }, [payload?.monthly_occurrences]);
 
-  const formatDateHeading = (dateStr: string) => {
-    const [y, m, d] = dateStr.split("-").map(Number);
-    const date = new Date(Date.UTC(y, m - 1, d));
-    return date.toLocaleDateString("en-GB", {
-      weekday: "long",
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-      timeZone: "UTC",
+  const calendarGrid = useMemo(() => buildCalendarGrid(month), [month]);
+
+  const selectedCalendarDayDetails = useMemo(() => {
+    if (!selectedCalendarDay) return null;
+    const occurrences = (payload?.monthly_occurrences ?? [])
+      .filter(
+        (occurrence) =>
+          occurrence.student_id === selectedCalendarDay.studentId &&
+          occurrence.session_date === selectedCalendarDay.dateStr,
+      )
+      .sort((a, b) => a.start_time.localeCompare(b.start_time));
+
+    if (occurrences.length === 0) return null;
+
+    return {
+      dateStr: selectedCalendarDay.dateStr,
+      studentName: occurrences[0].student_name,
+      occurrences,
+    };
+  }, [payload?.monthly_occurrences, selectedCalendarDay]);
+
+  const toggleStudentExpanded = (studentId: string) => {
+    setExpandedStudents((prev) => {
+      const next = new Set(prev);
+      if (next.has(studentId)) next.delete(studentId);
+      else next.add(studentId);
+      return next;
     });
   };
+
+  const handleCalendarCellClick = (occurrences: OccurrenceRow[]) => {
+    const missingIds = occurrences.some((o) => !o.id);
+    if (missingIds) {
+      setError("Attendance records are still being set up. Please reload the page and try again.");
+      return;
+    }
+    if (occurrences.length > 1) {
+      setSelectedCalendarDay({
+        studentId: occurrences[0].student_id,
+        dateStr: occurrences[0].session_date,
+      });
+      return;
+    }
+
+    const [occurrence] = occurrences;
+    const newStatus = occurrence.attendance_status === "present" ? "absent" : "present";
+    void markAttendance(occurrence, newStatus);
+  };
+
 
   const visiblePlannerDays = useMemo(
     () => (payload?.weekly_slot_actions ?? []).filter((day) => day.occupied_pills.length > 0),
     [payload?.weekly_slot_actions],
   );
 
-  const markAttendance = async (occurrence: OccurrenceRow, status: "present" | "absent") => {
+  const [confirmRemark, setConfirmRemark] = useState<{
+    occurrence: OccurrenceRow;
+    newStatus: "present" | "absent";
+  } | null>(null);
+
+  const doMarkAttendance = async (occurrence: OccurrenceRow, status: "present" | "absent") => {
     if (!occurrence.id) return;
+    const previousStatus = occurrence.attendance_status;
     setBusyKey(`mark:${occurrence.id}`);
+
+    // Optimistic update
+    setPayload((prev) => {
+      if (!prev) return prev;
+      const updateOcc = (occ: OccurrenceRow) =>
+        occ.id === occurrence.id ? { ...occ, attendance_status: status } : occ;
+      return {
+        ...prev,
+        today_queue: prev.today_queue.map(updateOcc),
+        monthly_occurrences: prev.monthly_occurrences.map(updateOcc),
+      };
+    });
+
     try {
       const response = await authFetch("/api/teacher/online/attendance", {
         method: "POST",
@@ -349,38 +495,108 @@ export default function TeacherOnlineAttendancePage() {
       });
       const data = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(data.error || "Failed to mark attendance");
-      await loadAttendance();
+      // Refresh counts and derived lists without wiping the optimistic UI if this follow-up fetch fails.
+      void loadAttendance({ preservePayloadOnError: true, showLoading: false });
     } catch (markError) {
+      // Revert optimistic update
+      setPayload((prev) => {
+        if (!prev) return prev;
+        const revertOcc = (occ: OccurrenceRow) =>
+          occ.id === occurrence.id ? { ...occ, attendance_status: previousStatus } : occ;
+        return {
+          ...prev,
+          today_queue: prev.today_queue.map(revertOcc),
+          monthly_occurrences: prev.monthly_occurrences.map(revertOcc),
+        };
+      });
       setError(markError instanceof Error ? markError.message : "Failed to mark attendance");
     } finally {
       setBusyKey(null);
     }
   };
 
-  const moveTimeSlot = async () => {
-    if (!selectedPill || !moveTargetSlotId) {
-      setError("Select a target time slot first.");
+  const markAttendance = async (occurrence: OccurrenceRow, status: "present" | "absent") => {
+    // If already marked with a different status, confirm first
+    if (occurrence.attendance_status !== null && occurrence.attendance_status !== status) {
+      setConfirmRemark({ occurrence, newStatus: status });
       return;
     }
-    setBusyKey(`move:${selectedPill.package_slot_id}`);
+    await doMarkAttendance(occurrence, status);
+  };
+
+  const openRescheduleEditor = (pill: PlannerPill) => {
+    const pkg = payload?.weekly_packages.find((item) => item.id === pill.package_id);
+    if (!pkg) return;
+    if (!pkg.student_package_assignment_id) {
+      setError("This package is missing its assignment link, so weekly reschedule is unavailable.");
+      return;
+    }
+
+    const sortedCurrentSlots = [...pkg.slots]
+      .sort((left, right) => {
+        if (left.day_of_week_snapshot !== right.day_of_week_snapshot) {
+          return left.day_of_week_snapshot - right.day_of_week_snapshot;
+        }
+        return left.start_time_snapshot.localeCompare(right.start_time_snapshot);
+      })
+      .map<SlotDraft>((slot) => ({
+        day_of_week: slot.day_of_week_snapshot,
+        start_time: slot.start_time_snapshot.slice(0, 5),
+      }));
+
+    const required = Math.max(pkg.sessions_per_week, 1);
+    const next = sortedCurrentSlots.slice(0, required);
+    if (next.length < required) {
+      next.push(...buildDefaultSlots(required - next.length));
+    }
+
+    setSelectedPill(pill);
+    setRescheduleSlots(next);
+    setRescheduleError(null);
+    setRescheduleExpanded(true);
+  };
+
+  const submitReschedule = async () => {
+    if (!selectedPill || !payload) return;
+    const pkg = payload.weekly_packages.find((item) => item.id === selectedPill.package_id);
+    if (!pkg?.student_package_assignment_id) {
+      setRescheduleError("This package is missing its assignment link, so weekly reschedule is unavailable.");
+      return;
+    }
+    const validationError = getSlotDraftValidationError(
+      rescheduleSlots,
+      Math.max(pkg.sessions_per_week, 1),
+    );
+    if (validationError) {
+      setRescheduleError(validationError);
+      return;
+    }
+
+    setRescheduleError(null);
+    setBusyKey(`reschedule:${pkg.id}`);
     try {
-      const response = await authFetch(
-        `/api/teacher/online/attendance/package-slots/${encodeURIComponent(selectedPill.package_slot_id)}/move`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            target_slot_template_id: moveTargetSlotId,
-            effective_mode: "next_occurrence",
-          }),
-        },
-      );
+      const response = await authFetch("/api/teacher/online/attendance/schedules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          assignment_id: pkg.student_package_assignment_id,
+          month,
+          slots: rescheduleSlots,
+        }),
+      });
       const data = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(data.error || "Failed to move time slot");
+      if (!response.ok) throw new Error(data.error || "Failed to reschedule weekly slots");
+
+      setRescheduleExpanded(false);
+      setRescheduleSlots([]);
+      setRescheduleError(null);
+      setError(null);
       setSelectedPill(null);
       await loadAttendance();
-    } catch (moveError) {
-      setError(moveError instanceof Error ? moveError.message : "Failed to move time slot");
+    } catch (caughtError) {
+      setRescheduleError(
+        caughtError instanceof Error ? caughtError.message : "Failed to reschedule weekly slots",
+      );
     } finally {
       setBusyKey(null);
     }
@@ -392,8 +608,12 @@ export default function TeacherOnlineAttendancePage() {
       setScheduleError("Select an assigned package first.");
       return;
     }
-    if (scheduleSlots.length === 0 || scheduleSlots.some((slot) => !slot.start_time)) {
-      setScheduleError("Complete all slot day/time fields.");
+    const validationError = getSlotDraftValidationError(
+      scheduleSlots,
+      Math.max(selectedAssignment.sessions_per_week, 1),
+    );
+    if (validationError) {
+      setScheduleError(validationError);
       return;
     }
 
@@ -421,7 +641,7 @@ export default function TeacherOnlineAttendancePage() {
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : "Failed to schedule student";
       if (message.includes("already has a schedule for the selected month")) {
-        setScheduleError("This student is already scheduled this month. Use Class Timetable to move slot times.");
+        setScheduleError("This student is already scheduled this month. Use Reschedule weekly slots in Class Timetable.");
       } else {
         setScheduleError(message);
       }
@@ -444,8 +664,9 @@ export default function TeacherOnlineAttendancePage() {
 
   const submitFill = async () => {
     if (!fillPackageId || fillSlots.length === 0) return;
-    if (fillSlots.some((slot) => !slot.start_time)) {
-      setFillError("Complete all slot day/time fields.");
+    const validationError = getSlotDraftValidationError(fillSlots, fillSlots.length);
+    if (validationError) {
+      setFillError(validationError);
       return;
     }
     setFillError(null);
@@ -474,30 +695,30 @@ export default function TeacherOnlineAttendancePage() {
     }
   };
 
-  const unassignSlot = async (pill: PlannerPill) => {
-    // Find the package to show slot count warning
-    const pkg = payload?.weekly_packages.find((p) => p.id === pill.package_id);
-    const slotsAfter = pkg ? pkg.slots.length - 1 : 0;
-    const totalRequired = pkg?.sessions_per_week ?? 0;
-    const warning = pkg && slotsAfter < totalRequired
-      ? `\nThis student has a ${totalRequired}x/week package. After unassigning, only ${slotsAfter} of ${totalRequired} slots will remain.`
-      : "";
-    const confirmed = window.confirm(`Unassign slot for ${pill.student_name}?${warning}`);
-    if (!confirmed) return;
-    setBusyKey(`unassign:${pill.package_slot_id}`);
+  const unassignAllSlots = async (pill: PlannerPill) => {
+    const pkg = payload?.weekly_packages.find((item) => item.id === pill.package_id);
+    const activeSlotIds = [...new Set((pkg?.slots ?? []).map((slot) => slot.id).filter(Boolean))];
+    if (activeSlotIds.length === 0) {
+      setError("No active slots found for this package.");
+      return;
+    }
+
+    setBusyKey(`unassign-package:${pill.package_id}`);
     try {
       const response = await authFetch(
-        `/api/teacher/online/attendance/package-slots/${encodeURIComponent(pill.package_slot_id)}`,
+        `/api/teacher/online/attendance/package-slots/package/${encodeURIComponent(pill.package_id)}`,
         { method: "DELETE" },
       );
       const data = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(data.error || "Failed to unassign slot");
-      if (selectedPill?.package_slot_id === pill.package_slot_id) {
+      if (!response.ok) throw new Error(data.error || "Failed to unassign slots");
+
+      if (selectedPill?.package_id === pill.package_id) {
         setSelectedPill(null);
       }
+
       await loadAttendance();
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "Failed to unassign slot");
+      setError(caughtError instanceof Error ? caughtError.message : "Failed to unassign slots");
     } finally {
       setBusyKey(null);
     }
@@ -531,7 +752,20 @@ export default function TeacherOnlineAttendancePage() {
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(191,219,254,0.42),_transparent_36%),linear-gradient(180deg,_#f8fafc_0%,_#eef2ff_100%)]">
       <main className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6">
         {error ? (
-          <Card className="border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</Card>
+          <Card className="border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+            <div className="flex items-center justify-between gap-3">
+              <span>{error}</span>
+              <button
+                type="button"
+                className="shrink-0 text-rose-400 transition hover:text-rose-600"
+                onClick={() => setError(null)}
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </Card>
         ) : null}
         {payload?.warning ? (
           <Card className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">{payload.warning}</Card>
@@ -595,22 +829,33 @@ export default function TeacherOnlineAttendancePage() {
         ) : null}
 
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <Card className="p-4">
-            <p className="text-xs uppercase text-slate-400">Total Sessions</p>
-            <p className="mt-1 text-2xl font-semibold text-slate-900">{payload?.summary.total_sessions ?? 0}</p>
-          </Card>
-          <Card className="p-4">
-            <p className="text-xs uppercase text-slate-400">Marked</p>
-            <p className="mt-1 text-2xl font-semibold text-slate-900">{payload?.summary.marked_sessions ?? 0}</p>
-          </Card>
-          <Card className="p-4">
-            <p className="text-xs uppercase text-slate-400">Present</p>
-            <p className="mt-1 text-2xl font-semibold text-emerald-700">{payload?.summary.present_count ?? 0}</p>
-          </Card>
-          <Card className="p-4">
-            <p className="text-xs uppercase text-slate-400">Attendance</p>
-            <p className="mt-1 text-2xl font-semibold text-sky-700">{payload?.summary.attendance_rate_pct ?? 0}%</p>
-          </Card>
+          {loading && !payload ? (
+            [1, 2, 3, 4].map((i) => (
+              <Card key={i} className="animate-pulse p-4">
+                <div className="h-3 w-20 rounded bg-slate-200" />
+                <div className="mt-3 h-7 w-12 rounded bg-slate-200" />
+              </Card>
+            ))
+          ) : (
+            <>
+              <Card className="p-4">
+                <p className="text-xs uppercase text-slate-400">Total Sessions</p>
+                <p className="mt-1 text-2xl font-semibold text-slate-900">{payload?.summary.total_sessions ?? 0}</p>
+              </Card>
+              <Card className="p-4">
+                <p className="text-xs uppercase text-slate-400">Marked</p>
+                <p className="mt-1 text-2xl font-semibold text-slate-900">{payload?.summary.marked_sessions ?? 0}</p>
+              </Card>
+              <Card className="p-4">
+                <p className="text-xs uppercase text-slate-400">Present</p>
+                <p className="mt-1 text-2xl font-semibold text-emerald-700">{payload?.summary.present_count ?? 0}</p>
+              </Card>
+              <Card className="p-4">
+                <p className="text-xs uppercase text-slate-400">Attendance</p>
+                <p className="mt-1 text-2xl font-semibold text-sky-700">{payload?.summary.attendance_rate_pct ?? 0}%</p>
+              </Card>
+            </>
+          )}
         </section>
 
         <section className="space-y-4">
@@ -650,7 +895,6 @@ export default function TeacherOnlineAttendancePage() {
                     )}
                     onClick={() => {
                       setSelectedPill(pill);
-                      setMoveTargetSlotId("");
                     }}
                     onContextMenu={(event) => {
                       event.preventDefault();
@@ -658,19 +902,25 @@ export default function TeacherOnlineAttendancePage() {
                         event,
                         [
                           {
-                            id: "move",
-                            label: "Move to another slot",
-                            onSelect: () => {
-                              setSelectedPill(pill);
-                              setMoveTargetSlotId("");
-                            },
+                            id: "reschedule",
+                            label:
+                              busyKey === `reschedule:${pill.package_id}`
+                                ? "Saving schedule..."
+                                : "Reschedule weekly slots",
+                            onSelect: () => openRescheduleEditor(pill),
                           },
                           {
                             id: "unassign",
-                            label: busyKey === `unassign:${pill.package_slot_id}` ? "Unassigning..." : "Unassign slot",
+                            label:
+                              busyKey === `unassign-package:${pill.package_id}`
+                                ? "Removing schedule..."
+                                : "Remove all weekly slots",
                             tone: "danger",
-                            disabled: busyKey === `unassign:${pill.package_slot_id}`,
-                            onSelect: () => void unassignSlot(pill),
+                            disabled: busyKey === `unassign-package:${pill.package_id}`,
+                            onSelect: () => {
+                              setSelectedPill(pill);
+                              setConfirmUnassign(true);
+                            },
                           },
                         ],
                         pill.student_name,
@@ -689,199 +939,284 @@ export default function TeacherOnlineAttendancePage() {
         </section>
 
         <section className="space-y-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
-              <h2 className="text-lg font-semibold text-slate-900">
-                {classView === "today" ? "Class Today" : "This Month"}
-              </h2>
-              <div className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5">
+              <h2 className="text-lg font-semibold text-slate-900">Attendance</h2>
+              <div className="inline-flex rounded-2xl border border-slate-200 bg-white/80 p-1 shadow-sm backdrop-blur-sm">
                 <button
                   type="button"
                   className={cn(
-                    "rounded-[10px] px-3 py-1.5 text-xs font-medium transition",
-                    classView === "today"
-                      ? "bg-slate-900 text-white shadow-sm"
-                      : "text-slate-500 hover:text-slate-700",
+                    "rounded-xl px-4 py-1.5 text-xs font-semibold tracking-wide transition-all duration-200",
+                    classView === "daily"
+                      ? "bg-slate-900 text-white shadow-md"
+                      : "text-slate-400 hover:text-slate-600",
                   )}
-                  onClick={() => setClassView("today")}
+                  onClick={() => {
+                    setClassView("daily");
+                    // Reset month to current so Daily view always shows today's data
+                    setMonth(currentMonthKey());
+                  }}
                 >
-                  Today
+                  Daily
                 </button>
                 <button
                   type="button"
                   className={cn(
-                    "rounded-[10px] px-3 py-1.5 text-xs font-medium transition",
-                    classView === "month"
-                      ? "bg-slate-900 text-white shadow-sm"
-                      : "text-slate-500 hover:text-slate-700",
+                    "rounded-xl px-4 py-1.5 text-xs font-semibold tracking-wide transition-all duration-200",
+                    classView === "monthly"
+                      ? "bg-slate-900 text-white shadow-md"
+                      : "text-slate-400 hover:text-slate-600",
                   )}
-                  onClick={() => setClassView("month")}
+                  onClick={() => setClassView("monthly")}
                 >
-                  This Month
+                  Monthly
                 </button>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-3 lg:justify-end">
+            {classView === "monthly" ? (
               <input
                 type="month"
                 value={month}
                 onChange={(event) => setMonth(event.target.value)}
-                className="h-10 rounded-2xl border border-slate-200 bg-white px-3 text-sm"
+                className="h-10 rounded-2xl border border-slate-200 bg-white px-4 text-sm shadow-sm transition focus:ring-2 focus:ring-slate-300"
               />
-              <input
-                type="date"
-                value={week}
-                onChange={(event) => setWeek(event.target.value)}
-                className="h-10 rounded-2xl border border-slate-200 bg-white px-3 text-sm"
-              />
-            </div>
+            ) : null}
           </div>
 
-          {classView === "today" ? (
+          {classView === "daily" ? (
             <>
               {loading ? (
-                <Card className="p-4 text-sm text-slate-500">Loading today queue...</Card>
-              ) : (payload?.today_queue ?? []).length === 0 ? (
-                <Card className="p-4 text-sm text-slate-500">No online sessions scheduled for today.</Card>
+                <div className="space-y-3">
+                  {[1, 2, 3].map((i) => (
+                    <Card key={i} className="animate-pulse p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-2">
+                          <div className="h-4 w-32 rounded bg-slate-200" />
+                          <div className="h-3 w-24 rounded bg-slate-100" />
+                          <div className="h-3 w-28 rounded bg-slate-100" />
+                        </div>
+                        <div className="flex gap-2">
+                          <div className="h-11 w-20 rounded-xl bg-slate-100" />
+                          <div className="h-11 w-20 rounded-xl bg-slate-100" />
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              ) : sortedTodayQueue.length === 0 ? (
+                <Card className="p-6 text-center">
+                  <p className="text-sm text-slate-500">No online sessions scheduled for today.</p>
+                </Card>
               ) : (
-                (payload?.today_queue ?? []).map((occurrence) => (
-                  <Card key={occurrence.id ?? `${occurrence.package_slot_id}:${occurrence.session_date}`} className="p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-900">{occurrence.student_name}</p>
-                        <p className="text-xs text-slate-500">{occurrence.course_name}</p>
-                        <p className="mt-1 text-xs font-medium text-sky-700">
-                          {occurrence.session_date} • {timeLabel(occurrence.start_time)}
-                        </p>
+                sortedTodayQueue.map((occurrence) => {
+                  const isMarked = occurrence.attendance_status !== null;
+                  const isBusy = busyKey === `mark:${occurrence.id}`;
+                  return (
+                    <Card
+                      key={occurrence.id ?? `${occurrence.package_slot_id}:${occurrence.session_date}`}
+                      className={cn("p-4 transition-colors", isMarked && "bg-slate-50/60")}
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-semibold text-slate-900">{occurrence.student_name}</p>
+                            {isMarked ? (
+                              <span
+                                className={cn(
+                                  "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
+                                  occurrence.attendance_status === "present"
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : "bg-rose-100 text-rose-700",
+                                )}
+                              >
+                                {occurrence.attendance_status}
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="text-xs text-slate-500">{occurrence.course_name}</p>
+                          <p className="mt-1 text-xs font-medium text-sky-700">
+                            {timeRangeLabel(occurrence.start_time, occurrence.duration_minutes)}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className={cn(
+                              "flex h-11 min-w-[80px] items-center justify-center rounded-xl px-4 text-sm font-medium transition",
+                              occurrence.attendance_status === "present"
+                                ? "bg-emerald-600 text-white ring-2 ring-emerald-300"
+                                : "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100",
+                              isBusy && "pointer-events-none opacity-60",
+                            )}
+                            disabled={isBusy}
+                            onClick={() => void markAttendance(occurrence, "present")}
+                          >
+                            {occurrence.attendance_status === "present" ? "Present \u2713" : "Present"}
+                          </button>
+                          <button
+                            type="button"
+                            className={cn(
+                              "flex h-11 min-w-[80px] items-center justify-center rounded-xl px-4 text-sm font-medium transition",
+                              occurrence.attendance_status === "absent"
+                                ? "bg-rose-600 text-white ring-2 ring-rose-300"
+                                : "border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100",
+                              isBusy && "pointer-events-none opacity-60",
+                            )}
+                            disabled={isBusy}
+                            onClick={() => void markAttendance(occurrence, "absent")}
+                          >
+                            {occurrence.attendance_status === "absent" ? "Absent \u2713" : "Absent"}
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={cn(
-                            "rounded-full px-2 py-1 text-xs font-semibold",
-                            occurrence.attendance_status === "present"
-                              ? "bg-emerald-100 text-emerald-700"
-                              : occurrence.attendance_status === "absent"
-                                ? "bg-rose-100 text-rose-700"
-                                : "bg-slate-100 text-slate-600",
-                          )}
-                        >
-                          {occurrence.attendance_status ?? "unmarked"}
-                        </span>
-                        <Button
-                          className="h-8 rounded-lg bg-emerald-600 px-3 text-xs text-white hover:bg-emerald-700"
-                          disabled={busyKey === `mark:${occurrence.id}`}
-                          onClick={() => void markAttendance(occurrence, "present")}
-                        >
-                          Present
-                        </Button>
-                        <Button
-                          className="h-8 rounded-lg bg-rose-600 px-3 text-xs text-white hover:bg-rose-700"
-                          disabled={busyKey === `mark:${occurrence.id}`}
-                          onClick={() => void markAttendance(occurrence, "absent")}
-                        >
-                          Absent
-                        </Button>
-                      </div>
-                    </div>
-                  </Card>
-                ))
+                    </Card>
+                  );
+                })
               )}
             </>
           ) : (
             <>
               {loading ? (
-                <Card className="p-4 text-sm text-slate-500">Loading monthly sessions...</Card>
-              ) : monthlyByDate.length === 0 ? (
-                <Card className="p-4 text-sm text-slate-500">No sessions for this month.</Card>
+                <div className="space-y-3">
+                  {[1, 2, 3].map((i) => (
+                    <Card key={i} className="animate-pulse rounded-2xl p-5">
+                      <div className="h-5 w-36 rounded bg-slate-200" />
+                    </Card>
+                  ))}
+                </div>
+              ) : monthlyByStudent.length === 0 ? (
+                <Card className="rounded-2xl p-8 text-center">
+                  <p className="text-sm text-slate-500">No sessions for this month.</p>
+                  <p className="mt-1 text-xs text-slate-400">Sessions will appear once packages are assigned and scheduled.</p>
+                </Card>
               ) : (
-                monthlyByDate.map(([dateStr, occurrences]) => {
-                  const isToday = dateStr === todayDateStr;
-                  const allMarked = occurrences.every((o) => o.attendance_status !== null);
-                  const hasUnmarked = occurrences.some((o) => o.attendance_status === null);
-                  const isPast = dateStr < todayDateStr;
+                <div className="space-y-3">
+                  {monthlyByStudent.map((studentData) => {
+                    const isExpanded = expandedStudents.has(studentData.student_id);
+                    const totalSessions = studentData.occurrencesByDate.size;
+                    const presentDays = Array.from(studentData.occurrencesByDate.values()).filter((occs) =>
+                      occs.every((o) => o.attendance_status === "present"),
+                    ).length;
 
-                  return (
-                    <div key={dateStr} className="space-y-2">
+                    return (
                       <div
-                        className={cn(
-                          "flex items-center gap-2 rounded-xl px-3 py-2",
-                          isToday
-                            ? "bg-sky-50 border border-sky-200"
-                            : hasUnmarked
-                              ? "bg-amber-50 border border-amber-200"
-                              : isPast && allMarked
-                                ? "bg-slate-50 border border-slate-100"
-                                : "bg-white border border-slate-200",
-                        )}
+                        key={studentData.student_id}
+                        className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm transition-shadow duration-200 hover:shadow-md"
                       >
-                        <h3 className={cn(
-                          "text-sm font-semibold",
-                          isToday ? "text-sky-800" : hasUnmarked ? "text-amber-800" : "text-slate-700",
-                        )}>
-                          {formatDateHeading(dateStr)}
-                        </h3>
-                        {isToday ? (
-                          <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-700">
-                            Today
-                          </span>
-                        ) : null}
-                        {hasUnmarked ? (
-                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700">
-                            {occurrences.filter((o) => o.attendance_status === null).length} unmarked
-                          </span>
-                        ) : null}
-                      </div>
-
-                      {occurrences.map((occurrence) => (
-                        <Card
-                          key={occurrence.id ?? `${occurrence.package_slot_id}:${occurrence.session_date}`}
-                          className={cn(
-                            "p-4",
-                            isPast && allMarked ? "opacity-60" : "",
-                          )}
+                        {/* Accordion header */}
+                        <button
+                          type="button"
+                          className="flex w-full items-center justify-between px-5 py-4 text-left transition-colors hover:bg-slate-50/50"
+                          onClick={() => toggleStudentExpanded(studentData.student_id)}
                         >
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div>
-                              <p className="text-sm font-semibold text-slate-900">{occurrence.student_name}</p>
-                              <p className="text-xs text-slate-500">{occurrence.course_name}</p>
-                              <p className="mt-1 text-xs font-medium text-sky-700">
-                                {timeRangeLabel(occurrence.start_time, occurrence.duration_minutes)}
-                              </p>
+                          <div className="flex items-center gap-3">
+                            <span className="text-sm font-semibold text-slate-900">
+                              {studentData.student_name}
+                            </span>
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
+                              {presentDays}/{totalSessions}
+                            </span>
+                          </div>
+                          <svg
+                            className={cn(
+                              "h-4 w-4 text-slate-400 transition-transform duration-200",
+                              isExpanded && "rotate-180",
+                            )}
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            strokeWidth={2}
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+
+                        {/* Accordion body: calendar grid */}
+                        {isExpanded ? (
+                          <div className="mx-auto max-w-md border-t border-slate-100 px-4 py-4 sm:px-5">
+                            {/* Day headers */}
+                            <div className="mb-2 grid grid-cols-7 gap-1 text-center">
+                              {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+                                <div
+                                  key={d}
+                                  className="pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400"
+                                >
+                                  {d}
+                                </div>
+                              ))}
                             </div>
-                            <div className="flex items-center gap-2">
-                              <span
-                                className={cn(
-                                  "rounded-full px-2 py-1 text-xs font-semibold",
-                                  occurrence.attendance_status === "present"
-                                    ? "bg-emerald-100 text-emerald-700"
-                                    : occurrence.attendance_status === "absent"
-                                      ? "bg-rose-100 text-rose-700"
-                                      : "bg-slate-100 text-slate-600",
-                                )}
-                              >
-                                {occurrence.attendance_status ?? "unmarked"}
-                              </span>
-                              <Button
-                                className="h-8 rounded-lg bg-emerald-600 px-3 text-xs text-white hover:bg-emerald-700"
-                                disabled={busyKey === `mark:${occurrence.id}`}
-                                onClick={() => void markAttendance(occurrence, "present")}
-                              >
-                                Present
-                              </Button>
-                              <Button
-                                className="h-8 rounded-lg bg-rose-600 px-3 text-xs text-white hover:bg-rose-700"
-                                disabled={busyKey === `mark:${occurrence.id}`}
-                                onClick={() => void markAttendance(occurrence, "absent")}
-                              >
-                                Absent
-                              </Button>
+                            {/* Week rows */}
+                            <div className="space-y-1">
+                              {calendarGrid.map((weekRow, weekIdx) => (
+                                <div key={weekIdx} className="grid grid-cols-7 gap-1">
+                                  {weekRow.map((cell, cellIdx) => {
+                                    if (!cell.inMonth) {
+                                      return <div key={cellIdx} className="aspect-square" />;
+                                    }
+
+                                    const dayOccurrences = studentData.occurrencesByDate.get(cell.dateStr);
+                                    const hasClass = dayOccurrences && dayOccurrences.length > 0;
+
+                                    if (!hasClass) {
+                                      return (
+                                        <div
+                                          key={cellIdx}
+                                          className="flex aspect-square items-center justify-center rounded-lg bg-slate-50 text-[11px] text-slate-300"
+                                        >
+                                          {cell.day}
+                                        </div>
+                                      );
+                                    }
+
+                                    const allPresent = dayOccurrences.every(
+                                      (o) => o.attendance_status === "present",
+                                    );
+                                    const somePresent = !allPresent && dayOccurrences.some(
+                                      (o) => o.attendance_status === "present",
+                                    );
+                                    const isBusy = dayOccurrences.some(
+                                      (o) => busyKey === `mark:${o.id}`,
+                                    );
+                                    const primaryCourse = dayOccurrences[0].course_name;
+                                    const multiSession = dayOccurrences.length > 1;
+
+                                    return (
+                                      <button
+                                        key={cellIdx}
+                                        type="button"
+                                        disabled={isBusy}
+                                        className={cn(
+                                          "relative flex aspect-square items-center justify-center rounded-lg text-[11px] font-semibold transition-all duration-200",
+                                          allPresent
+                                            ? getCourseCalendarFill(primaryCourse)
+                                            : somePresent
+                                              ? "border border-emerald-300 bg-emerald-50 text-emerald-700"
+                                              : "border border-slate-200 bg-white text-slate-600 hover:border-emerald-300 hover:bg-emerald-50",
+                                          isBusy && "pointer-events-none opacity-50",
+                                        )}
+                                        onClick={() => handleCalendarCellClick(dayOccurrences)}
+                                        title={
+                                          multiSession
+                                            ? `${dayOccurrences.length} sessions - click to review`
+                                            : undefined
+                                        }
+                                      >
+                                        {cell.day}
+                                        {multiSession ? (
+                                          <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-sky-500" />
+                                        ) : null}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              ))}
                             </div>
                           </div>
-                        </Card>
-                      ))}
-                    </div>
-                  );
-                })
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </>
           )}
@@ -1010,7 +1345,7 @@ export default function TeacherOnlineAttendancePage() {
       <Modal
         open={Boolean(selectedPill)}
         title={selectedPill ? selectedPill.student_name : "Slot details"}
-        description={selectedPill ? `${selectedPill.course_name} slot actions` : undefined}
+        description={selectedPill ? selectedPill.course_name : undefined}
         onClose={() => setSelectedPill(null)}
       >
         {selectedPill ? (() => {
@@ -1020,67 +1355,181 @@ export default function TeacherOnlineAttendancePage() {
           const isUnderScheduled = pillPkg && activeSlotCount < requiredSlots;
           return (
             <div className="space-y-4">
+              {/* Info card */}
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                <p className="font-medium text-slate-900">Student: {selectedPill.student_name}</p>
-                <p className="mt-1">
-                  Course: <span className="font-medium text-slate-900">{selectedPill.course_name}</span>
-                </p>
-                <p className="mt-1">
-                  Current slot: {dayById.get(selectedPill.day_of_week)?.label ?? selectedPill.day_of_week} •{" "}
-                  {timeRangeLabel(selectedPill.start_time, selectedPill.duration_minutes)}
-                </p>
-                {pillPkg ? (
-                  <p className={cn("mt-1 font-medium", isUnderScheduled ? "text-amber-700" : "text-slate-700")}>
-                    Slots assigned: {activeSlotCount} of {requiredSlots}
-                    {isUnderScheduled ? " !" : ""}
-                  </p>
-                ) : null}
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-medium text-slate-700">Move to another available time</label>
-                <div className="flex gap-2">
-                  <select
-                    value={moveTargetSlotId}
-                    onChange={(event) => setMoveTargetSlotId(event.target.value)}
-                    className="h-11 flex-1 rounded-2xl border border-slate-200 bg-white px-3 text-sm"
-                  >
-                    <option value="">Select target slot</option>
-                    {moveCandidates.map((slot) => (
-                      <option key={slot.slot_template_id} value={slot.slot_template_id}>
-                        {(dayById.get(slot.day_of_week)?.label ?? slot.day_of_week) +
-                          " • " +
-                          timeRangeLabel(slot.start_time, slot.duration_minutes)}
-                      </option>
-                    ))}
-                  </select>
-                  <Button onClick={() => void moveTimeSlot()} disabled={busyKey === `move:${selectedPill.package_slot_id}`}>
-                    Move
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="border-rose-200 text-rose-700 hover:bg-rose-50"
-                    disabled={busyKey === `unassign:${selectedPill.package_slot_id}`}
-                    onClick={() => void unassignSlot(selectedPill)}
-                  >
-                    {busyKey === `unassign:${selectedPill.package_slot_id}` ? "Unassigning..." : "Unassign"}
-                  </Button>
+                <div className="flex items-center gap-2">
+                  <span className="text-base">&#128100;</span>
+                  <p className="font-medium text-slate-900">{selectedPill.student_name}</p>
                 </div>
-                {moveCandidates.length === 0 ? (
-                  <p className="mt-2 text-xs text-slate-500">No available target slots for this course.</p>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <span className="text-base">&#128214;</span>
+                  <p className="font-medium text-slate-900">{selectedPill.course_name}</p>
+                </div>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <span className="text-base">&#128336;</span>
+                  <p className="text-slate-700">
+                    {dayById.get(selectedPill.day_of_week)?.label ?? selectedPill.day_of_week}
+                    {" \u2022 "}
+                    {timeRangeLabel(selectedPill.start_time, selectedPill.duration_minutes)}
+                  </p>
+                </div>
+                {pillPkg ? (
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <span className="text-base">&#128202;</span>
+                    <p className={cn("font-medium", isUnderScheduled ? "text-amber-700" : "text-slate-700")}>
+                      {activeSlotCount} of {requiredSlots} slots assigned
+                    </p>
+                  </div>
                 ) : null}
               </div>
 
+              {/* Under-scheduled warning — promoted to top */}
               {isUnderScheduled ? (
                 <button
                   type="button"
-                  className="flex w-full items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 transition hover:bg-amber-100"
+                  className="flex w-full items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 transition hover:bg-amber-100"
                   onClick={() => openFillModal(selectedPill.package_id)}
                 >
                   <span className="font-semibold">{requiredSlots - activeSlotCount} slot(s) missing</span>
                   <span className="ml-auto text-amber-600">Fill remaining slots &rarr;</span>
                 </button>
               ) : null}
+
+              {/* Divider */}
+              <div className="flex items-center gap-3">
+                <div className="h-px flex-1 bg-slate-200" />
+                <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">Actions</span>
+                <div className="h-px flex-1 bg-slate-200" />
+              </div>
+
+              {/* Reschedule action */}
+              <div>
+                {!rescheduleExpanded ? (
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                    disabled={busyKey === `reschedule:${selectedPill.package_id}`}
+                    onClick={() => openRescheduleEditor(selectedPill)}
+                  >
+                    <span>&#128260;</span>
+                    <span>Reschedule weekly slots</span>
+                    <span className="ml-auto text-slate-400">&darr;</span>
+                  </button>
+                ) : (
+                  <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium text-slate-700">Adjust weekly schedule</p>
+                      <button
+                        type="button"
+                        className="text-xs text-slate-400 hover:text-slate-600"
+                        onClick={() => {
+                          setRescheduleExpanded(false);
+                          setRescheduleError(null);
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                      Replace the future weekly schedule for this package. Past attendance stays, and today stays if already marked.
+                    </div>
+                    <div className="space-y-2">
+                      {rescheduleSlots.map((slot, index) => (
+                        <div key={`reschedule-${index}:${slot.day_of_week}:${slot.start_time}`} className="grid gap-2 sm:grid-cols-2">
+                          <select
+                            value={slot.day_of_week}
+                            onChange={(event) => {
+                              const dayOfWeek = Number(event.target.value);
+                              setRescheduleSlots((current) =>
+                                current.map((item, itemIndex) =>
+                                  itemIndex === index ? { ...item, day_of_week: dayOfWeek } : item,
+                                ),
+                              );
+                              setRescheduleError(null);
+                            }}
+                            className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm"
+                          >
+                            {DAY_OPTIONS.map((day) => (
+                              <option key={day.label} value={day.value}>
+                                {day.label}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            type="time"
+                            value={slot.start_time}
+                            onChange={(event) => {
+                              const startTime = event.target.value;
+                              setRescheduleSlots((current) =>
+                                current.map((item, itemIndex) =>
+                                  itemIndex === index ? { ...item, start_time: startTime } : item,
+                                ),
+                              );
+                              setRescheduleError(null);
+                            }}
+                            className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    {rescheduleError ? (
+                      <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                        {rescheduleError}
+                      </div>
+                    ) : null}
+                    <Button
+                      className="w-full"
+                      onClick={() => void submitReschedule()}
+                      disabled={busyKey === `reschedule:${selectedPill.package_id}`}
+                    >
+                      {busyKey === `reschedule:${selectedPill.package_id}` ? "Saving..." : "Save Schedule"}
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {/* Unassign — separated, de-emphasized, with confirmation */}
+              <div className="pt-2">
+                {!confirmUnassign ? (
+                  <button
+                    type="button"
+                    className="w-full text-center text-sm text-rose-500 transition hover:text-rose-700"
+                    onClick={() => setConfirmUnassign(true)}
+                  >
+                    Remove all weekly slots
+                  </button>
+                ) : (
+                  <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-center">
+                    <p className="text-sm text-rose-700">
+                      Remove all weekly slots for <span className="font-semibold">{selectedPill.student_name}</span>?
+                      {pillPkg ? (
+                        <span className="mt-1 block text-xs text-rose-600">
+                          This will remove {activeSlotCount} of {requiredSlots} assigned weekly slot
+                          {activeSlotCount === 1 ? "" : "s"} for this package.
+                        </span>
+                      ) : null}
+                    </p>
+                    <div className="mt-3 flex items-center justify-center gap-2">
+                      <Button
+                        variant="outline"
+                        className="h-9 text-xs"
+                        onClick={() => setConfirmUnassign(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        className="h-9 bg-rose-600 text-xs text-white hover:bg-rose-700"
+                        disabled={busyKey === `unassign-package:${selectedPill.package_id}`}
+                        onClick={() => void unassignAllSlots(selectedPill)}
+                      >
+                        {busyKey === `unassign-package:${selectedPill.package_id}`
+                          ? "Removing..."
+                          : "Yes, Remove All"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           );
         })() : null}
@@ -1164,6 +1613,132 @@ export default function TeacherOnlineAttendancePage() {
                 {fillError}
               </div>
             ) : null}
+          </div>
+        ) : null}
+      </Modal>
+
+      {/* Re-mark confirmation modal */}
+      <Modal
+        open={Boolean(selectedCalendarDayDetails)}
+        title={selectedCalendarDayDetails?.studentName ?? "Session details"}
+        description={selectedCalendarDayDetails ? formatDateHeading(selectedCalendarDayDetails.dateStr) : undefined}
+        onClose={() => setSelectedCalendarDay(null)}
+      >
+        {selectedCalendarDayDetails ? (
+          <div className="space-y-3">
+            {selectedCalendarDayDetails.occurrences.map((occurrence) => {
+              const isBusy = busyKey === `mark:${occurrence.id}`;
+              const isMarked = occurrence.attendance_status !== null;
+
+              return (
+                <Card
+                  key={occurrence.id ?? `${occurrence.package_slot_id}:${occurrence.session_date}:${occurrence.start_time}`}
+                  className={cn("p-4 transition-colors", isMarked && "bg-slate-50/60")}
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold text-slate-900">{occurrence.course_name}</p>
+                        {isMarked ? (
+                          <span
+                            className={cn(
+                              "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
+                              occurrence.attendance_status === "present"
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "bg-rose-100 text-rose-700",
+                            )}
+                          >
+                            {occurrence.attendance_status}
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-1 text-xs font-medium text-sky-700">
+                        {timeRangeLabel(occurrence.start_time, occurrence.duration_minutes)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className={cn(
+                          "flex h-10 min-w-[76px] items-center justify-center rounded-xl px-3 text-sm font-medium transition",
+                          occurrence.attendance_status === "present"
+                            ? "bg-emerald-600 text-white ring-2 ring-emerald-300"
+                            : "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100",
+                          isBusy && "pointer-events-none opacity-60",
+                        )}
+                        disabled={isBusy}
+                        onClick={() => void markAttendance(occurrence, "present")}
+                      >
+                        {occurrence.attendance_status === "present" ? "Present \u2713" : "Present"}
+                      </button>
+                      <button
+                        type="button"
+                        className={cn(
+                          "flex h-10 min-w-[76px] items-center justify-center rounded-xl px-3 text-sm font-medium transition",
+                          occurrence.attendance_status === "absent"
+                            ? "bg-rose-600 text-white ring-2 ring-rose-300"
+                            : "border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100",
+                          isBusy && "pointer-events-none opacity-60",
+                        )}
+                        disabled={isBusy}
+                        onClick={() => void markAttendance(occurrence, "absent")}
+                      >
+                        {occurrence.attendance_status === "absent" ? "Absent \u2713" : "Absent"}
+                      </button>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal
+        open={Boolean(confirmRemark)}
+        title="Change Attendance"
+        onClose={() => setConfirmRemark(null)}
+      >
+        {confirmRemark ? (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">
+              Change attendance for <span className="font-semibold text-slate-900">{confirmRemark.occurrence.student_name}</span> from{" "}
+              <span className={cn(
+                "font-semibold",
+                confirmRemark.occurrence.attendance_status === "present" ? "text-emerald-700" : "text-rose-700",
+              )}>
+                {confirmRemark.occurrence.attendance_status}
+              </span>{" "}
+              to{" "}
+              <span className={cn(
+                "font-semibold",
+                confirmRemark.newStatus === "present" ? "text-emerald-700" : "text-rose-700",
+              )}>
+                {confirmRemark.newStatus}
+              </span>?
+            </p>
+            <div className="flex items-center justify-end gap-2">
+              <Button variant="outline" onClick={() => setConfirmRemark(null)}>
+                Cancel
+              </Button>
+              <Button
+                className={cn(
+                  "text-white",
+                  confirmRemark.newStatus === "present"
+                    ? "bg-emerald-600 hover:bg-emerald-700"
+                    : "bg-rose-600 hover:bg-rose-700",
+                )}
+                onClick={() => {
+                  const { occurrence, newStatus } = confirmRemark;
+                  setConfirmRemark(null);
+                  if (occurrence.attendance_status !== newStatus) {
+                    void doMarkAttendance(occurrence, newStatus);
+                  }
+                }}
+              >
+                Confirm
+              </Button>
+            </div>
           </div>
         ) : null}
       </Modal>

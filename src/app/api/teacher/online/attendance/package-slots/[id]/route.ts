@@ -61,7 +61,7 @@ export async function DELETE(
     if (slotUpdateRes.error) throw slotUpdateRes.error;
 
     const todayKey = new Date().toISOString().slice(0, 10);
-    const occurrenceUpdateRes = await supabaseService
+    const cancelFutureOccurrenceRes = await supabaseService
       .from("online_recurring_occurrences")
       .update({
         cancelled_at: timestamp,
@@ -70,8 +70,21 @@ export async function DELETE(
       .eq("tenant_id", auth.tenantId)
       .eq("package_slot_id", id)
       .is("cancelled_at", null)
-      .gte("session_date", todayKey);
-    if (occurrenceUpdateRes.error) throw occurrenceUpdateRes.error;
+      .gt("session_date", todayKey);
+    if (cancelFutureOccurrenceRes.error) throw cancelFutureOccurrenceRes.error;
+
+    const cancelTodayUnmarkedOccurrenceRes = await supabaseService
+      .from("online_recurring_occurrences")
+      .update({
+        cancelled_at: timestamp,
+        updated_at: timestamp,
+      })
+      .eq("tenant_id", auth.tenantId)
+      .eq("package_slot_id", id)
+      .is("cancelled_at", null)
+      .eq("session_date", todayKey)
+      .is("attendance_status", null);
+    if (cancelTodayUnmarkedOccurrenceRes.error) throw cancelTodayUnmarkedOccurrenceRes.error;
 
     return NextResponse.json(slotUpdateRes.data);
   } catch (error: unknown) {
