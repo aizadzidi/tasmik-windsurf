@@ -204,6 +204,7 @@ function TeacherLessonPageContent() {
   const [loadingTeacherName, setLoadingTeacherName] = React.useState(false);
   const [savingTeacherName, setSavingTeacherName] = React.useState(false);
   const [teachers, setTeachers] = React.useState<TeacherItem[]>([]);
+  const [classSubjects, setClassSubjects] = React.useState<Array<{ class_id: string; subject_id: string }>>([]);
   const [loadingTeachers, setLoadingTeachers] = React.useState(false);
   const [teacherComboboxOpen, setTeacherComboboxOpen] = React.useState(false);
   const [teacherComboboxQuery, setTeacherComboboxQuery] = React.useState("");
@@ -248,6 +249,38 @@ function TeacherLessonPageContent() {
     if (manageTopicFilter === "all") return manageTopics;
     return manageTopics.filter((topic) => (topic.topic_type ?? "new") === manageTopicFilter);
   }, [manageTopicFilter, manageTopics]);
+
+  // Class-subject mapping: filter subjects dropdown per class
+  const classSubjectsMap = React.useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const cs of classSubjects) {
+      if (!map.has(cs.class_id)) map.set(cs.class_id, new Set());
+      map.get(cs.class_id)!.add(cs.subject_id);
+    }
+    return map;
+  }, [classSubjects]);
+
+  const getFilteredSubjects = React.useCallback(
+    (classId: string) => {
+      const allowed = classSubjectsMap.get(classId);
+      const isFallback = !allowed || allowed.size === 0;
+      return { filtered: isFallback ? subjects : subjects.filter((s) => allowed.has(s.id)), isFallback };
+    },
+    [classSubjectsMap, subjects]
+  );
+
+  const trackerFiltered = React.useMemo(
+    () => getFilteredSubjects(trackerClassId),
+    [getFilteredSubjects, trackerClassId]
+  );
+  const manageFiltered = React.useMemo(
+    () => getFilteredSubjects(manageClassId),
+    [getFilteredSubjects, manageClassId]
+  );
+  const editorFiltered = React.useMemo(
+    () => getFilteredSubjects(editorState.classId),
+    [getFilteredSubjects, editorState.classId]
+  );
 
   const actionVerb = trackerMode === "revision" ? "revised" : "taught";
   const progressLabel = trackerMode === "revision" ? "Revision progress" : "Teaching progress";
@@ -344,12 +377,25 @@ function TeacherLessonPageContent() {
           email: teacher.email ?? null,
         })) ?? [];
 
+      const csData: Array<{ class_id: string; subject_id: string }> = payload?.classSubjects ?? [];
+
+      // Derive default subject from the default class's filtered subjects
       const defaultClass = sortedClasses[0]?.id || "";
-      const defaultSubject = sortedSubjects[0]?.id || "";
+      const csMap = new Map<string, Set<string>>();
+      for (const cs of csData) {
+        if (!csMap.has(cs.class_id)) csMap.set(cs.class_id, new Set());
+        csMap.get(cs.class_id)!.add(cs.subject_id);
+      }
+      const allowedForDefault = csMap.get(defaultClass);
+      const defaultSubject =
+        allowedForDefault && allowedForDefault.size > 0
+          ? sortedSubjects.find((s: SubjectItem) => allowedForDefault.has(s.id))?.id || ""
+          : sortedSubjects[0]?.id || "";
 
       setClasses(sortedClasses);
       setSubjects(sortedSubjects);
       setTeachers(sortedTeachers);
+      setClassSubjects(csData);
       setTrackerClassId((current) => current || defaultClass);
       setTrackerSubjectId((current) => current || defaultSubject);
       setManageClassId((current) => current || defaultClass);
@@ -365,6 +411,7 @@ function TeacherLessonPageContent() {
       setClasses([]);
       setSubjects([]);
       setTeachers([]);
+      setClassSubjects([]);
     } finally {
       setLoadingMeta(false);
       setLoadingTeachers(false);
@@ -545,6 +592,11 @@ function TeacherLessonPageContent() {
         setInlineError("Please select a teacher from the list.");
         return;
       }
+      const allowedSubjects = classSubjectsMap.get(classId);
+      if (allowedSubjects && allowedSubjects.size > 0 && !allowedSubjects.has(subjectId)) {
+        setInlineError("This subject is not assigned to the selected class.");
+        return;
+      }
       setSavingTeacherName(true);
       setInlineError(null);
       setActionMessage(null);
@@ -586,6 +638,7 @@ function TeacherLessonPageContent() {
     },
     [
       academicYear,
+      classSubjectsMap,
       manageTeacherId,
       manageTeacherName,
       trackerClassId,
@@ -946,6 +999,11 @@ function TeacherLessonPageContent() {
       setInlineError("Please fill in class, subject, and title.");
       return;
     }
+    const allowedSubjects = classSubjectsMap.get(editorState.classId);
+    if (allowedSubjects && allowedSubjects.size > 0 && !allowedSubjects.has(editorState.subjectId)) {
+      setInlineError("This subject is not assigned to the selected class.");
+      return;
+    }
     setSavingEditor(true);
     setInlineError(null);
     try {
@@ -1248,7 +1306,15 @@ function TeacherLessonPageContent() {
                     <div className="mt-1">
                       <select
                         value={trackerClassId}
-                        onChange={(e) => setTrackerClassId(e.target.value)}
+                        onChange={(e) => {
+                          const newClassId = e.target.value;
+                          setTrackerClassId(newClassId);
+                          const allowed = classSubjectsMap.get(newClassId);
+                          if (allowed && allowed.size > 0 && !allowed.has(trackerSubjectId)) {
+                            const validSubjects = subjects.filter((s) => allowed.has(s.id));
+                            setTrackerSubjectId(validSubjects.length === 1 ? validSubjects[0].id : "");
+                          }
+                        }}
                         className={selectorClass}
                         disabled={loadingMeta}
                       >
@@ -1269,13 +1335,17 @@ function TeacherLessonPageContent() {
                         className={selectorClass}
                         disabled={loadingMeta}
                       >
-                        {subjects.map((subject) => (
+                        {!trackerSubjectId && <option value="" disabled>Select subject…</option>}
+                        {trackerFiltered.filtered.map((subject) => (
                           <option key={subject.id} value={subject.id}>
                             {subject.name ?? "Unnamed subject"}
                           </option>
                         ))}
                       </select>
                     </div>
+                    {trackerFiltered.isFallback && trackerClassId && (
+                      <p className="text-[11px] text-gray-400">No subject mapping for this class. Showing all.</p>
+                    )}
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Year</span>
@@ -1831,7 +1901,15 @@ function TeacherLessonPageContent() {
                   <div className="mt-1">
                     <select
                       value={manageClassId}
-                      onChange={(e) => setManageClassId(e.target.value)}
+                      onChange={(e) => {
+                        const newClassId = e.target.value;
+                        setManageClassId(newClassId);
+                        const allowed = classSubjectsMap.get(newClassId);
+                        if (allowed && allowed.size > 0 && !allowed.has(manageSubjectId)) {
+                          const validSubjects = subjects.filter((s) => allowed.has(s.id));
+                          setManageSubjectId(validSubjects.length === 1 ? validSubjects[0].id : "");
+                        }
+                      }}
                       className={selectorClass}
                       disabled={loadingMeta}
                     >
@@ -1852,13 +1930,17 @@ function TeacherLessonPageContent() {
                       className={selectorClass}
                       disabled={loadingMeta}
                     >
-                      {subjects.map((subject) => (
+                      {!manageSubjectId && <option value="" disabled>Select subject…</option>}
+                      {manageFiltered.filtered.map((subject) => (
                         <option key={subject.id} value={subject.id}>
                           {subject.name ?? "Unnamed subject"}
                         </option>
                       ))}
                     </select>
                   </div>
+                  {manageFiltered.isFallback && manageClassId && (
+                    <p className="text-[11px] text-gray-400">No subject mapping for this class. Showing all.</p>
+                  )}
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Year</span>
@@ -2095,7 +2177,16 @@ function TeacherLessonPageContent() {
                     <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Class</span>
                     <select
                       value={editorState.classId}
-                      onChange={(e) => setEditorState((prev) => ({ ...prev, classId: e.target.value }))}
+                      onChange={(e) => {
+                        const newClassId = e.target.value;
+                        const allowed = classSubjectsMap.get(newClassId);
+                        let newSubjectId = editorState.subjectId;
+                        if (allowed && allowed.size > 0 && !allowed.has(editorState.subjectId)) {
+                          const validSubjects = subjects.filter((s) => allowed.has(s.id));
+                          newSubjectId = validSubjects.length === 1 ? validSubjects[0].id : "";
+                        }
+                        setEditorState((prev) => ({ ...prev, classId: newClassId, subjectId: newSubjectId }));
+                      }}
                       className={selectorClass}
                     >
                       {classes.map((cls) => (
@@ -2112,12 +2203,16 @@ function TeacherLessonPageContent() {
                       onChange={(e) => setEditorState((prev) => ({ ...prev, subjectId: e.target.value }))}
                       className={selectorClass}
                     >
-                      {subjects.map((subject) => (
+                      {!editorState.subjectId && <option value="" disabled>Select subject…</option>}
+                      {editorFiltered.filtered.map((subject) => (
                         <option key={subject.id} value={subject.id}>
                           {subject.name ?? "Unnamed subject"}
                         </option>
                       ))}
                     </select>
+                    {editorFiltered.isFallback && editorState.classId && (
+                      <p className="text-[11px] text-gray-400">No subject mapping for this class. Showing all.</p>
+                    )}
                   </div>
                 </div>
                 <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">

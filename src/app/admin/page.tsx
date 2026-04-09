@@ -90,7 +90,17 @@ export default function AdminPage() {
   const [editingClassName, setEditingClassName] = useState("");
   const [editingClassLevel, setEditingClassLevel] = useState("");
   const [isClassesModalOpen, setIsClassesModalOpen] = useState(false);
-  
+
+  // Class-subject mapping states
+  const [allSubjects, setAllSubjects] = useState<{ id: string; name: string }[]>([]);
+  const [classSubjectsMap, setClassSubjectsMap] = useState<Map<string, Set<string>>>(new Map());
+  const [configuringClassId, setConfiguringClassId] = useState<string | null>(null);
+  const [draftSubjectIds, setDraftSubjectIds] = useState<Set<string>>(new Set());
+  const [savingClassSubjects, setSavingClassSubjects] = useState(false);
+  const [classSubjectsError, setClassSubjectsError] = useState("");
+  const [subjectSearchQuery, setSubjectSearchQuery] = useState("");
+  const [loadingClassSubjects, setLoadingClassSubjects] = useState(false);
+
   // Filter states
   const [searchTerm, setSearchTerm] = useState("");
   const [filterClass, setFilterClass] = useState("");
@@ -468,6 +478,107 @@ export default function AdminPage() {
     "Lower Secondary",
     "Upper Secondary"
   ];
+
+  // --- Class-subject mapping handlers ---
+  const fetchClassSubjects = useCallback(async () => {
+    setLoadingClassSubjects(true);
+    try {
+      const response = await authFetch('/api/admin/class-subjects');
+      if (response.ok) {
+        const data = await response.json();
+        setAllSubjects(data.allSubjects ?? []);
+        const map = new Map<string, Set<string>>();
+        for (const cs of data.classSubjects ?? []) {
+          if (!map.has(cs.class_id)) map.set(cs.class_id, new Set());
+          map.get(cs.class_id)!.add(cs.subject_id);
+        }
+        setClassSubjectsMap(map);
+      }
+    } catch {
+      console.error('Failed to fetch class-subjects');
+    } finally {
+      setLoadingClassSubjects(false);
+    }
+  }, []);
+
+  const openSubjectPanel = useCallback((classId: string) => {
+    setConfiguringClassId(classId);
+    setDraftSubjectIds(new Set(classSubjectsMap.get(classId) ?? []));
+    setSubjectSearchQuery("");
+    setClassSubjectsError("");
+  }, [classSubjectsMap]);
+
+  const closeSubjectPanel = useCallback(() => {
+    setConfiguringClassId(null);
+    setDraftSubjectIds(new Set());
+    setSubjectSearchQuery("");
+    setClassSubjectsError("");
+  }, []);
+
+  const toggleDraftSubject = useCallback((subjectId: string) => {
+    setDraftSubjectIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(subjectId)) {
+        next.delete(subjectId);
+      } else {
+        next.add(subjectId);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAllSubjects = useCallback(() => {
+    setDraftSubjectIds(new Set(allSubjects.map((s) => s.id)));
+  }, [allSubjects]);
+
+  const clearAllSubjects = useCallback(() => {
+    setDraftSubjectIds(new Set());
+  }, []);
+
+  const saveClassSubjects = useCallback(async () => {
+    if (!configuringClassId) return;
+    setSavingClassSubjects(true);
+    setClassSubjectsError("");
+    try {
+      const response = await authFetch('/api/admin/class-subjects', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          classId: configuringClassId,
+          subjectIds: Array.from(draftSubjectIds),
+        }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setClassSubjectsMap((prev) => {
+          const next = new Map(prev);
+          const updated = new Set<string>();
+          for (const cs of data.classSubjects ?? []) {
+            updated.add(cs.subject_id);
+          }
+          next.set(configuringClassId, updated);
+          return next;
+        });
+        closeSubjectPanel();
+      } else {
+        const err = await response.json().catch(() => ({ error: 'Failed to save' }));
+        setClassSubjectsError(err.error || 'Failed to save subjects');
+      }
+    } catch {
+      setClassSubjectsError('Network error while saving');
+    } finally {
+      setSavingClassSubjects(false);
+    }
+  }, [configuringClassId, draftSubjectIds, closeSubjectPanel]);
+
+  // Fetch class-subjects when modal opens
+  useEffect(() => {
+    if (isClassesModalOpen) {
+      fetchClassSubjects();
+    } else {
+      closeSubjectPanel();
+    }
+  }, [isClassesModalOpen, fetchClassSubjects, closeSubjectPanel]);
 
   const handleEditStudent = (student: Student) => {
     setEditStudentId(student.id);
@@ -1069,6 +1180,9 @@ export default function AdminPage() {
                         Students
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Subjects
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Actions
                       </th>
                     </tr>
@@ -1110,6 +1224,104 @@ export default function AdminPage() {
                         <td className="px-4 py-3 text-sm text-gray-700">
                           {studentCount}
                         </td>
+                        <td className="px-4 py-3 text-sm text-gray-700">
+                          <Popover
+                            open={configuringClassId === classItem.id}
+                            onOpenChange={(open) => {
+                              if (open) {
+                                openSubjectPanel(classItem.id);
+                              } else {
+                                closeSubjectPanel();
+                              }
+                            }}
+                          >
+                            <PopoverTrigger asChild>
+                              <button
+                                disabled={loadingClassSubjects}
+                                className="inline-flex items-center gap-1 rounded-md bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700 hover:bg-purple-100 transition-colors disabled:opacity-50"
+                              >
+                                <Settings className="h-3 w-3" />
+                                {classSubjectsMap.get(classItem.id)?.size ?? 0} subjects
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-72 p-0" align="start" side="bottom" sideOffset={4}>
+                              <div className="p-3">
+                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                  Subjects for {classItem.name}
+                                </p>
+                                <input
+                                  type="text"
+                                  placeholder="Search subjects…"
+                                  value={subjectSearchQuery}
+                                  onChange={(e) => setSubjectSearchQuery(e.target.value)}
+                                  className="mt-2 w-full rounded-md border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-purple-300 focus:outline-none focus:ring-1 focus:ring-purple-200"
+                                />
+                                <div className="mt-1.5 flex items-center gap-2">
+                                  <button
+                                    onClick={selectAllSubjects}
+                                    className="text-[11px] text-purple-600 hover:text-purple-800 font-medium"
+                                  >
+                                    Select all
+                                  </button>
+                                  <span className="text-gray-300 text-[11px]">|</span>
+                                  <button
+                                    onClick={clearAllSubjects}
+                                    className="text-[11px] text-gray-500 hover:text-gray-700 font-medium"
+                                  >
+                                    Clear all
+                                  </button>
+                                  <span className="ml-auto text-[11px] text-gray-400">{draftSubjectIds.size} selected</span>
+                                </div>
+                              </div>
+                              <div className="max-h-48 overflow-y-auto border-t border-gray-100 px-1 py-1">
+                                {(() => {
+                                  const query = subjectSearchQuery.toLowerCase().trim();
+                                  const filtered = query
+                                    ? allSubjects.filter((s) => s.name.toLowerCase().includes(query))
+                                    : allSubjects;
+                                  if (filtered.length === 0) {
+                                    return (
+                                      <p className="py-4 text-center text-xs text-gray-400">No subjects found</p>
+                                    );
+                                  }
+                                  return filtered.map((subject) => (
+                                    <label
+                                      key={subject.id}
+                                      className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-purple-50"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={draftSubjectIds.has(subject.id)}
+                                        onChange={() => toggleDraftSubject(subject.id)}
+                                        className="h-3.5 w-3.5 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                                      />
+                                      <span className="text-sm text-gray-700">{subject.name}</span>
+                                    </label>
+                                  ));
+                                })()}
+                              </div>
+                              {classSubjectsError && (
+                                <p className="px-3 pb-1 text-xs text-red-600">{classSubjectsError}</p>
+                              )}
+                              <div className="flex gap-2 border-t border-gray-100 p-3">
+                                <button
+                                  onClick={saveClassSubjects}
+                                  disabled={savingClassSubjects}
+                                  className="flex-1 rounded-md bg-purple-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-700 disabled:opacity-50 transition-colors"
+                                >
+                                  {savingClassSubjects ? 'Saving…' : 'Save'}
+                                </button>
+                                <button
+                                  onClick={closeSubjectPanel}
+                                  disabled={savingClassSubjects}
+                                  className="flex-1 rounded-md bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-200 disabled:opacity-50 transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                        </td>
                           <td className="px-4 py-3 text-sm text-gray-700">
                             {isEditing ? (
                               <div className="flex gap-2">
@@ -1150,7 +1362,7 @@ export default function AdminPage() {
                     })}
                     {classes.length === 0 && (
                       <tr>
-                        <td className="px-4 py-3 text-sm text-gray-500" colSpan={4}>
+                        <td className="px-4 py-3 text-sm text-gray-500" colSpan={5}>
                           No classes found.
                         </td>
                       </tr>
@@ -1158,6 +1370,7 @@ export default function AdminPage() {
                   </tbody>
                 </table>
               </div>
+
             </div>
           </div>
         </div>
