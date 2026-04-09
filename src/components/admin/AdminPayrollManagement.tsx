@@ -55,22 +55,25 @@ export default function AdminPayrollManagement() {
 
   // ─── Fetch Functions ───
   const fetchConfigs = useCallback(async () => {
-    try {
-      const res = await authFetch("/api/admin/payroll/config");
-      if (!res.ok) throw new Error("Failed to load configs");
-      setConfigs(await res.json());
-    } catch { /* silently handle */ }
+    const res = await authFetch("/api/admin/payroll/config");
+    if (!res.ok) {
+      const payload = await res.json().catch(() => null);
+      throw new Error(payload?.error || "Failed to load configs");
+    }
+    setConfigs(await res.json());
   }, []);
 
   const fetchPayroll = useCallback(async () => {
-    try {
-      const res = await authFetch(`/api/admin/payroll/monthly?month=${selectedMonth}`);
-      if (!res.ok) throw new Error("Failed to load payroll");
-      const data = await res.json();
-      setPayrollRecords(data.records ?? []);
-      setPayrollSummary(data.summary ?? null);
-      setUnconfiguredCount(data.unconfigured_count ?? 0);
-    } catch { /* silently handle */ }
+    const res = await authFetch(`/api/admin/payroll/monthly?month=${selectedMonth}`);
+    if (!res.ok) {
+      const payload = await res.json().catch(() => null);
+      throw new Error(payload?.error || "Failed to load payroll");
+    }
+    const data = await res.json();
+    setPayrollRecords(data.records ?? []);
+    setPayrollSummary(data.summary ?? null);
+    setUnconfiguredCount(data.unconfigured_count ?? 0);
+    setSkippedStaff([]);
   }, [selectedMonth]);
 
   useEffect(() => {
@@ -334,6 +337,15 @@ export default function AdminPayrollManagement() {
             <div className="mb-4 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm">
               <strong>{unconfiguredCount} staff</strong> have no salary config.
               <span className="text-amber-600 ml-1">Go to Salary Config tab to set up their salary.</span>
+            </div>
+          )}
+          {skippedStaff.length > 0 && (
+            <div className="mb-4 p-3 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 text-sm">
+              <strong>{skippedStaff.length} staff</strong> were skipped during generation.
+              <span className="ml-1">
+                {skippedStaff.slice(0, 3).map((staff) => staff.user_name).join(", ")}
+                {skippedStaff.length > 3 ? ", ..." : ""}
+              </span>
             </div>
           )}
 

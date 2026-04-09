@@ -32,9 +32,13 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # claude code local settings (may contain allowed commands with tokens)
 .claude/settings.local.json
+.claude/
+.mcp.json
+.cursor/rules/mcp.local.json
 
 # vercel
 .vercel
@@ -48,3 +52,6 @@ tasmik-windsurf.zip
 # local migration artifacts with sensitive student data
 data_online_students.csv
 2026-02-09_online_students_from_csv.sql
+
+# local Supabase CLI state
+supabase/.temp/

@@ -7,6 +7,23 @@ import { countBusinessDaysInMonth, getMonthBounds, formatDateISO } from "@/lib/d
 import type { MonthlyPayroll, PayrollSummary } from "@/types/payroll";
 import { filterTeachersByTeachingScope } from "@/lib/adminTeacherScope";
 
+type TenantProfileRow = {
+  user_id: string | null;
+  role: string | null;
+};
+
+type StaffUserRow = {
+  id: string;
+  name?: string | null;
+  email?: string | null;
+  role: string | null;
+};
+
+type SupabaseLikeError = {
+  message?: string | null;
+  code?: string | null;
+};
+
 const resolveTenantIdOrThrow = async (
   request: NextRequest,
   client: Parameters<Parameters<typeof adminOperationSimple>[0]>[0]
@@ -18,6 +35,47 @@ const resolveTenantIdOrThrow = async (
   if (!data || data.length !== 1) throw new Error("Tenant context missing");
   return data[0].id as string;
 };
+
+async function getCampusStaffUsers(
+  client: Parameters<Parameters<typeof adminOperationSimple>[0]>[0],
+  tenantId: string
+): Promise<{ tenantProfiles: TenantProfileRow[]; campusStaff: StaffUserRow[] }> {
+  const { data: tenantProfiles, error: profilesErr } = await client
+    .from("user_profiles")
+    .select("user_id, role")
+    .eq("tenant_id", tenantId);
+  if (profilesErr) throw profilesErr;
+
+  const allTenantUserIds = (tenantProfiles ?? []).map((p) => p.user_id).filter(Boolean);
+  if (allTenantUserIds.length === 0) {
+    return { tenantProfiles: (tenantProfiles ?? []) as TenantProfileRow[], campusStaff: [] };
+  }
+
+  const { data: allUsers, error: usersErr } = await client
+    .from("users")
+    .select("id, name, email, role")
+    .in("id", allTenantUserIds)
+    .neq("role", "parent");
+  if (usersErr) throw usersErr;
+  if (!allUsers || allUsers.length === 0) {
+    return { tenantProfiles: (tenantProfiles ?? []) as TenantProfileRow[], campusStaff: [] };
+  }
+
+  const typedUsers = allUsers as StaffUserRow[];
+  const teacherUsers = typedUsers.filter((u) => u.role === "teacher");
+  const nonTeacherStaff = typedUsers.filter((u) => u.role !== "teacher");
+  const campusTeachers = await filterTeachersByTeachingScope(
+    client,
+    teacherUsers,
+    "campus",
+    tenantId
+  );
+
+  return {
+    tenantProfiles: (tenantProfiles ?? []) as TenantProfileRow[],
+    campusStaff: [...nonTeacherStaff, ...campusTeachers],
+  };
+}
 
 function computeSummary(records: MonthlyPayroll[]): PayrollSummary {
   let total_gross = 0, total_deductions = 0, total_net = 0;
@@ -44,6 +102,33 @@ function computeSummary(records: MonthlyPayroll[]): PayrollSummary {
     finalized_count,
     draft_count,
   };
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as SupabaseLikeError).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  return fallback;
+}
+
+function isMissingRpcFunctionError(error: unknown, functionName: string): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error ? (error as SupabaseLikeError).code : null;
+  const message = "message" in error ? (error as SupabaseLikeError).message : null;
+  return (
+    code === "PGRST202" &&
+    typeof message === "string" &&
+    message.includes(`public.${functionName}`)
+  );
+}
+
+function createMissingPayrollRpcError(functionName: string) {
+  return new Error(
+    `Payroll database function "${functionName}" is missing. ` +
+      "Run the payroll SQL migration before finalizing or unfinalizing payroll."
+  );
 }
 
 function parseMonth(raw: string | null): string | null {
@@ -79,28 +164,15 @@ export async function GET(request: NextRequest) {
       const typedRecords = (records ?? []) as MonthlyPayroll[];
 
       // Count unconfigured staff for warning (even on GET)
-      const { data: tenantProfiles } = await client
-        .from("user_profiles").select("user_id").eq("tenant_id", tenantId);
-      const allIds = (tenantProfiles ?? []).map((p) => p.user_id).filter(Boolean);
+      const { campusStaff } = await getCampusStaffUsers(client, tenantId);
+      const campusStaffIds = campusStaff.map((user) => user.id);
       let unconfiguredCount = 0;
-      if (allIds.length > 0) {
-        const { data: staffUsers } = await client
-          .from("users").select("id, role").in("id", allIds).neq("role", "parent");
-        const staffIds = (staffUsers ?? []).map((u) => u.id);
-        // Only filter teachers for campus scope
-        const teacherIds = (staffUsers ?? []).filter((u) => u.role === "teacher").map((u) => u.id);
-        const nonTeacherIds = (staffUsers ?? []).filter((u) => u.role !== "teacher").map((u) => u.id);
-        let campusTeacherIds = teacherIds;
-        if (teacherIds.length > 0) {
-          const campusTeachers = await filterTeachersByTeachingScope(
-            client, teacherIds.map(id => ({ id })), "campus", tenantId
-          );
-          campusTeacherIds = campusTeachers.map(t => t.id);
-        }
-        const campusStaffIds = [...nonTeacherIds, ...campusTeacherIds];
+      if (campusStaffIds.length > 0) {
         const { data: configuredIds } = await client
-          .from("staff_salary_config").select("user_id")
-          .eq("tenant_id", tenantId).eq("is_active", true)
+          .from("staff_salary_config")
+          .select("user_id")
+          .eq("tenant_id", tenantId)
+          .eq("is_active", true)
           .in("user_id", campusStaffIds);
         const configuredSet = new Set((configuredIds ?? []).map((c) => c.user_id));
         unconfiguredCount = campusStaffIds.filter((id) => !configuredSet.has(id)).length;
@@ -137,31 +209,10 @@ export async function POST(request: NextRequest) {
       const payrollMonth = `${monthStr}-01`;
       const { start: monthStart, end: monthEnd } = getMonthBounds(monthStr);
 
-      // Step 1: Fetch all non-parent staff
-      const { data: tenantProfiles } = await client
-        .from("user_profiles")
-        .select("user_id, role")
-        .eq("tenant_id", tenantId);
-
-      const allTenantUserIds = (tenantProfiles ?? []).map((p) => p.user_id).filter(Boolean);
-      if (allTenantUserIds.length === 0) return { records: [], summary: computeSummary([]), skipped_staff: [] };
-
-      const { data: allUsers } = await client
-        .from("users")
-        .select("id, name, email, role")
-        .in("id", allTenantUserIds)
-        .neq("role", "parent");
-
-      if (!allUsers || allUsers.length === 0) return { records: [], summary: computeSummary([]), skipped_staff: [] };
-
-      // Exclude online-only teachers (campus payroll only)
-      // Only filter teacher role - admin and general_worker pass through directly
-      const teacherUsers = allUsers.filter((u) => u.role === "teacher");
-      const nonTeacherStaff = allUsers.filter((u) => u.role !== "teacher");
-      const campusTeachers = await filterTeachersByTeachingScope(
-        client, teacherUsers, "campus", tenantId
-      );
-      const campusStaff = [...nonTeacherStaff, ...campusTeachers];
+      const { tenantProfiles, campusStaff } = await getCampusStaffUsers(client, tenantId);
+      if (campusStaff.length === 0) {
+        return { records: [], summary: computeSummary([]), skipped_staff: [] };
+      }
 
       const roleToPosition: Record<string, string> = {
         school_admin: "admin", admin: "admin", teacher: "teacher", general_worker: "general_worker",
@@ -441,21 +492,9 @@ export async function PATCH(request: NextRequest) {
 
         // Check for unconfigured staff
         if (!acknowledge_skipped) {
-          const { data: tenantProfiles } = await client
-            .from("user_profiles")
-            .select("user_id")
-            .eq("tenant_id", tenantId);
-          const allIds = (tenantProfiles ?? []).map((p) => p.user_id).filter(Boolean);
-
-          if (allIds.length > 0) {
-            const { data: staffUsers } = await client
-              .from("users")
-              .select("id")
-              .in("id", allIds)
-              .neq("role", "parent");
-
-            const staffIds = (staffUsers ?? []).map((u) => u.id);
-
+          const { campusStaff } = await getCampusStaffUsers(client, tenantId);
+          const staffIds = campusStaff.map((user) => user.id);
+          if (staffIds.length > 0) {
             const { data: configuredIds } = await client
               .from("staff_salary_config")
               .select("user_id")
@@ -480,7 +519,12 @@ export async function PATCH(request: NextRequest) {
           p_finalized_by: guard.userId,
           p_single_id: null,
         });
-        if (rpcErr) throw rpcErr;
+        if (rpcErr) {
+          if (isMissingRpcFunctionError(rpcErr, "finalize_monthly_payroll")) {
+            throw createMissingPayrollRpcError("finalize_monthly_payroll");
+          }
+          throw rpcErr;
+        }
         return { finalized_count: count };
       }
 
@@ -495,7 +539,12 @@ export async function PATCH(request: NextRequest) {
           p_payroll_month: payrollMonth,
           p_single_id: null,
         });
-        if (rpcErr) throw rpcErr;
+        if (rpcErr) {
+          if (isMissingRpcFunctionError(rpcErr, "unfinalize_monthly_payroll")) {
+            throw createMissingPayrollRpcError("unfinalize_monthly_payroll");
+          }
+          throw rpcErr;
+        }
         return { unfinalized_count: count };
       }
 
@@ -514,7 +563,12 @@ export async function PATCH(request: NextRequest) {
           p_payroll_month: record.payroll_month,
           p_single_id: payroll_id,
         });
-        if (rpcErr) throw rpcErr;
+        if (rpcErr) {
+          if (isMissingRpcFunctionError(rpcErr, "unfinalize_monthly_payroll")) {
+            throw createMissingPayrollRpcError("unfinalize_monthly_payroll");
+          }
+          throw rpcErr;
+        }
         return { unfinalized_count: count };
       }
 
@@ -536,13 +590,18 @@ export async function PATCH(request: NextRequest) {
         p_finalized_by: guard.userId,
         p_single_id: payroll_id,
       });
-      if (rpcErr) throw rpcErr;
+      if (rpcErr) {
+        if (isMissingRpcFunctionError(rpcErr, "finalize_monthly_payroll")) {
+          throw createMissingPayrollRpcError("finalize_monthly_payroll");
+        }
+        throw rpcErr;
+      }
       return { finalized_count: count };
     });
 
     return NextResponse.json(data);
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Failed to update payroll status";
+    const message = getErrorMessage(error, "Failed to update payroll status");
     if (message.includes("UNCONFIGURED_STAFF")) {
       return NextResponse.json({ error: message }, { status: 422 });
     }

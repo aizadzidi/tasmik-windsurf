@@ -6,6 +6,32 @@ import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
+const resolveTenantIdOrThrow = async (
+  request: NextRequest,
+  client: Parameters<Parameters<typeof adminOperationSimple>[0]>[0],
+  userId: string
+) => {
+  const tenantId = await resolveTenantIdFromRequest(request, client);
+  if (tenantId) return tenantId;
+
+  const { data: userProfiles, error: profileError } = await client
+    .from("user_profiles")
+    .select("tenant_id")
+    .eq("user_id", userId)
+    .limit(2);
+  if (profileError) throw profileError;
+
+  const tenantIds = Array.from(
+    new Set((userProfiles ?? []).map((profile) => profile.tenant_id).filter(Boolean))
+  );
+  if (tenantIds.length === 1) return tenantIds[0] as string;
+
+  const { data, error } = await client.from("tenants").select("id").limit(2);
+  if (error) throw error;
+  if (!data || data.length !== 1) throw new Error("Tenant context required");
+  return data[0].id as string;
+};
+
 function parseMonth(raw: string | null): string | null {
   if (!raw) return null;
   if (/^\d{4}-(0[1-9]|1[0-2])$/.test(raw)) return raw;
@@ -40,9 +66,7 @@ export async function GET(request: NextRequest) {
 
     // Resolve tenant for explicit scoping (multi-tenant safety)
     const tenantId = await adminOperationSimple(async (client) => {
-      const tid = await resolveTenantIdFromRequest(request, client);
-      if (!tid) throw new Error("Tenant context required");
-      return tid;
+      return resolveTenantIdOrThrow(request, client, authData.user.id);
     });
 
     const { searchParams } = new URL(request.url);

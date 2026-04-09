@@ -1,5 +1,16 @@
 import type { NextConfig } from "next";
 
+const supabaseHost = (() => {
+  const value = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!value) return null;
+
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return null;
+  }
+})();
+
 const nextConfig: NextConfig = {
   // Enable React strict mode for highlighting potential problems
   reactStrictMode: true,
@@ -24,11 +35,20 @@ const nextConfig: NextConfig = {
       },
     ];
   },
-  // Example: allow images from Supabase storage and localhost
   images: {
-    domains: [
-      'localhost',
-      'your-supabase-project-id.supabase.co', // <-- replace with your actual project id
+    remotePatterns: [
+      {
+        protocol: "http",
+        hostname: "localhost",
+      },
+      ...(supabaseHost
+        ? [
+            {
+              protocol: "https" as const,
+              hostname: supabaseHost,
+            },
+          ]
+        : []),
     ],
   },
   // Optional: add trailing slashes to all routes

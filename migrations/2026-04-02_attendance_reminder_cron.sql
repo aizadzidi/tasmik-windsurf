@@ -1,16 +1,17 @@
 -- Migration: Setup pg_cron job for daily attendance reminder notifications
 -- Triggers at 10:00 AM MYT (2:00 AM UTC) on weekdays (Mon-Fri)
+-- Calls the Next.js API route which sends Web Push notifications via Node.js
 -- Idempotent: safe to re-run
 --
 -- PREREQUISITES:
 -- 1. Enable pg_cron extension from Supabase Dashboard > Database > Extensions
 -- 2. Enable pg_net extension from Supabase Dashboard > Database > Extensions
--- 3. Deploy the check-attendance-reminders Edge Function
--- 4. Set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT as Edge Function secrets
+-- 3. Set NEXT_PUBLIC_VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, and CRON_SECRET in your deployment environment (.env)
 --
 -- IMPORTANT: Replace the placeholder values below before running:
--- - <SUPABASE_PROJECT_URL> → your Supabase project URL (e.g. https://xxxx.supabase.co)
--- - <SERVICE_ROLE_KEY> → your service role key (Project Settings > API > service_role)
+-- - <APP_URL> → a URL reachable from your Supabase database (e.g. https://yourapp.vercel.app)
+--   Do not use localhost here; pg_net runs inside the database environment.
+-- - <CRON_SECRET> → the CRON_SECRET value from your .env
 
 -- Unschedule existing job if it exists (idempotent)
 SELECT cron.unschedule('attendance-reminder-10am')
@@ -22,8 +23,8 @@ SELECT cron.schedule(
   '0 2 * * 1-5',
   $$
   SELECT net.http_post(
-    url := '<SUPABASE_PROJECT_URL>/functions/v1/check-attendance-reminders',
-    headers := '{"Content-Type": "application/json", "Authorization": "Bearer <SERVICE_ROLE_KEY>"}'::jsonb,
+    url := '<APP_URL>/api/cron/attendance-reminders',
+    headers := '{"Content-Type": "application/json", "Authorization": "Bearer <CRON_SECRET>"}'::jsonb,
     body := '{}'::jsonb
   );
   $$

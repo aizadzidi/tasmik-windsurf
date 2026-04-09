@@ -134,25 +134,6 @@ function StatusToggle({
       <button
         type="button"
         disabled={disabled}
-        onClick={() => onChange("late")}
-        className={cn(
-          "relative z-10 flex h-full items-center rounded-full px-4 text-[13px] font-medium transition-all duration-300",
-          value === "late" ? "text-amber-700" : "text-slate-400 hover:text-slate-600",
-          disabled && "opacity-50 cursor-not-allowed"
-        )}
-      >
-        <span className="relative z-10">Late</span>
-        {value === "late" && (
-          <motion.div
-            layoutId="toggle-active"
-            className="absolute inset-0 rounded-full bg-white shadow-[0_2px_8px_-2px_rgba(245,158,11,0.25)] ring-1 ring-amber-100"
-            transition={{ type: "spring", bounce: 0.15, duration: 0.4 }}
-          />
-        )}
-      </button>
-      <button
-        type="button"
-        disabled={disabled}
         onClick={() => onChange("absent")}
         className={cn(
           "relative z-10 flex h-full items-center rounded-full px-4 text-[13px] font-medium transition-all duration-300",
@@ -243,7 +224,8 @@ const buildAttendanceStateFromHistory = (records: AttendanceRecordRow[]): Attend
     }
     const group = grouped.get(key);
     if (!group) return;
-    group.statuses[String(record.student_id)] = record.status || "present";
+    group.statuses[String(record.student_id)] =
+      (record.status as AttendanceStatus | null | undefined) || "present";
   });
 
   grouped.forEach((group) => {
@@ -708,7 +690,11 @@ function TeacherAttendanceContent() {
                       <div className="py-20 text-center text-slate-400">Please select a class</div>
                     ) : (
                       filteredRollCallStudents.map((student, idx) => {
-                        const currentStatus = attendanceState[selectedClass.id]?.[selectedDate]?.statuses?.[student.id] ?? "present";
+                        const currentStatus =
+                          attendanceState[selectedClass.id]?.[selectedDate]?.statuses?.[student.id] ??
+                          "present";
+                        const visibleStatus =
+                          currentStatus === "late" ? "present" : currentStatus;
                         return (
                           <motion.div
                             key={student.id}
@@ -732,7 +718,7 @@ function TeacherAttendanceContent() {
 
                             <div onClick={e => e.stopPropagation()}>
                               <StatusToggle
-                                value={currentStatus}
+                                value={visibleStatus}
                                 onChange={(val) => handleStatusChange(student.id, val)}
                               />
                             </div>

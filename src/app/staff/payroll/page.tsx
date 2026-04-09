@@ -36,8 +36,9 @@ export default function StaffPayrollPage() {
   };
 
   const formatMonth = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString("en-MY", { month: "long", year: "numeric" });
+    const [y, m] = dateStr.split("-").map(Number);
+    const d = new Date(Date.UTC(y, m - 1, 1));
+    return d.toLocaleDateString("en-MY", { month: "long", year: "numeric", timeZone: "UTC" });
   };
 
   return (
