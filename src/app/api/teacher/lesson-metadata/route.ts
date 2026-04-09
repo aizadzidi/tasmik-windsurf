@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
 
     const tenantId = ensuredProfile.tenant_id;
 
-    const [classesRes, subjectsRes, teacherProfilesRes] = await Promise.all([
+    const [classesRes, subjectsRes, teacherProfilesRes, classSubjectsRes] = await Promise.all([
       supabaseAdmin.from("classes").select("id, name").eq("tenant_id", tenantId).order("name"),
       supabaseAdmin.from("subjects").select("id, name").eq("tenant_id", tenantId).order("name"),
       supabaseAdmin
@@ -55,11 +55,13 @@ export async function GET(request: NextRequest) {
         .select("user_id")
         .eq("tenant_id", tenantId)
         .eq("role", "teacher"),
+      supabaseAdmin.from("class_subjects").select("class_id, subject_id").eq("tenant_id", tenantId),
     ]);
 
     if (classesRes.error) throw classesRes.error;
     if (subjectsRes.error) throw subjectsRes.error;
     if (teacherProfilesRes.error) throw teacherProfilesRes.error;
+    if (classSubjectsRes.error) throw classSubjectsRes.error;
 
     const teacherIds = (teacherProfilesRes.data ?? []).map((row) => row.user_id);
     let teachers: Array<{ id: string; name: string | null; email: string | null }> = [];
@@ -82,6 +84,7 @@ export async function GET(request: NextRequest) {
       classes: classesRes.data ?? [],
       subjects: subjectsRes.data ?? [],
       teachers,
+      classSubjects: classSubjectsRes.data ?? [],
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Failed to load metadata";
