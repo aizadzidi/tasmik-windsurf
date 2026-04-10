@@ -12,13 +12,18 @@ type JoinPageClientProps = {
   inviteCode?: string;
 };
 
-type TabRole = "parent" | "teacher";
+type TabRole = "parent" | "staff";
+
+const ROLE_LABELS: Record<string, string> = {
+  teacher: "Teacher",
+  general_worker: "General Worker",
+};
 
 export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
   const searchParams = useSearchParams();
 
   const initialRole: TabRole =
-    inviteCode ? "teacher" : (searchParams.get("role") === "teacher" ? "teacher" : "parent");
+    inviteCode ? "staff" : (searchParams.get("role") === "staff" || searchParams.get("role") === "teacher" ? "staff" : "parent");
 
   const [activeTab, setActiveTab] = useState<TabRole>(initialRole);
   const [name, setName] = useState("");
@@ -32,6 +37,7 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
   const [success, setSuccess] = useState(false);
   const [schoolName, setSchoolName] = useState<string | null>(null);
   const [validatingCode, setValidatingCode] = useState(false);
+  const [targetRole, setTargetRole] = useState<string | null>(null);
 
   // Validate invite code on mount if provided
   useEffect(() => {
@@ -44,6 +50,7 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
         if (cancelled) return;
         if (data.ok) {
           setSchoolName(data.school_name ?? null);
+          setTargetRole(data.target_role ?? null);
         } else {
           setError(data.error ?? "Invalid or expired invite code.");
         }
@@ -65,6 +72,7 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
     setConfirmPassword("");
     setError("");
     setSuccess(false);
+    setTargetRole(null);
   }
 
   function switchTab(tab: TabRole) {
@@ -79,7 +87,7 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
     if (!email.trim()) return "Email is required.";
     if (password.length < 8) return "Password must be at least 8 characters.";
     if (password !== confirmPassword) return "Passwords do not match.";
-    if (activeTab === "teacher" && !code.trim()) return "Invite code is required.";
+    if (activeTab === "staff" && !code.trim()) return "Invite code is required.";
     return null;
   }
 
@@ -97,7 +105,7 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
       const endpoint =
         activeTab === "parent"
           ? "/api/public/parent/register"
-          : "/api/public/teacher/register";
+          : "/api/public/staff/register";
 
       const body: Record<string, unknown> = {
         name: name.trim(),
@@ -105,7 +113,7 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
         phone: phone.trim() || null,
         password,
       };
-      if (activeTab === "teacher") {
+      if (activeTab === "staff") {
         body.invite_code = code.trim();
       }
 
@@ -165,14 +173,14 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
         </button>
         <button
           type="button"
-          onClick={() => switchTab("teacher")}
+          onClick={() => switchTab("staff")}
           className={`flex-1 rounded-lg py-2.5 text-sm font-semibold transition-all ${
-            activeTab === "teacher"
+            activeTab === "staff"
               ? "bg-white shadow text-slate-900"
               : "text-slate-500 hover:text-slate-700"
           }`}
         >
-          I am a Teacher
+          I am Staff
         </button>
       </div>
 
@@ -180,6 +188,13 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
         <Alert variant="error" className="mb-4">
           {error}
         </Alert>
+      ) : null}
+
+      {/* Show target role from invite validation */}
+      {activeTab === "staff" && targetRole && schoolName ? (
+        <div className="mb-4 rounded-lg bg-blue-50 border border-blue-200 px-4 py-2.5 text-sm text-blue-800">
+          Joining as: <span className="font-semibold">{ROLE_LABELS[targetRole] ?? targetRole}</span>
+        </div>
       ) : null}
 
       {validatingCode ? (
@@ -208,7 +223,7 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
             className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all"
           />
 
-          {activeTab === "teacher" ? (
+          {activeTab === "staff" ? (
             <Input
               placeholder="Invite code"
               value={code}
@@ -247,7 +262,7 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
                 Creating account...
               </div>
             ) : (
-              `Create ${activeTab === "parent" ? "Parent" : "Teacher"} Account`
+              `Create ${activeTab === "parent" ? "Parent" : "Staff"} Account`
             )}
           </Button>
         </form>

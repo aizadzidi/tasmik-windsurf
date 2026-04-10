@@ -2,17 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedTenantUser } from "@/lib/requestAuth";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
 import {
-  ensureTeacherHasCampusLeaveAccess,
-  isTeacherLeaveAccessForbiddenError,
-} from "@/lib/teacherProgramScope";
-import { resolveStaffPosition } from "@/lib/leaveAccess";
+  assertStaffCanAccessLeave,
+  isForbiddenLeaveError,
+  resolveStaffPosition,
+} from "@/lib/leaveAccess";
 import { DEFAULT_ENTITLEMENTS } from "@/types/leave";
-
-async function assertTeacherCanAccessLeave(userId: string, tenantId: string) {
-  await adminOperationSimple(async (client) => {
-    await ensureTeacherHasCampusLeaveAccess(client, userId, tenantId);
-  });
-}
 
 export async function GET(request: NextRequest) {
   try {
@@ -20,7 +14,8 @@ export async function GET(request: NextRequest) {
     if (!auth.ok) return auth.response;
 
     const { userId, tenantId } = auth;
-    await assertTeacherCanAccessLeave(userId, tenantId);
+    await assertStaffCanAccessLeave(userId, tenantId);
+
     const year = new Date().getFullYear();
 
     const balances = await adminOperationSimple(async (client) => {
@@ -73,7 +68,7 @@ export async function GET(request: NextRequest) {
           .eq("tenant_id", tenantId);
 
         const existingEntKeys = new Set(
-          (allEntitlements ?? []).map((e) => `${e.position}__${e.leave_type}`)
+          (allEntitlements ?? []).map((e: { position: string; leave_type: string }) => `${e.position}__${e.leave_type}`)
         );
         const missingEnts = DEFAULT_ENTITLEMENTS.filter(
           (d) => !existingEntKeys.has(`${d.position}__${d.leave_type}`)
@@ -94,10 +89,9 @@ export async function GET(request: NextRequest) {
           .eq("position", pos);
 
         if (entitlements && entitlements.length > 0) {
-          const entMap = new Map(entitlements.map((e) => [e.leave_type, e.days_per_year]));
-          const existingTypes = new Set(existing.map((b) => b.leave_type));
+          const entMap = new Map(entitlements.map((e: { leave_type: string; days_per_year: number }) => [e.leave_type, e.days_per_year]));
+          const existingTypes = new Set(existing.map((b: { leave_type: string }) => b.leave_type));
 
-          // Check for stale entitled_days
           let needsUpdate = false;
           for (const bal of existing) {
             const latest = entMap.get(bal.leave_type);
@@ -107,10 +101,9 @@ export async function GET(request: NextRequest) {
             }
           }
 
-          // Check for missing balance rows (new leave types)
           const missingRows = entitlements
-            .filter((ent) => !existingTypes.has(ent.leave_type))
-            .map((ent) => ({
+            .filter((ent: { leave_type: string }) => !existingTypes.has(ent.leave_type))
+            .map((ent: { leave_type: string; days_per_year: number }) => ({
               tenant_id: tenantId,
               user_id: userId,
               leave_type: ent.leave_type,
@@ -154,7 +147,6 @@ export async function GET(request: NextRequest) {
       // Lazy-initialize: resolve position and seed balances
       const position = await resolveStaffPosition(client, userId, tenantId);
 
-      // Get entitlements for this position, auto-seed defaults if none exist
       const entitlementResult = await client
         .from("leave_entitlements")
         .select("*")
@@ -165,9 +157,9 @@ export async function GET(request: NextRequest) {
 
       if (entErr) throw entErr;
 
-      // Seed missing default entitlements (handles both empty and new leave types)
+      // Seed missing default entitlements
       const existingKeys = new Set(
-        (entitlements ?? []).map((e) => `${e.position}__${e.leave_type}`)
+        (entitlements ?? []).map((e: { position: string; leave_type: string }) => `${e.position}__${e.leave_type}`)
       );
       const missing = DEFAULT_ENTITLEMENTS.filter(
         (d) => d.position === position && !existingKeys.has(`${d.position}__${d.leave_type}`)
@@ -191,8 +183,8 @@ export async function GET(request: NextRequest) {
         entitlements = refreshed;
       }
 
-      // Create balance records for this user + year
-      const balanceRows = (entitlements ?? []).map((ent) => ({
+      // Create balance records
+      const balanceRows = (entitlements ?? []).map((ent: { leave_type: string; days_per_year: number }) => ({
         tenant_id: tenantId,
         user_id: userId,
         leave_type: ent.leave_type,
@@ -214,7 +206,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(balances);
   } catch (error: unknown) {
-    if (isTeacherLeaveAccessForbiddenError(error)) {
+    if (isForbiddenLeaveError(error)) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
     const message = error instanceof Error ? error.message : "Failed to fetch leave balances";

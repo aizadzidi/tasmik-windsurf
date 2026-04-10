@@ -1,9 +1,7 @@
 "use client";
 import React, { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import { authFetch } from "@/lib/authFetch";
 import { countBusinessDays } from "@/lib/dateUtils";
-import { useTeachingModeContext } from "@/contexts/TeachingModeContext";
 import type { LeaveApplication, LeaveBalanceSummary, LeaveType } from "@/types/leave";
 import { LEAVE_TYPES } from "@/types/leave";
 
@@ -23,9 +21,7 @@ const STATUS_STYLES: Record<string, string> = {
   cancelled: "bg-slate-200 text-slate-700",
 };
 
-export default function TeacherLeavePage() {
-  const router = useRouter();
-  const { mode, programScope } = useTeachingModeContext();
+export default function StaffLeavePage() {
   const [balances, setBalances] = useState<LeaveBalanceSummary[]>([]);
   const [applications, setApplications] = useState<LeaveApplication[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,9 +29,7 @@ export default function TeacherLeavePage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  // Form state
   const [cancellingId, setCancellingId] = useState<string | null>(null);
-
   const [leaveType, setLeaveType] = useState<LeaveType>("annual_leave");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -46,20 +40,9 @@ export default function TeacherLeavePage() {
       ? countBusinessDays(startDate, endDate)
       : 0;
 
-  const hasCampusLeaveAccess =
-    programScope === "campus" ||
-    (programScope === "mixed" && mode === "campus") ||
-    (programScope === "unknown" && mode !== "online");
-
-  useEffect(() => {
-    if (programScope === "online" || (programScope === "mixed" && mode === "online")) {
-      router.replace("/teacher");
-    }
-  }, [mode, programScope, router]);
-
   const fetchBalances = useCallback(async () => {
     try {
-      const res = await authFetch("/api/teacher/leave/balance");
+      const res = await authFetch("/api/staff/leave/balance");
       if (!res.ok) throw new Error("Failed to load balances");
       const data = await res.json();
       const summaries: LeaveBalanceSummary[] = (data ?? []).map(
@@ -72,19 +55,18 @@ export default function TeacherLeavePage() {
           is_unlimited: b.entitled_days === 0,
         })
       );
-      // Sort by LEAVE_TYPES order
       const typeOrder = LEAVE_TYPES.map((lt) => lt.value);
       summaries.sort((a, b) => typeOrder.indexOf(a.leave_type) - typeOrder.indexOf(b.leave_type));
       setBalances(summaries);
     } catch {
-      // Silently handle - balances will show empty
+      // Silently handle
     }
   }, []);
 
   const fetchApplications = useCallback(async () => {
     try {
       const year = new Date().getFullYear();
-      const res = await authFetch(`/api/teacher/leave?year=${year}`);
+      const res = await authFetch(`/api/staff/leave?year=${year}`);
       if (!res.ok) throw new Error("Failed to load applications");
       const data = await res.json();
       setApplications(data ?? []);
@@ -94,14 +76,13 @@ export default function TeacherLeavePage() {
   }, []);
 
   useEffect(() => {
-    if (!hasCampusLeaveAccess) return;
     const load = async () => {
       setLoading(true);
       await Promise.all([fetchBalances(), fetchApplications()]);
       setLoading(false);
     };
     load();
-  }, [fetchBalances, fetchApplications, hasCampusLeaveAccess]);
+  }, [fetchBalances, fetchApplications]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,7 +91,7 @@ export default function TeacherLeavePage() {
     setSubmitting(true);
 
     try {
-      const res = await authFetch("/api/teacher/leave", {
+      const res = await authFetch("/api/staff/leave", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -149,15 +130,13 @@ export default function TeacherLeavePage() {
     try {
       let res;
       if (status === "approved") {
-        // Cancel approved leave via PUT (sets status to "cancelled", restores balance)
-        res = await authFetch("/api/teacher/leave", {
+        res = await authFetch("/api/staff/leave", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ application_id: appId }),
         });
       } else {
-        // Delete pending leave
-        res = await authFetch(`/api/teacher/leave?id=${appId}`, {
+        res = await authFetch(`/api/staff/leave?id=${appId}`, {
           method: "DELETE",
         });
       }
@@ -183,14 +162,10 @@ export default function TeacherLeavePage() {
     ihsan_leave: { bg: "from-amber-50 to-amber-100/50", bar: "bg-amber-500", icon: "text-amber-600" },
   };
 
-  if (!hasCampusLeaveAccess) {
-    return <main className="min-h-screen bg-[#F2F2F7] p-4 sm:p-6" />;
-  }
-
   if (loading) {
     return (
       <main className="min-h-screen bg-[#F2F2F7] p-4 sm:p-6">
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-4xl mx-auto pt-16">
           <div className="animate-pulse space-y-4">
             <div className="h-8 w-48 bg-white/60 rounded-xl" />
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -207,7 +182,7 @@ export default function TeacherLeavePage() {
 
   return (
     <main className="min-h-screen bg-[#F2F2F7] p-4 sm:p-6">
-      <div className="max-w-4xl mx-auto space-y-6">
+      <div className="max-w-4xl mx-auto pt-16 space-y-6">
         {/* Header */}
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Leave Management</h1>
@@ -216,7 +191,7 @@ export default function TeacherLeavePage() {
           </p>
         </div>
 
-        {/* Balance Cards — horizontal slider */}
+        {/* Balance Cards */}
         <div className="overflow-x-auto -mx-4 sm:-mx-6 px-4 sm:px-6 pb-2">
           <div className="flex gap-4" style={{ minWidth: "min-content" }}>
           {balances.map((b) => {

@@ -22,7 +22,7 @@ export async function GET(
 
     const { data: invite, error: inviteError } = await supabaseAdmin
       .from("tenant_invites")
-      .select("id, code, tenant_id, max_uses, use_count, expires_at, is_active")
+      .select("id, code, tenant_id, max_uses, use_count, expires_at, is_active, target_role")
       .eq("code", code.toUpperCase())
       .maybeSingle();
 
@@ -72,6 +72,7 @@ export async function GET(
       ok: true,
       school_name: tenant?.name ?? null,
       remaining_uses: invite.max_uses - invite.use_count,
+      target_role: invite.target_role ?? "teacher",
     });
   } catch {
     return NextResponse.json(

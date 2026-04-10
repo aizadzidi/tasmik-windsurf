@@ -2,17 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedTenantUser } from "@/lib/requestAuth";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
 import {
-  ensureTeacherHasCampusLeaveAccess,
-  isTeacherLeaveAccessForbiddenError,
-} from "@/lib/teacherProgramScope";
-import { countBusinessDays, ROLE_TO_POSITION } from "@/lib/leaveAccess";
+  assertStaffCanAccessLeave,
+  countBusinessDays,
+  isForbiddenLeaveError,
+  ROLE_TO_POSITION,
+} from "@/lib/leaveAccess";
 import { SPECIAL_LEAVE_TYPES } from "@/types/leave";
-
-async function assertTeacherCanAccessLeave(userId: string, tenantId: string) {
-  await adminOperationSimple(async (client) => {
-    await ensureTeacherHasCampusLeaveAccess(client, userId, tenantId);
-  });
-}
 
 export async function GET(request: NextRequest) {
   try {
@@ -20,7 +15,8 @@ export async function GET(request: NextRequest) {
     if (!auth.ok) return auth.response;
 
     const { userId, tenantId } = auth;
-    await assertTeacherCanAccessLeave(userId, tenantId);
+    await assertStaffCanAccessLeave(userId, tenantId);
+
     const { searchParams } = new URL(request.url);
     const year = searchParams.get("year");
 
@@ -45,7 +41,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(applications);
   } catch (error: unknown) {
-    if (isTeacherLeaveAccessForbiddenError(error)) {
+    if (isForbiddenLeaveError(error)) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
     const message = error instanceof Error ? error.message : "Failed to fetch leave applications";
@@ -59,7 +55,8 @@ export async function DELETE(request: NextRequest) {
     if (!auth.ok) return auth.response;
 
     const { userId, tenantId } = auth;
-    await assertTeacherCanAccessLeave(userId, tenantId);
+    await assertStaffCanAccessLeave(userId, tenantId);
+
     const { searchParams } = new URL(request.url);
     const applicationId = searchParams.get("id");
 
@@ -94,7 +91,7 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
-    if (isTeacherLeaveAccessForbiddenError(error)) {
+    if (isForbiddenLeaveError(error)) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
     const message = error instanceof Error ? error.message : "Failed to cancel application";
@@ -113,7 +110,8 @@ export async function PUT(request: NextRequest) {
     if (!auth.ok) return auth.response;
 
     const { userId, tenantId } = auth;
-    await assertTeacherCanAccessLeave(userId, tenantId);
+    await assertStaffCanAccessLeave(userId, tenantId);
+
     const body = await request.json();
     const { application_id } = body;
 
@@ -138,13 +136,11 @@ export async function PUT(request: NextRequest) {
         throw new Error("Only approved applications can be cancelled");
       }
 
-      // Block cancel if leave period has already started
       const today = new Date().toISOString().slice(0, 10);
       if (app.start_date <= today) {
         throw new Error("Cannot cancel leave that has already started");
       }
 
-      // Set status to cancelled, preserve review data for audit trail
       const { error: updateErr } = await client
         .from("leave_applications")
         .update({
@@ -181,7 +177,7 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
-    if (isTeacherLeaveAccessForbiddenError(error)) {
+    if (isForbiddenLeaveError(error)) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
     const message = error instanceof Error ? error.message : "Failed to cancel application";
@@ -200,7 +196,8 @@ export async function POST(request: NextRequest) {
     if (!auth.ok) return auth.response;
 
     const { userId, tenantId } = auth;
-    await assertTeacherCanAccessLeave(userId, tenantId);
+    await assertStaffCanAccessLeave(userId, tenantId);
+
     const body = await request.json();
     const { leave_type, start_date, end_date, reason } = body;
 
@@ -227,7 +224,6 @@ export async function POST(request: NextRequest) {
     }
 
     const application = await adminOperationSimple(async (client) => {
-      // Check balance (skip for unpaid_leave)
       if (!SPECIAL_LEAVE_TYPES.has(leave_type)) {
         const year = new Date(start_date).getFullYear();
         let { data: balance } = await client
@@ -241,7 +237,6 @@ export async function POST(request: NextRequest) {
 
         // Auto-initialize balance if missing
         if (!balance) {
-          // Resolve user position
           const { data: userRow } = await client
             .from("users")
             .select("role")
@@ -250,7 +245,6 @@ export async function POST(request: NextRequest) {
 
           const position = ROLE_TO_POSITION[userRow?.role ?? ""] ?? "teacher";
 
-          // Look up entitlement for this position + leave type
           const { data: entitlement } = await client
             .from("leave_entitlements")
             .select("days_per_year")
@@ -261,7 +255,6 @@ export async function POST(request: NextRequest) {
 
           const entitled_days = entitlement?.days_per_year ?? 0;
 
-          // Create the balance row
           const { data: created, error: createErr } = await client
             .from("leave_balances")
             .upsert(
@@ -313,7 +306,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(application, { status: 201 });
   } catch (error: unknown) {
-    if (isTeacherLeaveAccessForbiddenError(error)) {
+    if (isForbiddenLeaveError(error)) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
     const message = error instanceof Error ? error.message : "Failed to apply for leave";

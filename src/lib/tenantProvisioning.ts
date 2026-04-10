@@ -62,6 +62,7 @@ export async function resolveTenantIdFromRequest(
 export function mapUserRoleToProfile(role?: string | null) {
   if (role === "admin") return "school_admin";
   if (role === "teacher") return "teacher";
+  if (role === "general_worker") return "general_worker";
   if (role === "parent") return "parent";
   return "parent";
 }

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import {
   asTrimmedText,
   enforcePublicRateLimit,
@@ -12,18 +12,13 @@ import {
   staffResultToResponse,
 } from "@/lib/staffRegistration";
 
-/**
- * Backwards-compatible teacher registration endpoint.
- * Delegates to the shared staff registration helper.
- * Old invites (without target_role) default to "teacher".
- */
 export async function POST(request: NextRequest) {
   const requestId = crypto.randomUUID();
 
   // Rate limit by IP
   const ipRate = await enforcePublicRateLimit({
     request,
-    keyPrefix: "public:teacher-register:ip",
+    keyPrefix: "public:staff-register:ip",
     limit: 10,
     windowMs: 10 * 60 * 1000,
   });
@@ -74,15 +69,6 @@ export async function POST(request: NextRequest) {
     inviteCode,
     requestId,
   });
-
-  // Map response codes for backwards compatibility
-  if (result.ok) {
-    const mappedResult = {
-      ...result,
-      code: result.code === "STAFF_REGISTERED" ? "TEACHER_REGISTERED" as const : "TEACHER_ALREADY_REGISTERED" as const,
-    };
-    return NextResponse.json(mappedResult, { status: result.code === "STAFF_REGISTERED" ? 201 : 200 });
-  }
 
   return staffResultToResponse(requestId, result);
 }

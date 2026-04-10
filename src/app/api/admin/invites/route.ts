@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
     const invites = await adminOperationSimple(async (client) => {
       const { data, error } = await client
         .from("tenant_invites")
-        .select("id, code, max_uses, use_count, expires_at, is_active, created_at, created_by")
+        .select("id, code, target_role, max_uses, use_count, expires_at, is_active, created_at, created_by")
         .eq("tenant_id", tenantId)
         .order("created_at", { ascending: false });
 
@@ -48,6 +48,7 @@ export async function POST(request: NextRequest) {
 
   let maxUses = 20;
   let expiresInDays = 30;
+  let targetRole: "teacher" | "general_worker" = "teacher";
 
   try {
     const body = await request.json();
@@ -56,6 +57,9 @@ export async function POST(request: NextRequest) {
     }
     if (typeof body.expires_in_days === "number" && body.expires_in_days > 0 && body.expires_in_days <= 365) {
       expiresInDays = body.expires_in_days;
+    }
+    if (body.target_role === "teacher" || body.target_role === "general_worker") {
+      targetRole = body.target_role;
     }
   } catch {
     // Use defaults
@@ -77,8 +81,9 @@ export async function POST(request: NextRequest) {
             created_by: guard.userId,
             max_uses: maxUses,
             expires_at: expiresAt.toISOString(),
+            target_role: targetRole,
           })
-          .select("id, code, max_uses, use_count, expires_at, is_active, created_at")
+          .select("id, code, target_role, max_uses, use_count, expires_at, is_active, created_at")
           .single();
 
         if (!error) return data;

@@ -108,6 +108,10 @@ export default function LoginPageClient({
       router.push("/teacher");
       return;
     }
+    if (userData.role === "general_worker") {
+      router.push("/staff");
+      return;
+    }
     router.push("/parent");
   }
 

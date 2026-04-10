@@ -87,16 +87,18 @@ export default function AdminUsersPage() {
   const [selectedChildByParent, setSelectedChildByParent] = useState<Record<string, string>>({});
   const [parentLinkSavingByParent, setParentLinkSavingByParent] = useState<Record<string, boolean>>({});
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
-  // Invite teacher state
+  // Invite staff state
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteMaxUses, setInviteMaxUses] = useState(20);
   const [inviteExpiresInDays, setInviteExpiresInDays] = useState(30);
+  const [inviteTargetRole, setInviteTargetRole] = useState<"teacher" | "general_worker">("teacher");
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
   const [invites, setInvites] = useState<Array<{
     id: string;
     code: string;
+    target_role?: string;
     max_uses: number;
     use_count: number;
     expires_at: string;
@@ -627,6 +629,7 @@ export default function AdminUsersPage() {
     setInviteError("");
     setInviteMaxUses(20);
     setInviteExpiresInDays(30);
+    setInviteTargetRole("teacher");
     fetchInvites();
   }, [fetchInvites]);
 
@@ -637,7 +640,7 @@ export default function AdminUsersPage() {
       const res = await authFetch("/api/admin/invites", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ max_uses: inviteMaxUses, expires_in_days: inviteExpiresInDays }),
+        body: JSON.stringify({ max_uses: inviteMaxUses, expires_in_days: inviteExpiresInDays, target_role: inviteTargetRole }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -652,7 +655,7 @@ export default function AdminUsersPage() {
     } finally {
       setInviteLoading(false);
     }
-  }, [inviteMaxUses, inviteExpiresInDays, fetchInvites]);
+  }, [inviteMaxUses, inviteExpiresInDays, inviteTargetRole, fetchInvites]);
 
   const copyInviteLink = useCallback(() => {
     if (!inviteLink) return;
@@ -689,7 +692,7 @@ export default function AdminUsersPage() {
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white"
             >
               <UserPlus className="h-4 w-4" />
-              Invite Teacher
+              Invite Staff
             </Button>
           </div>
 
@@ -1083,9 +1086,9 @@ export default function AdminUsersPage() {
               <X className="h-5 w-5" />
             </button>
 
-            <h2 className="text-lg font-bold text-slate-900 mb-1">Invite Teacher</h2>
+            <h2 className="text-lg font-bold text-slate-900 mb-1">Invite Staff</h2>
             <p className="text-sm text-slate-500 mb-5">
-              Generate an invite link to share with teachers.
+              Generate an invite link to share with staff members.
             </p>
 
             {inviteError ? (
@@ -1112,11 +1115,25 @@ export default function AdminUsersPage() {
                   </Button>
                 </div>
                 <p className="text-xs text-slate-500">
-                  Share this link with teachers via WhatsApp or email.
+                  Share this link with staff via WhatsApp or email.
                 </p>
               </div>
             ) : (
               <div className="mb-5 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Role
+                  </label>
+                  <select
+                    value={inviteTargetRole}
+                    onChange={(e) => setInviteTargetRole(e.target.value as "teacher" | "general_worker")}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
+                  >
+                    <option value="teacher">Teacher</option>
+                    <option value="general_worker">General Worker</option>
+                  </select>
+                  <p className="text-xs text-slate-400 mt-1">Users who join with this link will be assigned this role</p>
+                </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
                     Max uses
@@ -1129,7 +1146,7 @@ export default function AdminUsersPage() {
                     onChange={(e) => setInviteMaxUses(Number(e.target.value) || 20)}
                     className="w-full"
                   />
-                  <p className="text-xs text-slate-400 mt-1">How many teachers can use this link</p>
+                  <p className="text-xs text-slate-400 mt-1">How many people can use this link</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -1178,6 +1195,13 @@ export default function AdminUsersPage() {
                       >
                         <div>
                           <span className="font-mono font-medium text-slate-800">{inv.code}</span>
+                          <span className={`ml-2 inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                            inv.target_role === "general_worker"
+                              ? "bg-purple-100 text-purple-700"
+                              : "bg-blue-100 text-blue-700"
+                          }`}>
+                            {inv.target_role === "general_worker" ? "Staff" : "Teacher"}
+                          </span>
                           <span className="ml-2 text-slate-400">
                             {inv.use_count}/{inv.max_uses} used
                           </span>
