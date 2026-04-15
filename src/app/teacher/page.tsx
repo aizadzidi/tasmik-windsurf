@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { getUserWithRecovery } from "@/lib/supabase/clientAuth";
 import React from "react";
 import { QuranProgressBar, ChartTabs } from "@/components/ReportCharts";
 import { Card } from "@/components/ui/Card";
@@ -168,7 +169,7 @@ const [showJuzTestHistoryModal, setShowJuzTestHistoryModal] = useState(false);
   useEffect(() => {
     const fetchUserData = async () => {
       try {
-        const { data: userData, error: userError } = await supabase.auth.getUser();
+        const { data: userData, error: userError } = await getUserWithRecovery(supabase);
         if (userError) {
           console.error('Authentication error:', userError);
           window.location.href = '/login';

@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/Card";
 import { authFetch } from "@/lib/authFetch";
 import { dayOfWeekLabel } from "@/lib/online/slots";
 import { supabase } from "@/lib/supabaseClient";
+import { getUserWithRecovery } from "@/lib/supabase/clientAuth";
 import { useProgramScope } from "@/hooks/useProgramScope";
 import { cn } from "@/lib/utils";
 
@@ -173,7 +174,7 @@ export default function ParentOnlinePage() {
   useEffect(() => {
     let mounted = true;
     const loadUser = async () => {
-      const { data, error: userError } = await supabase.auth.getUser();
+      const { data, error: userError } = await getUserWithRecovery(supabase);
       if (!mounted) return;
       if (userError || !data.user) {
         window.location.href = "/login";

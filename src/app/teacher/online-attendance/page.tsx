@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/Card";
 import { Modal } from "@/components/ui/Modal";
 import { authFetch } from "@/lib/authFetch";
 import { supabase } from "@/lib/supabaseClient";
+import { getUserWithRecovery } from "@/lib/supabase/clientAuth";
 import { useTeachingModeContext } from "@/contexts/TeachingModeContext";
 import { cn } from "@/lib/utils";
 import type { OnlineTeacherScheduleSlotInput, OnlineTeacherSchedulerOptions } from "@/types/online";
@@ -278,7 +279,7 @@ export default function TeacherOnlineAttendancePage() {
   useEffect(() => {
     let mounted = true;
     const loadUser = async () => {
-      const { data, error: userError } = await supabase.auth.getUser();
+      const { data, error: userError } = await getUserWithRecovery(supabase);
       if (!mounted) return;
       if (userError || !data.user) {
         window.location.href = "/login";
