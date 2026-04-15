@@ -6,11 +6,31 @@ import {
   formatSupabaseAuthDeleteError,
   isSupabaseAuthUserNotFoundError,
 } from '@/lib/supabaseAuthAdmin';
+import { isMissingColumnError, isMissingRelationError } from "@/lib/online/db";
 import {
   enforceTenantPlanLimit,
   TenantPlanLimitExceededError,
 } from "@/lib/planLimits";
 import { filterTeachersByTeachingScope, type TeachingScope } from "@/lib/adminTeacherScope";
+
+type SupabaseMutationErrorLike = {
+  code?: string | null;
+  details?: string | null;
+  message?: string | null;
+};
+
+type FilterableMutationQuery = PromiseLike<{ error: SupabaseMutationErrorLike | null }> & {
+  eq: (column: string, value: unknown) => FilterableMutationQuery;
+};
+
+const isIgnorableMissingSchemaError = (
+  error: SupabaseMutationErrorLike | null | undefined,
+  table: string,
+  columns: string[] = []
+) =>
+  Boolean(error) &&
+  (isMissingRelationError(error, table) ||
+    columns.some((column) => isMissingColumnError(error, column, table)));
 
 // GET - Fetch users by role (admin only)
 export async function GET(request: NextRequest) {
@@ -483,56 +503,237 @@ export async function DELETE(request: NextRequest) {
         throw new Error('User not found in current tenant');
       }
 
+      const tenantId = targetProfile.tenant_id;
+
+      const runUpdate = async (
+        table: string,
+        values: Record<string, unknown>,
+        filters: Array<[string, unknown]>,
+        options?: { optional?: boolean; missingColumns?: string[] }
+      ) => {
+        let query = client.from(table).update(values) as unknown as FilterableMutationQuery;
+        for (const [column, value] of filters) {
+          query = query.eq(column, value);
+        }
+        const { error } = await query;
+        if (
+          error &&
+          !(
+            options?.optional &&
+            isIgnorableMissingSchemaError(error, table, options.missingColumns ?? [])
+          )
+        ) {
+          throw error;
+        }
+      };
+
+      const runDelete = async (
+        table: string,
+        filters: Array<[string, unknown]>,
+        options?: { optional?: boolean; missingColumns?: string[] }
+      ) => {
+        let query = client.from(table).delete() as unknown as FilterableMutationQuery;
+        for (const [column, value] of filters) {
+          query = query.eq(column, value);
+        }
+        const { error } = await query;
+        if (
+          error &&
+          !(
+            options?.optional &&
+            isIgnorableMissingSchemaError(error, table, options.missingColumns ?? [])
+          )
+        ) {
+          throw error;
+        }
+      };
+
       const { error: unlinkParentError } = await client
         .from('students')
         .update({ parent_id: null })
-        .eq('tenant_id', guard.tenantId)
+        .eq('tenant_id', tenantId)
         .eq('parent_id', id);
       if (unlinkParentError) throw unlinkParentError;
 
       const { error: unlinkTeacherError } = await client
         .from('students')
         .update({ assigned_teacher_id: null })
-        .eq('tenant_id', guard.tenantId)
+        .eq('tenant_id', tenantId)
         .eq('assigned_teacher_id', id);
       if (unlinkTeacherError) throw unlinkTeacherError;
 
-      const { error: deleteAssignmentsError } = await client
-        .from('teacher_assignments')
-        .delete()
-        .eq('tenant_id', guard.tenantId)
-        .eq('teacher_id', id);
-      if (deleteAssignmentsError) throw deleteAssignmentsError;
+      await runUpdate('reports', { teacher_id: null }, [
+        ['tenant_id', tenantId],
+        ['teacher_id', id],
+      ]);
 
-      const { error: deletePermissionsError } = await client
-        .from('user_permissions')
-        .delete()
-        .eq('tenant_id', guard.tenantId)
-        .eq('user_id', id);
-      if (deletePermissionsError) throw deletePermissionsError;
+      await runUpdate('exams', { created_by: null }, [
+        ['tenant_id', tenantId],
+        ['created_by', id],
+      ]);
+
+      await runUpdate('juz_tests', { examiner_id: null }, [
+        ['tenant_id', tenantId],
+        ['examiner_id', id],
+      ]);
+
+      await runUpdate('school_holidays', { created_by: null }, [
+        ['tenant_id', tenantId],
+        ['created_by', id],
+      ]);
+
+      await runUpdate('test_sessions', { scheduled_by: null }, [
+        ['tenant_id', tenantId],
+        ['scheduled_by', id],
+      ]);
+
+      await runDelete(
+        'online_attendance_sessions',
+        [
+          ['tenant_id', tenantId],
+          ['teacher_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'teacher_id'] }
+      );
+
+      await runDelete(
+        'online_recurring_occurrences',
+        [
+          ['tenant_id', tenantId],
+          ['teacher_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'teacher_id'] }
+      );
+
+      await runDelete(
+        'online_recurring_packages',
+        [
+          ['tenant_id', tenantId],
+          ['teacher_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'teacher_id'] }
+      );
+
+      await runDelete(
+        'online_student_package_assignments',
+        [
+          ['tenant_id', tenantId],
+          ['teacher_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'teacher_id'] }
+      );
+
+      await runDelete(
+        'online_slot_claims',
+        [
+          ['tenant_id', tenantId],
+          ['assigned_teacher_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'assigned_teacher_id'] }
+      );
+
+      await runDelete(
+        'online_slot_claims',
+        [
+          ['tenant_id', tenantId],
+          ['parent_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'parent_id'] }
+      );
+
+      await runDelete('teacher_assignments', [
+        ['tenant_id', tenantId],
+        ['teacher_id', id],
+      ]);
+
+      await runDelete(
+        'conduct_entries',
+        [
+          ['tenant_id', tenantId],
+          ['teacher_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'teacher_id'] }
+      );
+
+      await runUpdate(
+        'grading_systems',
+        { created_by: null },
+        [
+          ['tenant_id', tenantId],
+          ['created_by', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'created_by'] }
+      );
+
+      await runUpdate(
+        'monthly_payroll',
+        { finalized_by: null },
+        [
+          ['tenant_id', tenantId],
+          ['finalized_by', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'finalized_by'] }
+      );
+
+      await runDelete(
+        'monthly_payroll',
+        [
+          ['tenant_id', tenantId],
+          ['user_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'user_id'] }
+      );
+
+      await runDelete(
+        'staff_salary_config',
+        [
+          ['tenant_id', tenantId],
+          ['user_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'user_id'] }
+      );
+
+      await runDelete(
+        'tenant_invites',
+        [
+          ['tenant_id', tenantId],
+          ['created_by', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'created_by'] }
+      );
+
+      await runUpdate(
+        'user_permissions',
+        { created_by: null },
+        [
+          ['tenant_id', tenantId],
+          ['created_by', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'created_by'] }
+      );
+
+      await runDelete(
+        'user_permissions',
+        [
+          ['tenant_id', tenantId],
+          ['user_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'user_id'] }
+      );
+
+      await runDelete('users', [['id', id]]);
 
       const { error: deleteAuthUserError } = await client.auth.admin.deleteUser(id);
-      if (
-        deleteAuthUserError &&
-        !isSupabaseAuthUserNotFoundError(deleteAuthUserError)
-      ) {
+      if (deleteAuthUserError && !isSupabaseAuthUserNotFoundError(deleteAuthUserError)) {
         throw new Error(
           `Failed to delete auth user: ${formatSupabaseAuthDeleteError(deleteAuthUserError)}`
         );
       }
 
-      const { error: deleteProfileError } = await client
-        .from('user_profiles')
-        .delete()
-        .eq('tenant_id', guard.tenantId)
-        .eq('user_id', id);
-      if (deleteProfileError) throw deleteProfileError;
-
-      const { error: deleteUserError } = await client
-        .from('users')
-        .delete()
-        .eq('id', id);
-      if (deleteUserError) throw deleteUserError;
+      await runDelete('user_profiles', [
+        ['tenant_id', tenantId],
+        ['user_id', id],
+      ]);
     });
 
     return NextResponse.json({ success: true });
