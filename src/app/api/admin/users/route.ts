@@ -511,6 +511,9 @@ export async function DELETE(request: NextRequest) {
         filters: Array<[string, unknown]>,
         options?: { optional?: boolean; missingColumns?: string[] }
       ) => {
+        if (filters.length === 0) {
+          throw new Error('Refusing to run update without filters');
+        }
         let query = client.from(table).update(values) as unknown as FilterableMutationQuery;
         for (const [column, value] of filters) {
           query = query.eq(column, value);
@@ -532,6 +535,9 @@ export async function DELETE(request: NextRequest) {
         filters: Array<[string, unknown]>,
         options?: { optional?: boolean; missingColumns?: string[] }
       ) => {
+        if (filters.length === 0) {
+          throw new Error('Refusing to run delete without filters');
+        }
         let query = client.from(table).delete() as unknown as FilterableMutationQuery;
         for (const [column, value] of filters) {
           query = query.eq(column, value);
@@ -561,6 +567,13 @@ export async function DELETE(request: NextRequest) {
         .eq('tenant_id', tenantId)
         .eq('assigned_teacher_id', id);
       if (unlinkTeacherError) throw unlinkTeacherError;
+
+      const { error: deleteAuthUserError } = await client.auth.admin.deleteUser(id, true);
+      if (deleteAuthUserError && !isSupabaseAuthUserNotFoundError(deleteAuthUserError)) {
+        throw new Error(
+          `Failed to delete auth user: ${formatSupabaseAuthDeleteError(deleteAuthUserError)}`
+        );
+      }
 
       await runUpdate('reports', { teacher_id: null }, [
         ['tenant_id', tenantId],
@@ -721,19 +734,12 @@ export async function DELETE(request: NextRequest) {
         { optional: true, missingColumns: ['tenant_id', 'user_id'] }
       );
 
-      await runDelete('users', [['id', id]]);
-
-      const { error: deleteAuthUserError } = await client.auth.admin.deleteUser(id);
-      if (deleteAuthUserError && !isSupabaseAuthUserNotFoundError(deleteAuthUserError)) {
-        throw new Error(
-          `Failed to delete auth user: ${formatSupabaseAuthDeleteError(deleteAuthUserError)}`
-        );
-      }
-
       await runDelete('user_profiles', [
         ['tenant_id', tenantId],
         ['user_id', id],
       ]);
+
+      await runDelete('users', [['id', id]]);
     });
 
     return NextResponse.json({ success: true });
