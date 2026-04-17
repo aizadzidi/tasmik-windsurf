@@ -1,7 +1,5 @@
 import { supabase as defaultClient } from "@/lib/supabaseClient";
 import type {
-  AuthSession,
-  AuthUser,
   Session,
   SupabaseClient,
   User,
@@ -16,10 +14,13 @@ const INVALID_REFRESH_TOKEN_PATTERNS = [
 
 const AUTH_SETTLE_DELAY_MS = 25;
 
-type AuthResult<T> = PromiseLike<{
+type AuthResult<T> = Promise<{
   data: T;
   error: unknown;
 }>;
+
+type SessionData = { session: Session | null };
+type UserData = { user: User | null };
 
 function readErrorMessage(error: unknown): string {
   if (typeof error === "string") return error;
@@ -81,8 +82,8 @@ async function runWithInvalidRefreshRetry<T>(
 
 export async function getSessionWithRecovery(
   supabase: SupabaseClient = defaultClient
-): Promise<{ data: AuthSession; error: unknown }> {
-  return runWithInvalidRefreshRetry(
+): Promise<{ data: { session: Session | null }; error: unknown }> {
+  return runWithInvalidRefreshRetry<SessionData>(
     () => supabase.auth.getSession(),
     (data) => Boolean(data.session),
     supabase
@@ -91,8 +92,8 @@ export async function getSessionWithRecovery(
 
 export async function getUserWithRecovery(
   supabase: SupabaseClient = defaultClient
-): Promise<{ data: AuthUser; error: unknown }> {
-  return runWithInvalidRefreshRetry(
+): Promise<{ data: { user: User | null }; error: unknown }> {
+  return runWithInvalidRefreshRetry<UserData>(
     () => supabase.auth.getUser(),
     (data) => Boolean(data.user),
     supabase
@@ -102,7 +103,7 @@ export async function getUserWithRecovery(
 export async function refreshSessionWithRecovery(
   supabase: SupabaseClient = defaultClient
 ): Promise<{ data: { session: Session | null; user: User | null }; error: unknown }> {
-  return runWithInvalidRefreshRetry(
+  return runWithInvalidRefreshRetry<{ session: Session | null; user: User | null }>(
     () => supabase.auth.refreshSession(),
     (data) => Boolean(data.session?.access_token),
     supabase

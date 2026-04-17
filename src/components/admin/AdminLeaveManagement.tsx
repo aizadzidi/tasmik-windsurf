@@ -31,7 +31,6 @@ interface StaffBalance {
 
 export default function AdminLeaveManagement() {
   const [applications, setApplications] = useState<LeaveApplication[]>([]);
-  const [entitlements, setEntitlements] = useState<LeaveEntitlement[]>([]);
   const [staffBalances, setStaffBalances] = useState<StaffBalance[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -77,7 +76,6 @@ export default function AdminLeaveManagement() {
       const res = await authFetch("/api/admin/leave/entitlements");
       if (!res.ok) throw new Error("Failed to load entitlements");
       const data = await res.json();
-      setEntitlements(data ?? []);
 
       const edits: Record<string, number> = {};
       (data ?? []).forEach((ent: LeaveEntitlement) => {
