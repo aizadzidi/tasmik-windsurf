@@ -15,7 +15,6 @@ import {
 /**
  * Backwards-compatible teacher registration endpoint.
  * Delegates to the shared staff registration helper.
- * Old invites (without target_role) default to "teacher".
  */
 export async function POST(request: NextRequest) {
   const requestId = crypto.randomUUID();

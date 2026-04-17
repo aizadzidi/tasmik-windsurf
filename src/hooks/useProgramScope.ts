@@ -1,6 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { isMissingRelationError } from "@/lib/online/db";
+import {
+  LEGACY_TEACHER_SCOPE_FALLBACK,
+  resolveParentProgramScope,
+  resolveTeacherProgramScope,
+} from "@/lib/programScope";
 import { supabase } from "@/lib/supabaseClient";
 import type { ProgramScope, ProgramType } from "@/types/programs";
 
@@ -14,14 +20,9 @@ type ProgramScopeState = {
   loading: boolean;
 };
 
-const DEFAULT_SCOPE: ProgramScope = "campus";
-
-const resolveScope = (types: ProgramType[]): ProgramScope => {
-  const unique = new Set(types);
-  if (unique.size === 0) return DEFAULT_SCOPE;
-  if (unique.size === 1 && unique.has("online")) return "online";
-  if (unique.has("online") && (unique.has("campus") || unique.has("hybrid"))) return "mixed";
-  return DEFAULT_SCOPE;
+const DEFAULT_SCOPE_BY_ROLE: Record<ProgramScopeParams["role"], ProgramScope> = {
+  parent: "campus",
+  teacher: "unknown",
 };
 
 const extractProgramTypes = (rows: Array<{ programs?: { type?: ProgramType | null } | null }>) =>
@@ -29,8 +30,11 @@ const extractProgramTypes = (rows: Array<{ programs?: { type?: ProgramType | nul
     .map((row) => row.programs?.type)
     .filter((value): value is ProgramType => Boolean(value));
 
-const isMissingTableError = (error: { message?: string } | null | undefined, table: string) =>
-  Boolean(error?.message?.includes(`relation \"public.${table}\" does not exist`));
+const isMissingScopeSchemaError = (error: { message?: string; details?: string } | null | undefined) =>
+  Boolean(
+    isMissingRelationError(error, "teacher_assignments") ||
+      isMissingRelationError(error, "programs")
+  );
 
 const fetchStudentIds = async (role: "parent" | "teacher", userId: string) => {
   const query = supabase
@@ -49,17 +53,22 @@ const fetchStudentIds = async (role: "parent" | "teacher", userId: string) => {
   return data.map((row) => row.id).filter((id): id is string => Boolean(id));
 };
 
-const fetchProgramTypesForTeacher = async (teacherId: string) => {
+const fetchProgramTypesForTeacher = async (
+  teacherId: string
+): Promise<{ types: ProgramType[]; schemaMissing: boolean }> => {
   const { data, error } = await supabase
     .from("teacher_assignments")
     .select("programs(type)")
     .eq("teacher_id", teacherId);
 
-  if (isMissingTableError(error, "teacher_assignments") || isMissingTableError(error, "programs")) {
-    return [] as ProgramType[];
+  if (isMissingScopeSchemaError(error)) {
+    return { types: [], schemaMissing: true };
   }
-  if (error || !data) return [] as ProgramType[];
-  return extractProgramTypes(data as Array<{ programs?: { type?: ProgramType | null } | null }>);
+  if (error || !data) return { types: [], schemaMissing: false };
+  return {
+    types: extractProgramTypes(data as Array<{ programs?: { type?: ProgramType | null } | null }>),
+    schemaMissing: false,
+  };
 };
 
 const fetchProgramTypesForStudents = async (studentIds: string[]) => {
@@ -70,7 +79,7 @@ const fetchProgramTypesForStudents = async (studentIds: string[]) => {
     .in("status", ["active", "paused", "pending_payment"])
     .in("student_id", studentIds);
 
-  if (isMissingTableError(error, "enrollments") || isMissingTableError(error, "programs")) {
+  if (isMissingRelationError(error, "enrollments") || isMissingRelationError(error, "programs")) {
     return [] as ProgramType[];
   }
   if (error || !data) return [] as ProgramType[];
@@ -89,15 +98,22 @@ export const useProgramScope = ({ role, userId }: ProgramScopeParams): ProgramSc
     const resolveScopeForUser = async (id: string) => {
       setLoading(true);
       let programTypes: ProgramType[] = [];
+      let programScopeForUser: ProgramScope;
       if (role === "teacher") {
-        programTypes = await fetchProgramTypesForTeacher(id);
+        const teacherScopeResult = await fetchProgramTypesForTeacher(id);
+        if (teacherScopeResult.schemaMissing) {
+          programScopeForUser = LEGACY_TEACHER_SCOPE_FALLBACK;
+        } else {
+          programTypes = teacherScopeResult.types;
+          programScopeForUser = resolveTeacherProgramScope(programTypes);
+        }
       } else {
         const studentIds = await fetchStudentIds(role, id);
         programTypes = await fetchProgramTypesForStudents(studentIds);
+        programScopeForUser = resolveParentProgramScope(programTypes);
       }
-      const scope = resolveScope(programTypes);
       if (isMounted) {
-        setProgramScope(scope);
+        setProgramScope(programScopeForUser);
         setLoading(false);
       }
     };
@@ -111,7 +127,7 @@ export const useProgramScope = ({ role, userId }: ProgramScopeParams): ProgramSc
       const { data, error } = await supabase.auth.getUser();
       if (error || !data?.user) {
         if (isMounted) {
-          setProgramScope(DEFAULT_SCOPE);
+          setProgramScope(DEFAULT_SCOPE_BY_ROLE[role]);
           setLoading(false);
         }
         return;

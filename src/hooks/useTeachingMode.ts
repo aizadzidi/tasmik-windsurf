@@ -22,14 +22,16 @@ export function useTeachingMode(programScope: ProgramScope): UseTeachingModeRetu
       setModeState(stored === "online" ? "online" : "campus");
     } else if (programScope === "online") {
       setModeState("online");
-    } else if (programScope === "campus" || programScope === "unknown") {
+    } else if (programScope === "campus") {
       setModeState("campus");
+    } else {
+      setModeState(null);
     }
   }, [programScope]);
 
   // If scope changes away from mixed, clear stored preference
   useEffect(() => {
-    if (programScope !== "mixed" && programScope !== "unknown") {
+    if (programScope !== "mixed") {
       localStorage.removeItem(STORAGE_KEY);
     }
   }, [programScope]);

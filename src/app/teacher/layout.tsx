@@ -46,7 +46,7 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
   useEffect(() => {
     if (!ready || programScopeLoading) return;
     const routes = ["/teacher", "/teacher/attendance", "/teacher/lesson", "/teacher/exam"];
-    if (programScope !== "campus") {
+    if (programScope !== "campus" && programScope !== "unknown") {
       routes.push("/teacher/online-attendance");
     }
     routes.forEach((route) => {
@@ -55,6 +55,20 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
   }, [programScope, programScopeLoading, ready, router]);
 
   if (!ready || programScopeLoading) return <div className="min-h-screen bg-[#F2F2F7]" />;
+
+  if (programScope === "unknown") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#F2F2F7] px-4">
+        <div className="w-full max-w-md rounded-3xl border border-amber-200 bg-white p-8 text-center shadow-sm">
+          <h1 className="text-xl font-semibold text-slate-900">Account setup incomplete</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-600">
+            Your teacher account is still missing a program assignment. Please contact your
+            admin before using the teacher dashboard.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <TeachingModeProvider programScope={programScope}>

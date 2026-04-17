@@ -1,22 +1,16 @@
 import "server-only";
 
+import {
+  LEGACY_TEACHER_SCOPE_FALLBACK,
+  resolveTeacherProgramScope,
+} from "@/lib/programScope";
 import type { ProgramScope, ProgramType } from "@/types/programs";
 import { isMissingColumnError, isMissingRelationError } from "@/lib/online/db";
 import { supabaseService } from "@/lib/supabaseServiceClientSimple";
 
-const DEFAULT_SCOPE: ProgramScope = "campus";
-
 type ProgramRow = { type?: ProgramType | null };
 type AssignmentRow = {
   programs?: ProgramRow | ProgramRow[] | null;
-};
-
-const resolveProgramScope = (types: ProgramType[]): ProgramScope => {
-  const unique = new Set(types);
-  if (unique.size === 0) return DEFAULT_SCOPE;
-  if (unique.size === 1 && unique.has("online")) return "online";
-  if (unique.has("online") && (unique.has("campus") || unique.has("hybrid"))) return "mixed";
-  return DEFAULT_SCOPE;
 };
 
 const isMissingScopeSchemaError = (error: { message?: string | null; details?: string | null } | null) =>
@@ -55,11 +49,8 @@ export const isTeacherLeaveAccessForbiddenError = (
 async function loadTeacherProgramScope(
   client: NonNullable<typeof supabaseService>,
   teacherId: string,
-  tenantId?: string | null,
-  options?: { strict?: boolean }
+  tenantId?: string | null
 ): Promise<ProgramScope> {
-  const strict = options?.strict ?? false;
-
   let query = client
     .from("teacher_assignments")
     .select("programs(type)")
@@ -73,10 +64,7 @@ async function loadTeacherProgramScope(
 
   if (error) {
     if (isMissingScopeSchemaError(error)) {
-      if (strict) {
-        throw new Error("Unable to resolve teacher program scope for leave authorization");
-      }
-      return DEFAULT_SCOPE;
+      return LEGACY_TEACHER_SCOPE_FALLBACK;
     }
     throw error;
   }
@@ -92,7 +80,7 @@ async function loadTeacherProgramScope(
     return programType ? [programType] : [];
   });
 
-  return resolveProgramScope(programTypes);
+  return resolveTeacherProgramScope(programTypes);
 }
 
 export async function getTeacherProgramScope(
@@ -108,8 +96,13 @@ export async function ensureTeacherHasCampusLeaveAccess(
   teacherId: string,
   tenantId?: string | null
 ) {
-  const programScope = await loadTeacherProgramScope(client, teacherId, tenantId, { strict: true });
+  const programScope = await loadTeacherProgramScope(client, teacherId, tenantId);
   if (programScope === "online") {
     throw createTeacherLeaveAccessForbiddenError();
+  }
+  if (programScope === "unknown") {
+    throw createTeacherLeaveAccessForbiddenError(
+      "Account setup incomplete. Please contact your admin."
+    );
   }
 }

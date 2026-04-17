@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdminClient";
+import {
+  isMissingTeacherInviteScopeSchemaError,
+  normalizeTeacherInviteScope,
+} from "@/lib/staffInvites";
 
 type RouteContext = {
   params: Promise<{ code: string }>;
@@ -20,17 +24,38 @@ export async function GET(
   try {
     const supabaseAdmin = getSupabaseAdminClient();
 
-    const { data: invite, error: inviteError } = await supabaseAdmin
+    const inviteWithScope = await supabaseAdmin
       .from("tenant_invites")
-      .select("id, code, tenant_id, max_uses, use_count, expires_at, is_active, target_role")
+      .select("id, code, tenant_id, max_uses, use_count, expires_at, is_active, target_role, teacher_scope")
       .eq("code", code.toUpperCase())
       .maybeSingle();
 
-    if (inviteError) {
-      return NextResponse.json(
-        { ok: false, error: "Unable to validate invite." },
-        { status: 500 }
-      );
+    let invite = inviteWithScope.data;
+
+    if (inviteWithScope.error) {
+      if (!isMissingTeacherInviteScopeSchemaError(inviteWithScope.error)) {
+        return NextResponse.json(
+          { ok: false, error: "Unable to validate invite." },
+          { status: 500 }
+        );
+      }
+
+      const inviteWithoutScope = await supabaseAdmin
+        .from("tenant_invites")
+        .select("id, code, tenant_id, max_uses, use_count, expires_at, is_active, target_role")
+        .eq("code", code.toUpperCase())
+        .maybeSingle();
+
+      if (inviteWithoutScope.error) {
+        return NextResponse.json(
+          { ok: false, error: "Unable to validate invite." },
+          { status: 500 }
+        );
+      }
+
+      invite = inviteWithoutScope.data
+        ? { ...inviteWithoutScope.data, teacher_scope: null }
+        : null;
     }
 
     if (!invite) {
@@ -61,6 +86,17 @@ export async function GET(
       );
     }
 
+    const targetRole = invite.target_role ?? "teacher";
+    if (targetRole === "teacher" && !normalizeTeacherInviteScope(invite.teacher_scope)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "This teacher invite is no longer valid. Please ask your admin for a new invite.",
+        },
+        { status: 409 }
+      );
+    }
+
     // Fetch school name
     const { data: tenant } = await supabaseAdmin
       .from("tenants")
@@ -72,7 +108,8 @@ export async function GET(
       ok: true,
       school_name: tenant?.name ?? null,
       remaining_uses: invite.max_uses - invite.use_count,
-      target_role: invite.target_role ?? "teacher",
+      target_role: targetRole,
+      teacher_scope: invite.teacher_scope ?? null,
     });
   } catch {
     return NextResponse.json(

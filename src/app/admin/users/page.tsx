@@ -14,6 +14,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ADMIN_PAGE_PERMISSIONS } from "@/lib/adminAccess";
 import { authFetch } from "@/lib/authFetch";
+import {
+  TEACHER_INVITE_SCOPE_LABELS,
+  type TeacherInviteScope,
+} from "@/lib/staffInvites";
 import { MoreHorizontal, SlidersHorizontal, UserPlus, Copy, X, Trash2 } from "lucide-react";
 
 type UserRow = {
@@ -92,6 +96,7 @@ export default function AdminUsersPage() {
   const [inviteMaxUses, setInviteMaxUses] = useState(20);
   const [inviteExpiresInDays, setInviteExpiresInDays] = useState(30);
   const [inviteTargetRole, setInviteTargetRole] = useState<"teacher" | "general_worker">("teacher");
+  const [inviteTeacherScope, setInviteTeacherScope] = useState<TeacherInviteScope | null>("campus");
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
@@ -99,6 +104,7 @@ export default function AdminUsersPage() {
     id: string;
     code: string;
     target_role?: string;
+    teacher_scope?: TeacherInviteScope | null;
     max_uses: number;
     use_count: number;
     expires_at: string;
@@ -630,6 +636,7 @@ export default function AdminUsersPage() {
     setInviteMaxUses(20);
     setInviteExpiresInDays(30);
     setInviteTargetRole("teacher");
+    setInviteTeacherScope("campus");
     fetchInvites();
   }, [fetchInvites]);
 
@@ -640,7 +647,12 @@ export default function AdminUsersPage() {
       const res = await authFetch("/api/admin/invites", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ max_uses: inviteMaxUses, expires_in_days: inviteExpiresInDays, target_role: inviteTargetRole }),
+        body: JSON.stringify({
+          max_uses: inviteMaxUses,
+          expires_in_days: inviteExpiresInDays,
+          target_role: inviteTargetRole,
+          teacher_scope: inviteTargetRole === "teacher" ? inviteTeacherScope : null,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -655,7 +667,7 @@ export default function AdminUsersPage() {
     } finally {
       setInviteLoading(false);
     }
-  }, [inviteMaxUses, inviteExpiresInDays, inviteTargetRole, fetchInvites]);
+  }, [inviteMaxUses, inviteExpiresInDays, inviteTargetRole, inviteTeacherScope, fetchInvites]);
 
   const copyInviteLink = useCallback(() => {
     if (!inviteLink) return;
@@ -1126,7 +1138,15 @@ export default function AdminUsersPage() {
                   </label>
                   <select
                     value={inviteTargetRole}
-                    onChange={(e) => setInviteTargetRole(e.target.value as "teacher" | "general_worker")}
+                    onChange={(e) => {
+                      const nextRole = e.target.value as "teacher" | "general_worker";
+                      setInviteTargetRole(nextRole);
+                      if (nextRole === "teacher") {
+                        setInviteTeacherScope((current) => current ?? "campus");
+                        return;
+                      }
+                      setInviteTeacherScope(null);
+                    }}
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
                   >
                     <option value="teacher">Teacher</option>
@@ -1134,6 +1154,24 @@ export default function AdminUsersPage() {
                   </select>
                   <p className="text-xs text-slate-400 mt-1">Users who join with this link will be assigned this role</p>
                 </div>
+                {inviteTargetRole === "teacher" ? (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Teacher scope
+                    </label>
+                    <select
+                      value={inviteTeacherScope ?? "campus"}
+                      onChange={(e) => setInviteTeacherScope(e.target.value as TeacherInviteScope)}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
+                    >
+                      <option value="campus">Campus</option>
+                      <option value="online">Online</option>
+                    </select>
+                    <p className="text-xs text-slate-400 mt-1">
+                      New teacher accounts will be assigned to this program type during signup.
+                    </p>
+                  </div>
+                ) : null}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
                     Max uses
@@ -1202,6 +1240,11 @@ export default function AdminUsersPage() {
                           }`}>
                             {inv.target_role === "general_worker" ? "Staff" : "Teacher"}
                           </span>
+                          {inv.target_role === "teacher" && inv.teacher_scope ? (
+                            <span className="ml-2 text-slate-500">
+                              {TEACHER_INVITE_SCOPE_LABELS[inv.teacher_scope]}
+                            </span>
+                          ) : null}
                           <span className="ml-2 text-slate-400">
                             {inv.use_count}/{inv.max_uses} used
                           </span>

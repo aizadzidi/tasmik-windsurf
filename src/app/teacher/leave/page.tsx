@@ -48,8 +48,7 @@ export default function TeacherLeavePage() {
 
   const hasCampusLeaveAccess =
     programScope === "campus" ||
-    (programScope === "mixed" && mode === "campus") ||
-    (programScope === "unknown" && mode !== "online");
+    (programScope === "mixed" && mode === "campus");
 
   useEffect(() => {
     if (programScope === "online" || (programScope === "mixed" && mode === "online")) {
