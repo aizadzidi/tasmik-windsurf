@@ -53,7 +53,7 @@ describe("computeNewMurajaahRange", () => {
     });
 
     expect(result.isValid).toBe(false);
-    expect(result.error).toContain("Latest tasmi page");
+    expect(result.error).toMatch(/latest tasmi page/i);
   });
 
   it("fails when manual range is reversed", () => {

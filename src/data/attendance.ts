@@ -194,7 +194,7 @@ export const calculateStudentSummaries = (
         const entry = classState[date];
         if (!entry?.submitted) return;
         const status = entry.statuses?.[student.id] ?? "present";
-        if (status === "present") {
+        if (status !== "absent") {
           presentDays += 1;
           currentStreak += 1;
           if (currentStreak > bestPresentStreak) {
@@ -214,7 +214,7 @@ export const calculateStudentSummaries = (
         const entry = classState[date];
         if (!entry?.submitted) continue;
         const status = entry.statuses?.[student.id] ?? "present";
-        if (status === "present") backwardsStreak += 1;
+        if (status !== "absent") backwardsStreak += 1;
         else break;
       }
 
