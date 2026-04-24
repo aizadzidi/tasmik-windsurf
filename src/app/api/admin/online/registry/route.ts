@@ -12,6 +12,7 @@ type StudentRow = {
   id: string;
   name: string;
   assigned_teacher_id: string | null;
+  account_owner_user_id?: string | null;
   parent_name?: string | null;
   parent_contact_number?: string | null;
   crm_stage?: string | null;
@@ -117,7 +118,7 @@ export async function GET(request: NextRequest) {
         const { data: studentRows, error: studentError } = await client
           .from("students")
           .select(
-            "id, name, assigned_teacher_id, parent_name, parent_contact_number, crm_stage, crm_status_reason, record_type"
+            "id, name, assigned_teacher_id, account_owner_user_id, parent_name, parent_contact_number, crm_stage, crm_status_reason, record_type"
           )
           .eq("tenant_id", tenantId)
           .in("id", onlineStudentIds)
@@ -158,6 +159,7 @@ export async function GET(request: NextRequest) {
           id: student.id,
           name: student.name,
           assigned_teacher_id: student.assigned_teacher_id,
+          account_owner_user_id: student.account_owner_user_id ?? null,
           parent_name: student.parent_name ?? null,
           parent_contact_number: student.parent_contact_number ?? null,
           crm_stage: student.crm_stage ?? null,

@@ -119,6 +119,10 @@ export function isMarketingHost(host: string | null): boolean {
   return getMarketingHosts().has(host);
 }
 
+export function isLocalDevelopmentHost(host: string | null): boolean {
+  return host === "localhost" || host === "127.0.0.1";
+}
+
 export function isTenantSubdomainHost(host: string | null): boolean {
   if (!host) return false;
   const baseDomain = getTenantSubdomainBaseDomain();

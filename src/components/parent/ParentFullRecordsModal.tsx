@@ -63,6 +63,8 @@ interface ParentFullRecordsModalProps {
   onRefresh: () => void;
   userId: string;
   viewMode?: ViewMode;
+  preloadedReports?: Report[];
+  preloadedJuzTests?: JuzTestRecord[];
 }
 
 export default function ParentFullRecordsModal({ 
@@ -70,12 +72,14 @@ export default function ParentFullRecordsModal({
   onClose, 
   onRefresh: _onRefresh,
   userId: _userId,
-  viewMode = 'tasmik'
+  viewMode = 'tasmik',
+  preloadedReports,
+  preloadedJuzTests
 }: ParentFullRecordsModalProps) {
   // onRefresh is not used in this component but kept for interface compatibility
-  const [reports, setReports] = useState<Report[]>([]);
-  const [juzTests, setJuzTests] = useState<JuzTestRecord[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [reports, setReports] = useState<Report[]>(preloadedReports ?? []);
+  const [juzTests, setJuzTests] = useState<JuzTestRecord[]>(preloadedJuzTests ?? []);
+  const [loading, setLoading] = useState(!(preloadedReports || preloadedJuzTests));
   const initialLoadRef = useRef(true);
   const murajaahTabTouchedRef = useRef(false);
   const [murajaahTab, setMurajaahTab] = useState<'new' | 'old'>('new');
@@ -135,6 +139,20 @@ export default function ParentFullRecordsModal({
   }, [reports, student.name]);
 
   const fetchStudentReports = useCallback(async () => {
+    if (viewMode === 'juz_tests' && preloadedJuzTests) {
+      setJuzTests(preloadedJuzTests);
+      setLoading(false);
+      initialLoadRef.current = false;
+      return;
+    }
+
+    if (viewMode !== 'juz_tests' && preloadedReports) {
+      setReports(preloadedReports);
+      setLoading(false);
+      initialLoadRef.current = false;
+      return;
+    }
+
     if (initialLoadRef.current) {
       setLoading(true);
     }
@@ -170,7 +188,7 @@ export default function ParentFullRecordsModal({
       setLoading(false);
       initialLoadRef.current = false;
     }
-  }, [student.id, viewMode]);
+  }, [preloadedJuzTests, preloadedReports, student.id, viewMode]);
 
   useEffect(() => {
     fetchStudentReports();

@@ -23,6 +23,8 @@ supabase.auth.onAuthStateChange((event, session) => {
     if (typeof window !== 'undefined') {
       const publicRoutes = new Set([
         '/',
+        '/join',
+        '/join/student',
         '/login',
         '/signup',
         '/forgot-password',

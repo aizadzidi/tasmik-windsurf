@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import ParentFullRecordsModal from "@/components/parent/ParentFullRecordsModal";
 import JuzTestProgressLineChart from "@/components/teacher/JuzTestProgressLineChart";
+import { downloadBlob } from "@/lib/browserDownload";
 import {
   StudentProgressData,
   calculateDaysSinceLastRead,
@@ -428,14 +429,7 @@ export default function ParentPage() {
     }
 
     const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.setAttribute('href', url);
-    a.setAttribute('download', `${child.name}_report_${new Date().toISOString().slice(0,10)}.csv`);
-    a.style.visibility = 'hidden';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    downloadBlob(blob, `${child.name}_report_${new Date().toISOString().slice(0,10)}.csv`);
   };
 
   // PDF download utility - only for Tasmik data
@@ -574,7 +568,8 @@ export default function ParentPage() {
     }
     
     addFooter();
-    doc.save(`${child.name}_report_${new Date().toISOString().slice(0,10)}.pdf`);
+    const pdfBlob = doc.output('blob');
+    downloadBlob(pdfBlob, `${child.name}_report_${new Date().toISOString().slice(0,10)}.pdf`);
   };
 
   if (loading) {

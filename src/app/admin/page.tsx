@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import Link from "next/link";
 import AdminNavbar from "@/components/admin/AdminNavbar";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -841,6 +842,12 @@ export default function AdminPage() {
         </div>
 
       <div className="flex flex-col sm:flex-row gap-3 mb-6">
+        <Link
+          href="/admin/online"
+          className="inline-flex items-center justify-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-5 py-3 text-sm font-semibold text-sky-800 shadow-md transition hover:bg-sky-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40"
+        >
+          Open Online Student Management
+        </Link>
         <button
           type="button"
           onClick={() => setIsClassesModalOpen(true)}
@@ -858,6 +865,14 @@ export default function AdminPage() {
           Add Student
         </button>
       </div>
+
+      <Card className="mb-6 border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+        Online student signup claims are managed in{" "}
+        <Link href="/admin/online" className="font-semibold text-sky-800 underline underline-offset-2">
+          Online Student Management
+        </Link>
+        . Generate the claim link there for any unclaimed online student.
+      </Card>
 
       {/* Students List Section */}
       <Card className="p-4" ref={studentListRef}>

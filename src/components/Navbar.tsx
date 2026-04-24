@@ -26,6 +26,7 @@ export default function Navbar({ programScope }: NavbarProps) {
   // Keep teacher nav mode stable across route transitions by using layout-level scope.
   const isTeacher = pathname.startsWith("/teacher");
   const isParent = pathname.startsWith("/parent");
+  const isStudent = pathname.startsWith("/student");
   const isAdminRoute = pathname.startsWith("/admin");
   const isStaff = pathname.startsWith("/staff");
   const resolvedProgramScope = isTeacher ? teachingProgramScope : programScope;
@@ -70,7 +71,7 @@ export default function Navbar({ programScope }: NavbarProps) {
     return firstAccessiblePage?.path ?? "/admin";
   })();
 
-  const navClasses = isParent
+  const navClasses = isParent || isStudent
     ? "relative z-50 bg-gradient-to-br from-[#f8fafc]/92 via-white/92 to-[#f8fafc]/92 backdrop-blur-xl border-b border-slate-200/50 shadow-md"
     : "relative z-50 bg-white/20 backdrop-blur-xl border-b border-white/30 shadow-lg";
 
@@ -126,6 +127,22 @@ export default function Navbar({ programScope }: NavbarProps) {
             )
           },
         ]
+      };
+    } else if (isStudent) {
+      return {
+        dashboardHref: "/student",
+        dashboardLabel: "Hafazan Report",
+        navItems: [
+          {
+            href: "/student",
+            label: "Hafazan Report",
+            icon: (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              </svg>
+            ),
+          },
+        ],
       };
     } else if (isTeacher) {
       return {

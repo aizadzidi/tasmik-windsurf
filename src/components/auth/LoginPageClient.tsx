@@ -112,6 +112,10 @@ export default function LoginPageClient({
       router.push("/staff");
       return;
     }
+    if (userData.role === "student") {
+      router.push("/student");
+      return;
+    }
     router.push("/parent");
   }
 
@@ -233,12 +237,25 @@ export default function LoginPageClient({
             </Link>
 
             {tenantHostDetected ? (
-              <Link
-                href="/join"
-                className="text-emerald-700 hover:text-emerald-800 font-medium transition-colors block text-sm"
-              >
-                New here? Join this school
-              </Link>
+              <div className="rounded-2xl border border-slate-200/70 bg-white/40 p-4 text-left">
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+                  Create Account
+                </p>
+                <div className="mt-3 grid gap-2">
+                  <Link
+                    href="/join"
+                    className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 transition-colors hover:bg-emerald-100"
+                  >
+                    Parent or invited staff
+                  </Link>
+                  <Link
+                    href="/join/student"
+                    className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800 transition-colors hover:bg-blue-100"
+                  >
+                    Online student
+                  </Link>
+                </div>
+              </div>
             ) : null}
           </div>
         </div>

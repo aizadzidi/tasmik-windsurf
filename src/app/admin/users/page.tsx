@@ -24,7 +24,7 @@ type UserRow = {
   id: string;
   name: string | null;
   email: string | null;
-  role: "admin" | "teacher" | "parent" | "general_worker";
+  role: "admin" | "teacher" | "parent" | "general_worker" | "student";
   created_at?: string | null;
   linked_children?: Array<{
     id: string;
@@ -55,12 +55,13 @@ type SortOption =
   | "registered-newest"
   | "registered-oldest";
 
-const ROLE_OPTIONS: UserRow["role"][] = ["admin", "teacher", "general_worker", "parent"];
+const ROLE_OPTIONS: UserRow["role"][] = ["admin", "teacher", "general_worker", "parent", "student"];
 const ROLE_LABELS: Record<UserRow["role"], string> = {
   admin: "Admin",
   teacher: "Teacher",
   general_worker: "General Worker",
   parent: "Parent",
+  student: "Student",
 };
 const ASSIGNMENT_LABELS: Record<AssignmentValue, string> = {
   campus: "Campus",

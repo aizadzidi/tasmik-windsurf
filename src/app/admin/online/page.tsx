@@ -6,6 +6,11 @@ import AdminNavbar from "@/components/admin/AdminNavbar";
 import AdminScopeSwitch from "@/components/admin/AdminScopeSwitch";
 import ClassDistributionChart from "@/components/admin/ClassDistributionChart";
 import TeacherAssignmentChart from "@/components/admin/TeacherAssignmentChart";
+import {
+  AdminOnlineClaimAccessCell,
+  AdminOnlineClaimPanel,
+  type ClaimLinkResult,
+} from "@/components/admin/online/AdminOnlineClaimAccess";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { authFetch } from "@/lib/authFetch";
@@ -14,6 +19,7 @@ type OnlineStudent = {
   id: string;
   name: string;
   assigned_teacher_id: string | null;
+  account_owner_user_id?: string | null;
   parent_name?: string | null;
   parent_contact_number?: string | null;
   crm_stage?: string | null;
@@ -169,6 +175,10 @@ export default function AdminOnlinePage() {
   const [packageForm, setPackageForm] = useState<PackageForm>(defaultPackageForm);
   const [packageError, setPackageError] = useState("");
   const [packageSuccess, setPackageSuccess] = useState("");
+  const [claimBusyStudentId, setClaimBusyStudentId] = useState<string | null>(null);
+  const [activeClaimStudentId, setActiveClaimStudentId] = useState<string | null>(null);
+  const [claimLinkResultsByStudentId, setClaimLinkResultsByStudentId] = useState<Record<string, ClaimLinkResult>>({});
+  const [claimErrorsByStudentId, setClaimErrorsByStudentId] = useState<Record<string, string>>({});
 
   const studentListRef = useRef<HTMLDivElement | null>(null);
   const packageFormRef = useRef<HTMLDivElement | null>(null);
@@ -296,6 +306,11 @@ export default function AdminOnlinePage() {
 
   const unassignedTeacherCount = useMemo(
     () => students.filter((student) => !student.assigned_teacher_id).length,
+    [students]
+  );
+
+  const claimedPortalCount = useMemo(
+    () => students.filter((student) => Boolean(student.account_owner_user_id)).length,
     [students]
   );
 
@@ -654,6 +669,19 @@ export default function AdminOnlinePage() {
       }
 
       await refreshData(false);
+      setClaimLinkResultsByStudentId((prev) => {
+        if (!prev[studentId]) return prev;
+        const next = { ...prev };
+        delete next[studentId];
+        return next;
+      });
+      setClaimErrorsByStudentId((prev) => {
+        if (!prev[studentId]) return prev;
+        const next = { ...prev };
+        delete next[studentId];
+        return next;
+      });
+      setActiveClaimStudentId((current) => (current === studentId ? null : current));
       setSuccess("Online student deleted successfully.");
       clearSuccessSoon();
     } catch (deleteError) {
@@ -662,6 +690,51 @@ export default function AdminOnlinePage() {
       setBusy(false);
     }
   };
+
+  const handleGenerateClaimLink = async (student: OnlineStudent) => {
+    setClaimBusyStudentId(student.id);
+    setClaimErrorsByStudentId((prev) => {
+      if (!prev[student.id]) return prev;
+      return { ...prev, [student.id]: "" };
+    });
+    try {
+      const response = await authFetch("/api/admin/online/claim-links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ student_id: student.id }),
+      });
+      const payload = (await response.json()) as ClaimLinkResult & { error?: string };
+      if (!response.ok) {
+        throw new Error(extractError(payload, "Failed to generate claim link"));
+      }
+      setClaimLinkResultsByStudentId((prev) => ({
+        ...prev,
+        [student.id]: {
+          student_id: payload.student_id,
+          student_name: payload.student_name,
+          claim_url: payload.claim_url,
+          expires_at: payload.expires_at,
+        },
+      }));
+      setClaimErrorsByStudentId((prev) => {
+        if (!prev[student.id]) return prev;
+        return { ...prev, [student.id]: "" };
+      });
+      setActiveClaimStudentId(student.id);
+    } catch (claimError) {
+      setClaimErrorsByStudentId((prev) => ({
+        ...prev,
+        [student.id]: claimError instanceof Error ? claimError.message : "Failed to generate claim link",
+      }));
+      setActiveClaimStudentId(student.id);
+    } finally {
+      setClaimBusyStudentId(null);
+    }
+  };
+
+  const handleToggleClaimPanel = useCallback((studentId: string) => {
+    setActiveClaimStudentId((current) => (current === studentId ? null : studentId));
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
@@ -686,7 +759,12 @@ export default function AdminOnlinePage() {
           <Card className="mb-4 border border-green-200 bg-green-50 p-4 text-sm text-green-700">{success}</Card>
         )}
 
-        <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-5">
+        <Card className="mb-4 border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+          Create one-time signup links from the <span className="font-semibold">Portal Access</span> column.
+          Only rows marked <span className="font-semibold">Unclaimed</span> can generate a new link.
+        </Card>
+
+        <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-6">
           <Card className="p-4">
             <div className="text-2xl font-bold">{students.length}</div>
             <div className="text-sm text-gray-600">Total Online Students</div>
@@ -702,6 +780,10 @@ export default function AdminOnlinePage() {
           <Card className="p-4">
             <div className="text-2xl font-bold text-purple-600">{activeCrmCount}</div>
             <div className="text-sm text-gray-600">CRM Active</div>
+          </Card>
+          <Card className="p-4">
+            <div className="text-2xl font-bold text-sky-600">{claimedPortalCount}</div>
+            <div className="text-sm text-gray-600">Claimed Portals</div>
           </Card>
           {filteredStudents.length !== students.length ? (
             <Card className="p-4">
@@ -821,16 +903,27 @@ export default function AdminOnlinePage() {
                     Packages
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                    Portal Access
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 bg-white">
-                {filteredStudents.map((student) => (
-                  <React.Fragment key={student.id}>
+                {filteredStudents.map((student) => {
+                  const claimResult = claimLinkResultsByStudentId[student.id] ?? null;
+                  const claimError = claimErrorsByStudentId[student.id] ?? null;
+                  const isClaimPanelOpen =
+                    activeClaimStudentId === student.id &&
+                    !student.account_owner_user_id &&
+                    (Boolean(claimResult) || Boolean(claimError));
+
+                  return (
+                    <React.Fragment key={student.id}>
                     <tr>
                       {editStudentId === student.id ? (
-                        <td className="px-4 py-3" colSpan={7}>
+                        <td className="px-4 py-3" colSpan={8}>
                           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                             <div>
                               <label className="mb-1 block text-xs font-medium text-gray-700">Student Name</label>
@@ -971,40 +1064,71 @@ export default function AdminOnlinePage() {
                               ) : null}
                             </div>
                           </td>
+                          <td className="px-4 py-3 text-gray-600">
+                            <AdminOnlineClaimAccessCell
+                              studentName={student.name}
+                              claimed={Boolean(student.account_owner_user_id)}
+                              hasLink={Boolean(claimResult)}
+                              isExpanded={isClaimPanelOpen}
+                              isGenerating={claimBusyStudentId === student.id}
+                              error={isClaimPanelOpen ? null : claimError}
+                              onGenerate={() => void handleGenerateClaimLink(student)}
+                              onToggleExpanded={() => handleToggleClaimPanel(student.id)}
+                            />
+                          </td>
                           <td className="px-4 py-3">
-                            <div className="flex flex-col gap-2">
-                              <button
+                            <div className="flex min-w-[150px] flex-col gap-2">
+                              <Button
                                 type="button"
                                 onClick={() => handleStartEditStudent(student)}
                                 disabled={busy}
-                                className="rounded bg-blue-600 px-3 py-1 text-xs text-white hover:bg-blue-700 disabled:opacity-50"
+                                variant="outline"
+                                size="sm"
+                                className="justify-start rounded-2xl border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                               >
                                 Edit
-                              </button>
-                              <button
+                              </Button>
+                              <Button
                                 type="button"
                                 onClick={() => void openPackageManager(student)}
                                 disabled={packageBusy}
-                                className="rounded border border-slate-300 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                                variant="ghost"
+                                size="sm"
+                                className="justify-start rounded-2xl text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                               >
                                 {packageStudentId === student.id ? "Hide Packages" : "Show Packages"}
-                              </button>
-                              <button
+                              </Button>
+                              <Button
                                 type="button"
                                 onClick={() => handleDeleteStudent(student.id)}
                                 disabled={busy}
-                                className="rounded bg-red-600 px-3 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50"
+                                variant="destructive"
+                                size="sm"
+                                className="justify-start rounded-2xl"
                               >
                                 Delete
-                              </button>
+                              </Button>
                             </div>
                           </td>
                         </>
                       )}
                     </tr>
+                    {isClaimPanelOpen && editStudentId !== student.id ? (
+                      <tr>
+                        <td colSpan={8} className="bg-slate-50 px-4 pb-4 pt-0">
+                          <AdminOnlineClaimPanel
+                            studentName={student.name}
+                            result={claimResult}
+                            error={claimError}
+                            isGenerating={claimBusyStudentId === student.id}
+                            onGenerate={() => void handleGenerateClaimLink(student)}
+                          />
+                        </td>
+                      </tr>
+                    ) : null}
                     {packageStudentId === student.id && editStudentId !== student.id ? (
                       <tr>
-                        <td colSpan={7} className="bg-slate-50 px-4 py-4">
+                        <td colSpan={8} className="bg-slate-50 px-4 py-4">
                           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                               <div>
@@ -1241,8 +1365,9 @@ export default function AdminOnlinePage() {
                         </td>
                       </tr>
                     ) : null}
-                  </React.Fragment>
-                ))}
+                    </React.Fragment>
+                  );
+                })}
                 {loading && (
                   <tr>
                     <td colSpan={7} className="py-8 text-center text-gray-500">

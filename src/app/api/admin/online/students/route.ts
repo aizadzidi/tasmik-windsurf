@@ -12,6 +12,7 @@ type CreateOnlineStudentBody = {
   name?: string;
   parent_id?: string | null;
   assigned_teacher_id?: string | null;
+  account_owner_user_id?: string | null;
   parent_name?: string | null;
   parent_contact_number?: string | null;
   crm_stage?: string | null;
@@ -102,7 +103,7 @@ export async function GET(request: NextRequest) {
       const { data: students, error: studentError } = await client
         .from("students")
         .select(
-          "id, name, record_type, assigned_teacher_id, parent_name, parent_contact_number, crm_stage, crm_status_reason"
+          "id, name, record_type, assigned_teacher_id, account_owner_user_id, parent_name, parent_contact_number, crm_stage, crm_status_reason"
         )
         .eq("tenant_id", tenantId)
         .in("id", onlineStudentIds)
@@ -175,6 +176,7 @@ export async function POST(request: NextRequest) {
           crm_stage: "interested",
           parent_id: toNullable(body.parent_id),
           assigned_teacher_id: toNullable(body.assigned_teacher_id),
+          account_owner_user_id: toNullable(body.account_owner_user_id),
           parent_name: toNullable(body.parent_name),
           parent_contact_number: toNullable(body.parent_contact_number),
         })
@@ -252,6 +254,7 @@ export async function PUT(request: NextRequest) {
           name,
           parent_id: toNullable(body.parent_id),
           assigned_teacher_id: toNullable(body.assigned_teacher_id),
+          account_owner_user_id: toNullable(body.account_owner_user_id),
           parent_name: toNullable(body.parent_name),
           parent_contact_number: toNullable(body.parent_contact_number),
           crm_stage: toNullable(body.crm_stage),
@@ -260,7 +263,7 @@ export async function PUT(request: NextRequest) {
         .eq("id", id)
         .eq("tenant_id", tenantId)
         .select(
-          "id, name, record_type, assigned_teacher_id, parent_name, parent_contact_number, crm_stage, crm_status_reason"
+          "id, name, record_type, assigned_teacher_id, account_owner_user_id, parent_name, parent_contact_number, crm_stage, crm_status_reason"
         )
         .single();
 

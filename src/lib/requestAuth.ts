@@ -24,6 +24,17 @@ export type TenantAuthGuardResult =
   | { ok: true; userId: string; email: string | null; tenantId: string }
   | { ok: false; response: NextResponse };
 
+export type StudentTenantAuthGuardResult =
+  | {
+      ok: true;
+      userId: string;
+      email: string | null;
+      tenantId: string;
+      studentId: string;
+      studentName: string | null;
+    }
+  | { ok: false; response: NextResponse };
+
 async function resolveTeacherTenantId(userId: string): Promise<string | null> {
   const tenantIds = new Set<string>();
 
@@ -208,4 +219,69 @@ export async function requireAuthenticatedTenantUser(
   }
 
   return { ok: true, userId: auth.userId, email: auth.email, tenantId: tenants[0].id as string };
+}
+
+export async function requireAuthenticatedStudentTenantUser(
+  request: NextRequest
+): Promise<StudentTenantAuthGuardResult> {
+  const auth = await requireAuthenticatedTenantUser(request);
+  if (!auth.ok) return auth;
+
+  if (!supabaseAdmin) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "SUPABASE_SERVICE_ROLE_KEY is required for student access" },
+        { status: 500 }
+      ),
+    };
+  }
+
+  const [userRowRes, studentRes] = await Promise.all([
+    supabaseAdmin.from("users").select("role").eq("id", auth.userId).maybeSingle(),
+    supabaseAdmin
+      .from("students")
+      .select("id, name")
+      .eq("tenant_id", auth.tenantId)
+      .eq("account_owner_user_id", auth.userId)
+      .neq("record_type", "prospect")
+      .maybeSingle(),
+  ]);
+
+  if (userRowRes.error) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: userRowRes.error.message }, { status: 500 }),
+    };
+  }
+
+  if (userRowRes.data?.role !== "student") {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+    };
+  }
+
+  if (studentRes.error) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: studentRes.error.message }, { status: 500 }),
+    };
+  }
+
+  if (!studentRes.data?.id) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: "Student profile not found." }, { status: 404 }),
+    };
+  }
+
+  return {
+    ok: true,
+    userId: auth.userId,
+    email: auth.email,
+    tenantId: auth.tenantId,
+    studentId: studentRes.data.id,
+    studentName: studentRes.data.name ?? null,
+  };
 }

@@ -157,7 +157,33 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
   }
 
   return (
-    <JoinShell schoolName={schoolName}>
+    <JoinShell
+      schoolName={schoolName}
+      title={inviteCode ? `Join ${schoolName ? schoolName : "School"}` : "Parent & Staff Signup"}
+      description={
+        inviteCode
+          ? "Create your account to get started."
+          : "Use this page for parent accounts or invited staff only."
+      }
+    >
+      {!inviteCode ? (
+        <div className="mb-5 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-4 text-sm text-blue-900">
+          <p className="font-semibold">Online student?</p>
+          <p className="mt-1 text-blue-800">
+            Online student signup uses a separate flow with optional claim code support.
+          </p>
+          <Link href="/join/student" className="mt-3 inline-block">
+            <Button
+              type="button"
+              variant="outline"
+              className="border-blue-200 bg-white text-blue-700 hover:bg-blue-100"
+            >
+              Go to Student Signup
+            </Button>
+          </Link>
+        </div>
+      ) : null}
+
       {/* Tab switcher */}
       <div className="flex rounded-xl bg-white/40 p-1 mb-6">
         <button
@@ -277,7 +303,35 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
   );
 }
 
-function JoinShell({ children, schoolName }: { children: React.ReactNode; schoolName?: string | null }) {
+export function JoinShell({
+  children,
+  schoolName,
+  title,
+  description,
+}: {
+  children: React.ReactNode;
+  schoolName?: string | null;
+  title?: string;
+  description?: string;
+}) {
+  return (
+    <JoinShellFrame schoolName={schoolName} title={title} description={description}>
+      {children}
+    </JoinShellFrame>
+  );
+}
+
+function JoinShellFrame({
+  children,
+  schoolName,
+  title,
+  description,
+}: {
+  children: React.ReactNode;
+  schoolName?: string | null;
+  title?: string;
+  description?: string;
+}) {
   return (
     <main className="relative min-h-screen flex flex-col items-center justify-center py-8 px-2 bg-gradient-to-br from-[#b1c7f9] via-[#e0e7ff] to-[#b1f9e6] animate-gradient-move overflow-hidden">
       <div className="absolute -top-40 -left-40 w-[500px] h-[500px] bg-gradient-to-tr from-blue-300 via-purple-200 to-blue-100 rounded-full opacity-40 blur-3xl animate-pulse-slow" />
@@ -293,10 +347,10 @@ function JoinShell({ children, schoolName }: { children: React.ReactNode; school
             className="mx-auto mb-4"
           />
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            Join {schoolName ? schoolName : "School"}
+            {title ?? `Join ${schoolName ? schoolName : "School"}`}
           </h1>
           <p className="text-gray-700 text-sm">
-            Create your account to get started.
+            {description ?? "Create your account to get started."}
           </p>
         </div>
 
@@ -328,5 +382,5 @@ function JoinShell({ children, schoolName }: { children: React.ReactNode; school
         }
       `}</style>
     </main>
-  );
+  )
 }

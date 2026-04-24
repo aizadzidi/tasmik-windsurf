@@ -23,6 +23,7 @@ interface JuzTest {
 interface JuzTestProgressLineChartProps {
   studentId?: string;
   className?: string;
+  tests?: JuzTest[];
 }
 
 interface ChartDataPoint {
@@ -47,13 +48,21 @@ interface ChartSeries {
 
 export default function JuzTestProgressLineChart({ 
   studentId, 
-  className = "" 
+  className = "",
+  tests: externalTests,
 }: JuzTestProgressLineChartProps) {
   const [tests, setTests] = useState<JuzTest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchTestData = useCallback(async () => {
+    if (externalTests) {
+      setTests(externalTests);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
@@ -85,7 +94,7 @@ export default function JuzTestProgressLineChart({
     } finally {
       setLoading(false);
     }
-  }, [studentId]);
+  }, [externalTests, studentId]);
 
   useEffect(() => {
     fetchTestData();

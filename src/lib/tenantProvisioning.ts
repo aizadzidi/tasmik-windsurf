@@ -64,6 +64,7 @@ export function mapUserRoleToProfile(role?: string | null) {
   if (role === "teacher") return "teacher";
   if (role === "general_worker") return "general_worker";
   if (role === "parent") return "parent";
+  if (role === "student") return "student";
   return "parent";
 }
 
