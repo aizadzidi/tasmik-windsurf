@@ -6,7 +6,7 @@ import {
 } from "@/lib/hostResolution";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdminClient";
 import { jsonError } from "@/lib/publicApi";
-import { hashStudentClaimToken } from "@/lib/studentClaims";
+import { buildStudentClaimPreviewName, hashStudentClaimToken } from "@/lib/studentClaims";
 import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
 
 type ClaimLookupRow = {
@@ -90,8 +90,7 @@ export async function GET(request: NextRequest) {
 
     const claim = claimRes.data;
     const student = Array.isArray(claim?.students) ? claim.students[0] : claim?.students;
-    const studentName = (student?.name ?? "").trim();
-    const hasLockedName = studentName.length > 0;
+    const previewName = buildStudentClaimPreviewName(student?.name);
     const isExpired = claim?.expires_at ? new Date(claim.expires_at).getTime() <= Date.now() : true;
     const isUnavailable =
       !claim?.student_id ||
@@ -114,9 +113,9 @@ export async function GET(request: NextRequest) {
       ok: true,
       student: {
         id: student.id,
-        name: studentName,
-        display_name: hasLockedName ? studentName : "Student",
-        name_locked: hasLockedName,
+        name: previewName.name,
+        display_name: previewName.displayName,
+        name_locked: previewName.nameLocked,
       },
       expires_at: claim.expires_at,
       request_id: requestId,

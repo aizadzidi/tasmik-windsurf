@@ -337,6 +337,24 @@ export async function POST(request: NextRequest) {
 
     let userRowCreatedByRequest = false;
     let profileUpsertedByRequest = false;
+    const rollbackClaimStudentLink = async () => {
+      if (!validatedClaim) return;
+
+      const { error } = await supabaseAdmin
+        .from("students")
+        .update({ account_owner_user_id: null })
+        .eq("tenant_id", tenantId)
+        .eq("id", validatedClaim.student_id)
+        .eq("account_owner_user_id", userId);
+      if (error) {
+        console.error("student/register claim cleanup failed to detach student", {
+          requestId,
+          userId,
+          studentId: validatedClaim.student_id,
+          error,
+        });
+      }
+    };
     const cleanupClaimArtifacts = async () => {
       if (!validatedClaim) return;
 
@@ -381,6 +399,10 @@ export async function POST(request: NextRequest) {
           });
         }
       }
+    };
+    const cleanupClaimAttempt = async () => {
+      await rollbackClaimStudentLink();
+      await cleanupClaimArtifacts();
     };
 
     const { error: userUpsertError } = await supabaseAdmin.from("users").upsert(
@@ -453,6 +475,7 @@ export async function POST(request: NextRequest) {
 
       const profileErrorResponse = await upsertTenantProfile();
       if (profileErrorResponse) {
+        await cleanupClaimAttempt();
         return profileErrorResponse;
       }
 
@@ -468,6 +491,7 @@ export async function POST(request: NextRequest) {
         .is("consumed_at", null)
         .is("revoked_at", null);
       if (consumeClaimRes.error) {
+        await cleanupClaimAttempt();
         return jsonError(requestId, {
           error: "Unable to finalize claim.",
           code: "CLAIM_CONSUME_FAILED",

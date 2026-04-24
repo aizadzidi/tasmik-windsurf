@@ -2,6 +2,22 @@ import { createHash, randomBytes } from "crypto";
 
 export const ONLINE_STUDENT_CLAIM_TTL_HOURS = 24 * 14;
 
+export type StudentClaimPreviewName = {
+  name: string;
+  displayName: string;
+  nameLocked: boolean;
+};
+
+export function buildStudentClaimPreviewName(name: string | null | undefined): StudentClaimPreviewName {
+  const trimmedName = (name ?? "").trim();
+
+  return {
+    name: trimmedName,
+    displayName: trimmedName || "Student",
+    nameLocked: trimmedName.length > 0,
+  };
+}
+
 export function hashStudentClaimToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
