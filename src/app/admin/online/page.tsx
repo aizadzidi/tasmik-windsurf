@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, RotateCcw } from "lucide-react";
+import { Copy, Plus, RotateCcw } from "lucide-react";
 import AdminNavbar from "@/components/admin/AdminNavbar";
 import AdminScopeSwitch from "@/components/admin/AdminScopeSwitch";
 import ClassDistributionChart from "@/components/admin/ClassDistributionChart";
@@ -18,6 +18,7 @@ import { authFetch } from "@/lib/authFetch";
 type OnlineStudent = {
   id: string;
   name: string;
+  parent_id?: string | null;
   assigned_teacher_id: string | null;
   account_owner_user_id?: string | null;
   parent_name?: string | null;
@@ -71,6 +72,13 @@ type RegistryPayload = {
 type PackageAssignmentsPayload = {
   assignments?: PackageAssignmentDetail[];
   warning?: string;
+};
+
+type FamilyClaimLinkResult = {
+  student_ids: string[];
+  student_names: string[];
+  claim_url: string;
+  expires_at: string;
 };
 
 type EditStudentForm = {
@@ -179,9 +187,15 @@ export default function AdminOnlinePage() {
   const [activeClaimStudentId, setActiveClaimStudentId] = useState<string | null>(null);
   const [claimLinkResultsByStudentId, setClaimLinkResultsByStudentId] = useState<Record<string, ClaimLinkResult>>({});
   const [claimErrorsByStudentId, setClaimErrorsByStudentId] = useState<Record<string, string>>({});
+  const [familyClaimStudentIds, setFamilyClaimStudentIds] = useState<string[]>([]);
+  const [familyClaimBusy, setFamilyClaimBusy] = useState(false);
+  const [familyClaimResult, setFamilyClaimResult] = useState<FamilyClaimLinkResult | null>(null);
+  const [familyClaimError, setFamilyClaimError] = useState("");
+  const [familyClaimCopyMessage, setFamilyClaimCopyMessage] = useState("");
 
   const studentListRef = useRef<HTMLDivElement | null>(null);
   const packageFormRef = useRef<HTMLDivElement | null>(null);
+  const familyClaimInputRef = useRef<HTMLInputElement | null>(null);
 
   const refreshData = useCallback(
     async (withLoading = true) => {
@@ -681,6 +695,7 @@ export default function AdminOnlinePage() {
         delete next[studentId];
         return next;
       });
+      setFamilyClaimStudentIds((current) => current.filter((id) => id !== studentId));
       setActiveClaimStudentId((current) => (current === studentId ? null : current));
       setSuccess("Online student deleted successfully.");
       clearSuccessSoon();
@@ -735,6 +750,82 @@ export default function AdminOnlinePage() {
   const handleToggleClaimPanel = useCallback((studentId: string) => {
     setActiveClaimStudentId((current) => (current === studentId ? null : studentId));
   }, []);
+
+  const toggleFamilyClaimStudent = (studentId: string) => {
+    setFamilyClaimStudentIds((current) =>
+      current.includes(studentId)
+        ? current.filter((id) => id !== studentId)
+        : [...current, studentId]
+    );
+    setFamilyClaimError("");
+    setFamilyClaimResult(null);
+    setFamilyClaimCopyMessage("");
+  };
+
+  const handleGenerateFamilyClaimLink = async () => {
+    if (familyClaimStudentIds.length < 2) {
+      setFamilyClaimError("Select at least two students for a family claim link.");
+      return;
+    }
+
+    setFamilyClaimBusy(true);
+    setFamilyClaimError("");
+    setFamilyClaimResult(null);
+    setFamilyClaimCopyMessage("");
+
+    try {
+      const response = await authFetch("/api/admin/online/family-claim-links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ student_ids: familyClaimStudentIds }),
+      });
+      const payload = (await response.json()) as FamilyClaimLinkResult & { error?: string };
+      if (!response.ok) {
+        throw new Error(extractError(payload, "Failed to generate family claim link"));
+      }
+      setFamilyClaimResult({
+        student_ids: payload.student_ids ?? familyClaimStudentIds,
+        student_names: payload.student_names ?? [],
+        claim_url: payload.claim_url,
+        expires_at: payload.expires_at,
+      });
+    } catch (claimError) {
+      setFamilyClaimError(
+        claimError instanceof Error ? claimError.message : "Failed to generate family claim link"
+      );
+    } finally {
+      setFamilyClaimBusy(false);
+    }
+  };
+
+  const handleCopyFamilyClaimLink = async () => {
+    if (!familyClaimResult?.claim_url) return;
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard API unavailable");
+      }
+      await navigator.clipboard.writeText(familyClaimResult.claim_url);
+      setFamilyClaimCopyMessage("Family claim link copied.");
+    } catch {
+      const input = familyClaimInputRef.current;
+      if (input) {
+        input.focus();
+        input.select();
+        input.setSelectionRange(0, input.value.length);
+      }
+
+      try {
+        const copied = document.execCommand("copy");
+        setFamilyClaimCopyMessage(
+          copied
+            ? "Family claim link copied."
+            : "Copy is blocked here. The link is selected for manual copy."
+        );
+      } catch {
+        setFamilyClaimCopyMessage("Copy is blocked here. The link is selected for manual copy.");
+      }
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
@@ -881,9 +972,75 @@ export default function AdminOnlinePage() {
           </div>
 
           <div className="overflow-x-auto rounded-lg border">
+            <div className="border-b border-slate-200 bg-slate-50 p-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-900">Family Claim Link</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Select 2+ existing students to generate one link for a Family Account.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => void handleGenerateFamilyClaimLink()}
+                  disabled={familyClaimBusy || familyClaimStudentIds.length < 2}
+                  className="rounded-2xl bg-slate-900 text-white hover:bg-slate-800"
+                >
+                  {familyClaimBusy
+                    ? "Creating..."
+                    : `Create Family Link (${familyClaimStudentIds.length})`}
+                </Button>
+              </div>
+
+              {familyClaimError ? (
+                <p className="mt-3 text-sm text-rose-600" role="alert">
+                  {familyClaimError}
+                </p>
+              ) : null}
+
+              {familyClaimResult ? (
+                <div className="mt-4 rounded-2xl border border-emerald-200 bg-white p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Family claim link ready</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {familyClaimResult.student_names.join(", ")}
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                      Expires {new Date(familyClaimResult.expires_at).toLocaleDateString("en-MY")}
+                    </span>
+                  </div>
+                  <div className="mt-3 flex flex-col gap-2 md:flex-row">
+                    <input
+                      ref={familyClaimInputRef}
+                      type="text"
+                      readOnly
+                      value={familyClaimResult.claim_url}
+                      className="h-10 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 font-mono text-xs text-slate-700"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 rounded-xl bg-white"
+                      onClick={() => void handleCopyFamilyClaimLink()}
+                    >
+                      <Copy className="size-4" />
+                      Copy
+                    </Button>
+                  </div>
+                  {familyClaimCopyMessage ? (
+                    <p className="mt-2 text-sm text-slate-500">{familyClaimCopyMessage}</p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                    Family
+                  </th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                     Student Name
                   </th>
@@ -923,7 +1080,7 @@ export default function AdminOnlinePage() {
                     <React.Fragment key={student.id}>
                     <tr>
                       {editStudentId === student.id ? (
-                        <td className="px-4 py-3" colSpan={8}>
+                        <td className="px-4 py-3" colSpan={9}>
                           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                             <div>
                               <label className="mb-1 block text-xs font-medium text-gray-700">Student Name</label>
@@ -1032,6 +1189,18 @@ export default function AdminOnlinePage() {
                         </td>
                       ) : (
                         <>
+                          <td className="px-4 py-3">
+                            <input
+                              type="checkbox"
+                              checked={familyClaimStudentIds.includes(student.id)}
+                              onChange={() => toggleFamilyClaimStudent(student.id)}
+                              aria-label={`Select ${student.name} for family claim`}
+                              className="size-4 rounded border-slate-300 text-slate-900"
+                            />
+                            {student.parent_id ? (
+                              <p className="mt-1 text-[11px] text-amber-600">Linked</p>
+                            ) : null}
+                          </td>
                           <td className="px-4 py-3 font-medium text-gray-900">{student.name}</td>
                           <td className="px-4 py-3 text-gray-600">
                             {student.parent_name || "-"}
@@ -1115,7 +1284,7 @@ export default function AdminOnlinePage() {
                     </tr>
                     {isClaimPanelOpen && editStudentId !== student.id ? (
                       <tr>
-                        <td colSpan={8} className="bg-slate-50 px-4 pb-4 pt-0">
+                        <td colSpan={9} className="bg-slate-50 px-4 pb-4 pt-0">
                           <AdminOnlineClaimPanel
                             studentName={student.name}
                             result={claimResult}
@@ -1128,7 +1297,7 @@ export default function AdminOnlinePage() {
                     ) : null}
                     {packageStudentId === student.id && editStudentId !== student.id ? (
                       <tr>
-                        <td colSpan={8} className="bg-slate-50 px-4 py-4">
+                        <td colSpan={9} className="bg-slate-50 px-4 py-4">
                           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                               <div>

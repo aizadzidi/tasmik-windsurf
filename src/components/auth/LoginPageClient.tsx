@@ -4,14 +4,18 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
+import { ArrowLeft, ArrowRight, Monitor, School, UsersRound, UserRound } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Alert } from "@/components/ui/Alert";
+import { Modal } from "@/components/ui/Modal";
 
 type LoginPageClientProps = {
   tenantBaseDomain: string;
 };
+
+type AccountModalStep = "signupPath" | "onlineType";
 
 function isTenantHost(hostname: string, tenantBaseDomain: string): boolean {
   const host = hostname.toLowerCase();
@@ -29,12 +33,20 @@ export default function LoginPageClient({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [tenantHostDetected, setTenantHostDetected] = useState(false);
+  const [accountModalOpen, setAccountModalOpen] = useState(false);
+  const [accountModalStep, setAccountModalStep] = useState<AccountModalStep>("signupPath");
   const router = useRouter();
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     setTenantHostDetected(isTenantHost(window.location.hostname, tenantBaseDomain));
   }, [tenantBaseDomain]);
+
+  useEffect(() => {
+    router.prefetch("/join/campus");
+    router.prefetch("/join/student");
+    router.prefetch("/join/family");
+  }, [router]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -158,31 +170,43 @@ export default function LoginPageClient({
     }
   }
 
-  return (
-    <main className="relative min-h-screen flex flex-col items-center justify-center py-8 px-2 bg-gradient-to-br from-[#b1c7f9] via-[#e0e7ff] to-[#b1f9e6] animate-gradient-move overflow-hidden">
-      <div className="absolute -top-40 -left-40 w-[500px] h-[500px] bg-gradient-to-tr from-blue-300 via-purple-200 to-blue-100 rounded-full opacity-40 blur-3xl animate-pulse-slow" />
-      <div className="absolute -bottom-32 right-0 w-[400px] h-[400px] bg-gradient-to-br from-blue-200 via-blue-100 to-purple-200 rounded-full opacity-30 blur-2xl animate-pulse-slow" />
+  function openAccountModal() {
+    setAccountModalStep("signupPath");
+    setAccountModalOpen(true);
+  }
 
-      <div className="z-10 w-full max-w-md">
-        <div className="text-center mb-8">
+  function closeAccountModal() {
+    setAccountModalOpen(false);
+    setAccountModalStep("signupPath");
+  }
+
+  function handleAccountChoice(path: "/join/campus" | "/join/student" | "/join/family") {
+    setAccountModalOpen(false);
+    router.push(path);
+  }
+
+  return (
+    <main className="min-h-screen bg-[#f5f7fb] px-4 py-8 text-slate-900">
+      <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-md flex-col justify-center">
+        <div className="mb-7 text-center">
           <Image
             src="/logo-akademi.png"
             alt="Al Khayr Academy Logo"
-            width={80}
-            height={80}
-            className="mx-auto mb-4"
+            width={72}
+            height={72}
+            className="mx-auto mb-5"
           />
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">
+          <h1 className="mb-2 text-3xl font-semibold tracking-tight text-slate-950">
             Al Khayr <span className="text-blue-600">Class</span>
           </h1>
-          <p className="text-gray-700 text-sm">
+          <p className="text-sm text-slate-600">
             Welcome back! Please sign in to continue.
           </p>
         </div>
 
-        <div className="bg-white/30 backdrop-blur-xl border border-white/40 rounded-2xl shadow-2xl p-8">
-          <div className="mb-6">
-            <h2 className="text-xl font-bold text-gray-900 text-center">
+        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.08)] sm:p-7">
+          <div className="mb-6 text-center">
+            <h2 className="text-xl font-semibold text-slate-950">
               Sign In
             </h2>
           </div>
@@ -194,7 +218,7 @@ export default function LoginPageClient({
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all"
+              className="h-12 rounded-lg border-slate-200 bg-slate-50 px-4 text-base focus-visible:ring-blue-500"
             />
 
             <Input
@@ -203,11 +227,11 @@ export default function LoginPageClient({
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all"
+              className="h-12 rounded-lg border-slate-200 bg-slate-50 px-4 text-base focus-visible:ring-blue-500"
             />
 
             {error ? (
-              <Alert variant="error" className="bg-red-100/80 border-red-300/50 backdrop-blur">
+              <Alert variant="error">
                 {error}
               </Alert>
             ) : null}
@@ -215,7 +239,7 @@ export default function LoginPageClient({
             <Button
               type="submit"
               disabled={loading}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl shadow-lg transition-all focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="h-12 w-full rounded-lg bg-blue-600 text-base font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? (
                 <div className="flex items-center justify-center">
@@ -231,58 +255,123 @@ export default function LoginPageClient({
           <div className="mt-6 text-center space-y-3">
             <Link
               href="/forgot-password"
-              className="text-blue-600 hover:text-blue-700 font-medium transition-colors block text-sm"
+              className="block text-sm font-medium text-blue-600 transition-colors hover:text-blue-700"
             >
               Forgot your password?
             </Link>
 
             {tenantHostDetected ? (
-              <div className="rounded-2xl border border-slate-200/70 bg-white/40 p-4 text-left">
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-                  Create Account
-                </p>
-                <div className="mt-3 grid gap-2">
-                  <Link
-                    href="/join"
-                    className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 transition-colors hover:bg-emerald-100"
-                  >
-                    Parent or invited staff
-                  </Link>
-                  <Link
-                    href="/join/student"
-                    className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800 transition-colors hover:bg-blue-100"
-                  >
-                    Online student
-                  </Link>
-                </div>
-              </div>
+              <button
+                type="button"
+                onClick={openAccountModal}
+                className="inline-flex w-full items-center justify-center rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+              >
+                Create Account
+              </button>
             ) : null}
           </div>
         </div>
+
+        <footer className="mt-8 text-center text-sm text-slate-500">
+          &copy; {new Date().getFullYear()} Akademi Al Khayr. Powered by Supabase &amp; Next.js.
+        </footer>
       </div>
 
-      <footer className="z-20 w-full text-center text-sm text-gray-500 mt-8 pb-4">
-        &copy; {new Date().getFullYear()} Akademi Al Khayr. Powered by Supabase &amp; Next.js.
-      </footer>
+      <Modal
+        open={accountModalOpen}
+        title={accountModalStep === "signupPath" ? "Create Account" : "Online Account"}
+        description={
+          accountModalStep === "signupPath"
+            ? "Choose the right signup path."
+            : "Choose who this account is for."
+        }
+        onClose={closeAccountModal}
+      >
+        <div className="min-h-[188px] transition-all duration-200 ease-out">
+          {accountModalStep === "signupPath" ? (
+            <div className="grid gap-3 animate-in fade-in slide-in-from-right-2 duration-200">
+              <button
+                type="button"
+                onClick={() => handleAccountChoice("/join/campus")}
+                className="group flex w-full items-center gap-4 rounded-lg border border-slate-200 bg-white p-4 text-left transition hover:border-blue-200 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+              >
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-700 group-hover:bg-white">
+                  <School className="size-5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-slate-950">Campus</span>
+                  <span className="mt-1 block text-sm text-slate-600">
+                    Parent account or invited staff signup.
+                  </span>
+                </span>
+                <ArrowRight className="size-4 shrink-0 text-slate-400 group-hover:text-blue-700" />
+              </button>
 
-      <style jsx global>{`
-        @keyframes gradient-move {
-          0%,
-          100% {
-            background-position: 0% 50%;
-          }
-          50% {
-            background-position: 100% 50%;
-          }
-        }
-        .animate-gradient-move {
-          background-size: 200% 200%;
-          animation: gradient-move 10s ease-in-out infinite;
-        }
-        .animate-pulse-slow {
-          animation: pulse 8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-        }
-      `}</style>
+              <button
+                type="button"
+                onClick={() => setAccountModalStep("onlineType")}
+                className="group flex w-full items-center gap-4 rounded-lg border border-slate-200 bg-white p-4 text-left transition hover:border-emerald-200 hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+              >
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 group-hover:bg-white">
+                  <Monitor className="size-5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-slate-950">Online</span>
+                  <span className="mt-1 block text-sm text-slate-600">
+                    Student or family online learning account.
+                  </span>
+                </span>
+                <ArrowRight className="size-4 shrink-0 text-slate-400 group-hover:text-emerald-700" />
+              </button>
+            </div>
+          ) : (
+            <div className="grid gap-3 animate-in fade-in slide-in-from-right-2 duration-200">
+              <button
+                type="button"
+                onClick={() => setAccountModalStep("signupPath")}
+                className="mb-1 inline-flex w-fit items-center gap-2 rounded-lg px-2 py-1 text-sm font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              >
+                <ArrowLeft className="size-4" />
+                Back
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleAccountChoice("/join/student")}
+                className="group flex w-full items-center gap-4 rounded-lg border border-slate-200 bg-white p-4 text-left transition hover:border-blue-200 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+              >
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-700 group-hover:bg-white">
+                  <UserRound className="size-5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-slate-950">Individual</span>
+                  <span className="mt-1 block text-sm text-slate-600">
+                    Student account for someone registering for themselves.
+                  </span>
+                </span>
+                <ArrowRight className="size-4 shrink-0 text-slate-400 group-hover:text-blue-700" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleAccountChoice("/join/family")}
+                className="group flex w-full items-center gap-4 rounded-lg border border-slate-200 bg-white p-4 text-left transition hover:border-emerald-200 hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+              >
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 group-hover:bg-white">
+                  <UsersRound className="size-5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-slate-950">Family</span>
+                  <span className="mt-1 block text-sm text-slate-600">
+                    Register children or manage multiple learners.
+                  </span>
+                </span>
+                <ArrowRight className="size-4 shrink-0 text-slate-400 group-hover:text-emerald-700" />
+              </button>
+            </div>
+          )}
+        </div>
+      </Modal>
     </main>
   );
 }

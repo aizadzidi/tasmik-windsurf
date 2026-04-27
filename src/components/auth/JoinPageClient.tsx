@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
+import { ArrowRight, UsersRound, UserRound } from "lucide-react";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Alert } from "@/components/ui/Alert";
+import { Modal } from "@/components/ui/Modal";
 
 type JoinPageClientProps = {
   inviteCode?: string;
@@ -20,10 +22,95 @@ const ROLE_LABELS: Record<string, string> = {
 };
 
 export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
-  const searchParams = useSearchParams();
+  return inviteCode ? <CampusSignupForm inviteCode={inviteCode} /> : <JoinChoiceScreen />;
+}
 
-  const initialRole: TabRole =
-    inviteCode ? "staff" : (searchParams.get("role") === "staff" || searchParams.get("role") === "teacher" ? "staff" : "parent");
+export function CampusJoinPageClient() {
+  return <CampusSignupForm />;
+}
+
+function JoinChoiceScreen() {
+  const router = useRouter();
+  const [accountModalOpen, setAccountModalOpen] = useState(true);
+
+  function handleAccountChoice(path: "/join/student" | "/join/family") {
+    setAccountModalOpen(false);
+    router.push(path);
+  }
+
+  return (
+    <JoinShell
+      title="Create Your Account"
+      description="Choose the account type that matches how you want to manage online learning."
+    >
+      <div className="space-y-4 text-center">
+        <Button
+          type="button"
+          onClick={() => setAccountModalOpen(true)}
+          className="h-11 w-full rounded-lg bg-blue-600 font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus-visible:ring-blue-500"
+        >
+          Choose Account Type
+        </Button>
+
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          Staff members should use the invite link provided by an admin.
+        </div>
+
+        <div className="text-center text-sm">
+          <Link href="/login" className="font-medium text-slate-600 hover:text-slate-900">
+            Already have an account? Sign in
+          </Link>
+        </div>
+      </div>
+
+      <Modal
+        open={accountModalOpen}
+        title="Online Account"
+        description="Choose who this account is for."
+        onClose={() => setAccountModalOpen(false)}
+      >
+        <div className="grid gap-3">
+          <button
+            type="button"
+            onClick={() => handleAccountChoice("/join/student")}
+            className="group flex w-full items-center gap-4 rounded-lg border border-slate-200 bg-white p-4 text-left transition hover:border-blue-200 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-700 group-hover:bg-white">
+              <UserRound className="size-5" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-slate-950">Individual</span>
+              <span className="mt-1 block text-sm text-slate-600">
+                Student account for someone registering for themselves.
+              </span>
+            </span>
+            <ArrowRight className="size-4 shrink-0 text-slate-400 group-hover:text-blue-700" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleAccountChoice("/join/family")}
+            className="group flex w-full items-center gap-4 rounded-lg border border-slate-200 bg-white p-4 text-left transition hover:border-emerald-200 hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 group-hover:bg-white">
+              <UsersRound className="size-5" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-slate-950">Family</span>
+              <span className="mt-1 block text-sm text-slate-600">
+                Register children or manage multiple learners.
+              </span>
+            </span>
+            <ArrowRight className="size-4 shrink-0 text-slate-400 group-hover:text-emerald-700" />
+          </button>
+        </div>
+      </Modal>
+    </JoinShell>
+  );
+}
+
+function CampusSignupForm({ inviteCode }: { inviteCode?: string }) {
+  const initialRole: TabRole = inviteCode ? "staff" : "parent";
 
   const [activeTab, setActiveTab] = useState<TabRole>(initialRole);
   const [name, setName] = useState("");
@@ -142,8 +229,8 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
 
   if (success) {
     return (
-      <JoinShell>
-        <div className="space-y-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-6 text-emerald-900">
+      <JoinShell title="Account created" description="You can now continue to sign in.">
+        <div className="space-y-4 rounded-lg border border-emerald-200 bg-emerald-50 p-6 text-emerald-900">
           <h2 className="text-xl font-semibold">Account created</h2>
           <p className="text-sm">
             Your account is ready. Continue to login and access your dashboard.
@@ -167,31 +254,31 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
       }
     >
       {!inviteCode ? (
-        <div className="mb-5 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-4 text-sm text-blue-900">
-          <p className="font-semibold">Online student?</p>
+        <div className="mb-5 rounded-lg border border-blue-200 bg-blue-50 px-4 py-4 text-sm text-blue-900">
+          <p className="font-semibold">Online signup?</p>
           <p className="mt-1 text-blue-800">
-            Online student signup uses a separate flow with optional claim code support.
+            Student and family online signup uses a separate flow with optional claim code support.
           </p>
-          <Link href="/join/student" className="mt-3 inline-block">
+          <Link href="/join" className="mt-3 inline-block">
             <Button
               type="button"
               variant="outline"
-              className="border-blue-200 bg-white text-blue-700 hover:bg-blue-100"
+              className="rounded-lg border-blue-200 bg-white text-blue-700 hover:bg-blue-100"
             >
-              Go to Student Signup
+              Go to Online Signup
             </Button>
           </Link>
         </div>
       ) : null}
 
       {/* Tab switcher */}
-      <div className="flex rounded-xl bg-white/40 p-1 mb-6">
+      <div className="mb-6 flex rounded-lg bg-slate-100 p-1">
         <button
           type="button"
           onClick={() => switchTab("parent")}
-          className={`flex-1 rounded-lg py-2.5 text-sm font-semibold transition-all ${
+          className={`flex-1 rounded-md py-2.5 text-sm font-semibold transition-all ${
             activeTab === "parent"
-              ? "bg-white shadow text-slate-900"
+              ? "bg-white shadow-sm text-slate-900"
               : "text-slate-500 hover:text-slate-700"
           }`}
         >
@@ -200,9 +287,9 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
         <button
           type="button"
           onClick={() => switchTab("staff")}
-          className={`flex-1 rounded-lg py-2.5 text-sm font-semibold transition-all ${
+          className={`flex-1 rounded-md py-2.5 text-sm font-semibold transition-all ${
             activeTab === "staff"
-              ? "bg-white shadow text-slate-900"
+              ? "bg-white shadow-sm text-slate-900"
               : "text-slate-500 hover:text-slate-700"
           }`}
         >
@@ -218,7 +305,7 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
 
       {/* Show target role from invite validation */}
       {activeTab === "staff" && targetRole && schoolName ? (
-        <div className="mb-4 rounded-lg bg-blue-50 border border-blue-200 px-4 py-2.5 text-sm text-blue-800">
+        <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm text-blue-800">
           Joining as: <span className="font-semibold">{ROLE_LABELS[targetRole] ?? targetRole}</span>
         </div>
       ) : null}
@@ -232,7 +319,7 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
             value={name}
             onChange={(e) => setName(e.target.value)}
             required
-            className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all"
+            className="h-11 rounded-lg border-slate-200 bg-slate-50 px-4 focus-visible:ring-blue-500"
           />
           <Input
             type="email"
@@ -240,13 +327,13 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
-            className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all"
+            className="h-11 rounded-lg border-slate-200 bg-slate-50 px-4 focus-visible:ring-blue-500"
           />
           <Input
             placeholder="Phone number (optional)"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all"
+            className="h-11 rounded-lg border-slate-200 bg-slate-50 px-4 focus-visible:ring-blue-500"
           />
 
           {activeTab === "staff" ? (
@@ -256,7 +343,7 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
               onChange={(e) => setCode(e.target.value)}
               required
               disabled={!!inviteCode}
-              className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all font-mono tracking-wider"
+              className="h-11 rounded-lg border-slate-200 bg-slate-50 px-4 font-mono tracking-wider focus-visible:ring-blue-500"
             />
           ) : null}
 
@@ -266,7 +353,7 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all"
+            className="h-11 rounded-lg border-slate-200 bg-slate-50 px-4 focus-visible:ring-blue-500"
           />
           <Input
             type="password"
@@ -274,13 +361,13 @@ export default function JoinPageClient({ inviteCode }: JoinPageClientProps) {
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
             required
-            className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all"
+            className="h-11 rounded-lg border-slate-200 bg-slate-50 px-4 focus-visible:ring-blue-500"
           />
 
           <Button
             type="submit"
             disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl shadow-lg transition-all focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="h-11 w-full rounded-lg bg-blue-600 font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading ? (
               <div className="flex items-center justify-center">
@@ -333,54 +420,32 @@ function JoinShellFrame({
   description?: string;
 }) {
   return (
-    <main className="relative min-h-screen flex flex-col items-center justify-center py-8 px-2 bg-gradient-to-br from-[#b1c7f9] via-[#e0e7ff] to-[#b1f9e6] animate-gradient-move overflow-hidden">
-      <div className="absolute -top-40 -left-40 w-[500px] h-[500px] bg-gradient-to-tr from-blue-300 via-purple-200 to-blue-100 rounded-full opacity-40 blur-3xl animate-pulse-slow" />
-      <div className="absolute -bottom-32 right-0 w-[400px] h-[400px] bg-gradient-to-br from-blue-200 via-blue-100 to-purple-200 rounded-full opacity-30 blur-2xl animate-pulse-slow" />
-
-      <div className="z-10 w-full max-w-md">
-        <div className="text-center mb-8">
+    <main className="min-h-screen bg-[#f5f7fb] px-4 py-8 text-slate-900">
+      <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-md flex-col justify-center">
+        <div className="mb-7 text-center">
           <Image
             src="/logo-akademi.png"
             alt="Al Khayr Academy Logo"
-            width={80}
-            height={80}
-            className="mx-auto mb-4"
+            width={72}
+            height={72}
+            className="mx-auto mb-5"
           />
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">
+          <h1 className="mb-2 text-3xl font-semibold tracking-tight text-slate-950">
             {title ?? `Join ${schoolName ? schoolName : "School"}`}
           </h1>
-          <p className="text-gray-700 text-sm">
+          <p className="text-sm leading-6 text-slate-600">
             {description ?? "Create your account to get started."}
           </p>
         </div>
 
-        <div className="bg-white/30 backdrop-blur-xl border border-white/40 rounded-2xl shadow-2xl p-8">
+        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-[0_18px_50px_rgba(15,23,42,0.08)] sm:p-7">
           {children}
         </div>
+
+        <footer className="mt-8 text-center text-sm text-slate-500">
+          &copy; {new Date().getFullYear()} Akademi Al Khayr. Powered by Supabase &amp; Next.js.
+        </footer>
       </div>
-
-      <footer className="z-20 w-full text-center text-sm text-gray-500 mt-8 pb-4">
-        &copy; {new Date().getFullYear()} Akademi Al Khayr. Powered by Supabase &amp; Next.js.
-      </footer>
-
-      <style jsx global>{`
-        @keyframes gradient-move {
-          0%,
-          100% {
-            background-position: 0% 50%;
-          }
-          50% {
-            background-position: 100% 50%;
-          }
-        }
-        .animate-gradient-move {
-          background-size: 200% 200%;
-          animation: gradient-move 10s ease-in-out infinite;
-        }
-        .animate-pulse-slow {
-          animation: pulse 8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-        }
-      `}</style>
     </main>
   )
 }

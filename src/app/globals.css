@@ -118,9 +118,8 @@
   }
   body {
     @apply bg-background text-foreground;
-    background: radial-gradient(ellipse at top left, #7c3aed 0%, #0ea5e9 100%);
+    background: #f5f7fb;
     min-height: 100vh;
-    background-attachment: fixed;
   }
 }
 

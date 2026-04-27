@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildStudentClaimPreviewName,
+  familyClaimExpiresAt,
+  generateFamilyClaimToken,
   generateStudentClaimToken,
+  hashFamilyClaimToken,
   hashStudentClaimToken,
   studentClaimExpiresAt,
 } from "@/lib/studentClaims";
@@ -26,11 +29,20 @@ describe("student claim helpers", () => {
     expect(token).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
+  it("uses the same safe token primitives for family claim links", () => {
+    const token = generateFamilyClaimToken();
+
+    expect(token.length).toBeGreaterThanOrEqual(32);
+    expect(token).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(hashFamilyClaimToken("family-token")).toBe(hashStudentClaimToken("family-token"));
+  });
+
   it("calculates claim expiry from the current time", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-24T00:00:00.000Z"));
 
     expect(studentClaimExpiresAt(2)).toBe("2026-04-24T02:00:00.000Z");
+    expect(familyClaimExpiresAt(2)).toBe("2026-04-24T02:00:00.000Z");
   });
 
   it("locks preview names only when the student record has a real name", () => {

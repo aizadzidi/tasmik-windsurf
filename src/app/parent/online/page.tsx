@@ -245,7 +245,7 @@ export default function ParentOnlinePage() {
 
   const handleHoldPackage = async () => {
     if (!selectedStudentId || !selectedCourseOption) {
-      setError("Select a student and course first.");
+      setError("Select a learner and course first.");
       return;
     }
     if (selectedSlotIds.length !== requiredSlots) {
@@ -329,9 +329,9 @@ export default function ParentOnlinePage() {
         <Navbar programScope={programScope} />
         <main className="mx-auto max-w-4xl p-6">
           <Card className="p-6">
-            <h1 className="text-xl font-semibold text-slate-900">Online Package Picker Unavailable</h1>
+            <h1 className="text-xl font-semibold text-slate-900">Family Online Unavailable</h1>
             <p className="mt-2 text-sm text-slate-600">
-              This parent account is currently scoped to campus programs only.
+              This family account is currently scoped to campus programs only.
             </p>
           </Card>
         </main>
@@ -347,7 +347,7 @@ export default function ParentOnlinePage() {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-400">
-                Online Enrollment
+                Family Online
               </p>
               <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
                 Pick weekly package first, then pay
@@ -365,7 +365,7 @@ export default function ParentOnlinePage() {
               >
                 {(payload?.students ?? []).map((student) => (
                   <option key={student.id} value={student.id}>
-                    {student.name ?? "Unnamed student"}
+                    {student.name ?? "Unnamed learner"}
                   </option>
                 ))}
               </select>
@@ -403,7 +403,7 @@ export default function ParentOnlinePage() {
                 <h2 className="text-lg font-semibold text-slate-900">Weekly package builder</h2>
                 <p className="mt-1 text-sm text-slate-500">
                   Choose exactly {requiredSlots} weekly slot(s) for{" "}
-                  {selectedStudent?.name ?? "the selected student"}.
+                  {selectedStudent?.name ?? "the selected learner"}.
                 </p>
               </div>
               {selectedCourseOption ? (

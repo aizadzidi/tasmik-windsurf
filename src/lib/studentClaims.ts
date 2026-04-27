@@ -29,3 +29,7 @@ export function generateStudentClaimToken(): string {
 export function studentClaimExpiresAt(hours = ONLINE_STUDENT_CLAIM_TTL_HOURS): string {
   return new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
 }
+
+export const generateFamilyClaimToken = generateStudentClaimToken;
+export const hashFamilyClaimToken = hashStudentClaimToken;
+export const familyClaimExpiresAt = studentClaimExpiresAt;

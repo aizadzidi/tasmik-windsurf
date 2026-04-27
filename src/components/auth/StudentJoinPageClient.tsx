@@ -150,7 +150,7 @@ export default function StudentJoinPageClient() {
         title="Online Student Signup"
         description="Create your online student account or claim your existing online student record."
       >
-        <div className="space-y-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-6 text-emerald-900">
+        <div className="space-y-4 rounded-lg border border-emerald-200 bg-emerald-50 p-6 text-emerald-900">
           <h2 className="text-xl font-semibold">Student account created</h2>
           <p className="text-sm">
             Your student portal is ready. Continue to login and manage your online package.
@@ -168,13 +168,13 @@ export default function StudentJoinPageClient() {
       title="Online Student Signup"
       description="Create a new online student account or use a claim code from admin to link an existing record."
     >
-      <div className="mb-6 flex rounded-xl bg-white/40 p-1">
+      <div className="mb-6 flex rounded-lg bg-slate-100 p-1">
         <button
           type="button"
           onClick={() => handleModeChange("signup")}
-          className={`flex-1 rounded-lg py-2.5 text-sm font-semibold transition-all ${
+          className={`flex-1 rounded-md py-2.5 text-sm font-semibold transition-all ${
             mode === "signup"
-              ? "bg-white shadow text-slate-900"
+              ? "bg-white shadow-sm text-slate-900"
               : "text-slate-500 hover:text-slate-700"
           }`}
         >
@@ -183,9 +183,9 @@ export default function StudentJoinPageClient() {
         <button
           type="button"
           onClick={() => handleModeChange("claim")}
-          className={`flex-1 rounded-lg py-2.5 text-sm font-semibold transition-all ${
+          className={`flex-1 rounded-md py-2.5 text-sm font-semibold transition-all ${
             mode === "claim"
-              ? "bg-white shadow text-slate-900"
+              ? "bg-white shadow-sm text-slate-900"
               : "text-slate-500 hover:text-slate-700"
           }`}
         >
@@ -216,7 +216,7 @@ export default function StudentJoinPageClient() {
         autoComplete={mode === "claim" ? "off" : "on"}
       >
         {mode === "claim" ? (
-          <div className="space-y-3 rounded-2xl border border-white/50 bg-white/35 p-4">
+          <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
             <div className="flex gap-2">
               <Input
                 placeholder="Claim code"
@@ -229,14 +229,14 @@ export default function StudentJoinPageClient() {
                 autoComplete="off"
                 autoCorrect="off"
                 autoCapitalize="none"
-                className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all font-mono"
+                className="h-10 rounded-lg border-slate-200 bg-white px-3 font-mono focus-visible:ring-blue-500"
               />
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => void validateClaimToken(claimToken)}
                 disabled={claimLoading}
-                className="shrink-0"
+                className="shrink-0 rounded-lg bg-white"
               >
                 {claimLoading ? "Checking..." : "Check"}
               </Button>
@@ -257,7 +257,7 @@ export default function StudentJoinPageClient() {
           required
           readOnly={claimNameLocked}
           autoComplete={claimNameLocked ? "off" : "name"}
-          className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all"
+          className="h-11 rounded-lg border-slate-200 bg-slate-50 px-4 focus-visible:ring-blue-500"
         />
         {claimNameLocked ? (
           <p className="-mt-2 text-xs text-slate-500">
@@ -272,14 +272,14 @@ export default function StudentJoinPageClient() {
           required
           name={mode === "claim" ? "student-claim-email" : "email"}
           autoComplete={mode === "claim" ? "off" : "email"}
-          className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all"
+          className="h-11 rounded-lg border-slate-200 bg-slate-50 px-4 focus-visible:ring-blue-500"
         />
         <Input
           placeholder="Phone number (optional)"
           value={phone}
           onChange={(event) => setPhone(event.target.value)}
           autoComplete="tel"
-          className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all"
+          className="h-11 rounded-lg border-slate-200 bg-slate-50 px-4 focus-visible:ring-blue-500"
         />
         <Input
           type="password"
@@ -289,7 +289,7 @@ export default function StudentJoinPageClient() {
           required
           name={mode === "claim" ? "student-claim-password" : "password"}
           autoComplete="new-password"
-          className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all"
+          className="h-11 rounded-lg border-slate-200 bg-slate-50 px-4 focus-visible:ring-blue-500"
         />
         <Input
           type="password"
@@ -299,13 +299,13 @@ export default function StudentJoinPageClient() {
           required
           name={mode === "claim" ? "student-claim-password-confirmation" : "confirm-password"}
           autoComplete="new-password"
-          className="bg-white/70 backdrop-blur border-white/50 focus:border-blue-400 focus:bg-white/80 transition-all"
+          className="h-11 rounded-lg border-slate-200 bg-slate-50 px-4 focus-visible:ring-blue-500"
         />
 
         <Button
           type="submit"
           disabled={loading || (mode === "claim" && claimLoading)}
-          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl shadow-lg transition-all focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="h-11 w-full rounded-lg bg-blue-600 font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loading ? (
             <div className="flex items-center justify-center">

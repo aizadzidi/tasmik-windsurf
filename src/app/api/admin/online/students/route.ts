@@ -103,7 +103,7 @@ export async function GET(request: NextRequest) {
       const { data: students, error: studentError } = await client
         .from("students")
         .select(
-          "id, name, record_type, assigned_teacher_id, account_owner_user_id, parent_name, parent_contact_number, crm_stage, crm_status_reason"
+          "id, name, record_type, parent_id, assigned_teacher_id, account_owner_user_id, parent_name, parent_contact_number, crm_stage, crm_status_reason"
         )
         .eq("tenant_id", tenantId)
         .in("id", onlineStudentIds)
@@ -263,7 +263,7 @@ export async function PUT(request: NextRequest) {
         .eq("id", id)
         .eq("tenant_id", tenantId)
         .select(
-          "id, name, record_type, assigned_teacher_id, account_owner_user_id, parent_name, parent_contact_number, crm_stage, crm_status_reason"
+          "id, name, record_type, parent_id, assigned_teacher_id, account_owner_user_id, parent_name, parent_contact_number, crm_stage, crm_status_reason"
         )
         .single();
 
