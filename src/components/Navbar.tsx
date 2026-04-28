@@ -37,7 +37,6 @@ export default function Navbar({ programScope }: NavbarProps) {
     (teachingMode === "online" || (teachingMode === null && isOnlineAttendancePath));
   const isOnlineOnly = resolvedProgramScope === "online";
   const effectiveOnline = isOnlineOnly || isMixedOnline;
-  const hasOnlineScope = resolvedProgramScope === "online" || resolvedProgramScope === "mixed";
 
   const hasAdminAccess =
     isAdminUser || ADMIN_PERMISSION_KEYS.some((key) => permissions.has(key));
@@ -87,42 +86,6 @@ export default function Navbar({ programScope }: NavbarProps) {
             icon: (
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-              </svg>
-            )
-          },
-          ...(hasOnlineScope
-            ? [
-                {
-                  href: "/parent/online",
-                  label: "Online Explore",
-                  icon: (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h18M6 9h12M5 13h14M7 17h10" />
-                    </svg>
-                  )
-                },
-              ]
-            : []),
-          ...(!isOnlineOnly
-            ? [
-                {
-                  href: "/parent/exam",
-                  label: "Exam Results",
-                  icon: (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                  )
-                },
-              ]
-            : []),
-          {
-            href: "/parent/payments",
-            label: "Payments",
-            icon: (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16a1 1 0 011 1v8a1 1 0 01-1 1H4a1 1 0 01-1-1V8a1 1 0 011-1z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 10h16M9 15h3.5" />
               </svg>
             )
           },
