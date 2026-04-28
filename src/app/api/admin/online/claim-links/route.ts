@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireAdminPermission } from "@/lib/adminPermissions";
 import {
   getRequestHost,
@@ -28,6 +29,54 @@ type TenantRow = {
   slug: string | null;
 };
 
+const SIGNUP_ORIGIN_CACHE_TTL_MS = 60_000;
+const signupOriginCache = new Map<string, { origin: string; expiresAtMs: number }>();
+
+const resolveSignupOrigin = async (
+  request: NextRequest,
+  client: SupabaseClient,
+  tenantId: string
+) => {
+  const requestHost = getRequestHost(request);
+  if (isLocalDevelopmentHost(requestHost)) {
+    return new URL(request.url).origin;
+  }
+
+  const cached = signupOriginCache.get(tenantId);
+  if (cached && cached.expiresAtMs > Date.now()) {
+    return cached.origin;
+  }
+
+  const [domainRes, tenantRes] = await Promise.all([
+    client
+      .from("tenant_domains")
+      .select("domain")
+      .eq("tenant_id", tenantId)
+      .order("is_primary", { ascending: false })
+      .order("created_at", { ascending: true })
+      .limit(1),
+    client.from("tenants").select("slug").eq("id", tenantId).maybeSingle<TenantRow>(),
+  ]);
+  if (domainRes.error) throw domainRes.error;
+  if (tenantRes.error) throw tenantRes.error;
+
+  const primaryDomain = (domainRes.data?.[0] as TenantDomainRow | undefined)?.domain ?? null;
+  const fallbackDomain = tenantRes.data?.slug
+    ? `${tenantRes.data.slug}.${getTenantSubdomainBaseDomain()}`
+    : null;
+  const signupHost = primaryDomain ?? fallbackDomain;
+  if (!signupHost) {
+    throw new Error("Unable to resolve tenant signup domain.");
+  }
+
+  const origin = `https://${signupHost}`;
+  signupOriginCache.set(tenantId, {
+    origin,
+    expiresAtMs: Date.now() + SIGNUP_ORIGIN_CACHE_TTL_MS,
+  });
+  return origin;
+};
+
 const adminErrorDetails = (error: unknown, fallback: string) => {
   const message = error instanceof Error ? error.message : fallback;
   const status = message.includes("Admin access required") ? 403 : 500;
@@ -46,13 +95,31 @@ export async function POST(request: NextRequest) {
     }
 
     const payload = await adminOperationSimple(async (client) => {
-      const studentRes = await client
-        .from("students")
-        .select("id, name, tenant_id, record_type, account_owner_user_id")
-        .eq("tenant_id", guard.tenantId)
-        .eq("id", studentId)
-        .maybeSingle<StudentRow>();
+      const rawToken = generateStudentClaimToken();
+      const expiresAt = studentClaimExpiresAt();
+      const tokenHash = hashStudentClaimToken(rawToken);
+      let signupOriginError: unknown = null;
+      const signupOriginPromise = resolveSignupOrigin(request, client, guard.tenantId).catch((error) => {
+        signupOriginError = error;
+        return null;
+      });
+
+      const [studentRes, enrollmentRes] = await Promise.all([
+        client
+          .from("students")
+          .select("id, name, tenant_id, record_type, account_owner_user_id")
+          .eq("tenant_id", guard.tenantId)
+          .eq("id", studentId)
+          .maybeSingle<StudentRow>(),
+        client
+          .from("enrollments")
+          .select("id, programs(type)")
+          .eq("tenant_id", guard.tenantId)
+          .eq("student_id", studentId)
+          .in("status", ["pending_payment", "active", "paused"]),
+      ]);
       if (studentRes.error) throw studentRes.error;
+      if (enrollmentRes.error) throw enrollmentRes.error;
 
       const student = studentRes.data;
       if (!student?.id || student.record_type === "prospect") {
@@ -62,14 +129,6 @@ export async function POST(request: NextRequest) {
         throw new Error("This student has already been claimed.");
       }
 
-      const enrollmentRes = await client
-        .from("enrollments")
-        .select("id, programs(type)")
-        .eq("tenant_id", guard.tenantId)
-        .eq("student_id", student.id)
-        .in("status", ["pending_payment", "active", "paused"]);
-      if (enrollmentRes.error) throw enrollmentRes.error;
-
       const hasOnlineEnrollment = (enrollmentRes.data ?? []).some((row) => {
         const program = Array.isArray(row.programs) ? row.programs[0] : row.programs;
         return program?.type === "online" || program?.type === "hybrid";
@@ -78,7 +137,7 @@ export async function POST(request: NextRequest) {
         throw new Error("This student is not enrolled in an online or hybrid program.");
       }
 
-      await client
+      const revokeRes = await client
         .from("online_student_claim_tokens")
         .update({
           revoked_at: new Date().toISOString(),
@@ -88,15 +147,14 @@ export async function POST(request: NextRequest) {
         .eq("student_id", student.id)
         .is("consumed_at", null)
         .is("revoked_at", null);
+      if (revokeRes.error) throw revokeRes.error;
 
-      const rawToken = generateStudentClaimToken();
-      const expiresAt = studentClaimExpiresAt();
       const insertRes = await client
         .from("online_student_claim_tokens")
         .insert({
           tenant_id: guard.tenantId,
           student_id: student.id,
-          token_hash: hashStudentClaimToken(rawToken),
+          token_hash: tokenHash,
           expires_at: expiresAt,
           created_by: guard.userId,
         })
@@ -104,32 +162,10 @@ export async function POST(request: NextRequest) {
         .single();
       if (insertRes.error) throw insertRes.error;
 
-      const requestHost = getRequestHost(request);
-      let signupOrigin = new URL(request.url).origin;
-
-      if (!isLocalDevelopmentHost(requestHost)) {
-        const [domainRes, tenantRes] = await Promise.all([
-          client
-            .from("tenant_domains")
-            .select("domain")
-            .eq("tenant_id", guard.tenantId)
-            .order("is_primary", { ascending: false })
-            .order("created_at", { ascending: true })
-            .limit(1),
-          client.from("tenants").select("slug").eq("id", guard.tenantId).maybeSingle<TenantRow>(),
-        ]);
-        if (domainRes.error) throw domainRes.error;
-        if (tenantRes.error) throw tenantRes.error;
-
-        const primaryDomain = (domainRes.data?.[0] as TenantDomainRow | undefined)?.domain ?? null;
-        const fallbackDomain = tenantRes.data?.slug
-          ? `${tenantRes.data.slug}.${getTenantSubdomainBaseDomain()}`
-          : null;
-        const signupHost = primaryDomain ?? fallbackDomain;
-        if (!signupHost) {
-          throw new Error("Unable to resolve tenant signup domain.");
-        }
-        signupOrigin = `https://${signupHost}`;
+      const signupOrigin = await signupOriginPromise;
+      if (signupOriginError) throw signupOriginError;
+      if (!signupOrigin) {
+        throw new Error("Unable to resolve tenant signup domain.");
       }
 
       const claimUrl = new URL("/join/student", signupOrigin);

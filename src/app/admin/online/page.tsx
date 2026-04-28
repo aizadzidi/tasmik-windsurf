@@ -706,17 +706,17 @@ export default function AdminOnlinePage() {
     }
   };
 
-  const handleGenerateClaimLink = async (student: OnlineStudent) => {
-    setClaimBusyStudentId(student.id);
+  const handleGenerateClaimLink = useCallback(async (studentId: string) => {
+    setClaimBusyStudentId(studentId);
     setClaimErrorsByStudentId((prev) => {
-      if (!prev[student.id]) return prev;
-      return { ...prev, [student.id]: "" };
+      if (!prev[studentId]) return prev;
+      return { ...prev, [studentId]: "" };
     });
     try {
       const response = await authFetch("/api/admin/online/claim-links", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ student_id: student.id }),
+        body: JSON.stringify({ student_id: studentId }),
       });
       const payload = (await response.json()) as ClaimLinkResult & { error?: string };
       if (!response.ok) {
@@ -724,7 +724,7 @@ export default function AdminOnlinePage() {
       }
       setClaimLinkResultsByStudentId((prev) => ({
         ...prev,
-        [student.id]: {
+        [studentId]: {
           student_id: payload.student_id,
           student_name: payload.student_name,
           claim_url: payload.claim_url,
@@ -732,20 +732,20 @@ export default function AdminOnlinePage() {
         },
       }));
       setClaimErrorsByStudentId((prev) => {
-        if (!prev[student.id]) return prev;
-        return { ...prev, [student.id]: "" };
+        if (!prev[studentId]) return prev;
+        return { ...prev, [studentId]: "" };
       });
-      setActiveClaimStudentId(student.id);
+      setActiveClaimStudentId(studentId);
     } catch (claimError) {
       setClaimErrorsByStudentId((prev) => ({
         ...prev,
-        [student.id]: claimError instanceof Error ? claimError.message : "Failed to generate claim link",
+        [studentId]: claimError instanceof Error ? claimError.message : "Failed to generate claim link",
       }));
-      setActiveClaimStudentId(student.id);
+      setActiveClaimStudentId(studentId);
     } finally {
       setClaimBusyStudentId(null);
     }
-  };
+  }, []);
 
   const handleToggleClaimPanel = useCallback((studentId: string) => {
     setActiveClaimStudentId((current) => (current === studentId ? null : studentId));
@@ -1235,14 +1235,15 @@ export default function AdminOnlinePage() {
                           </td>
                           <td className="px-4 py-3 text-gray-600">
                             <AdminOnlineClaimAccessCell
+                              studentId={student.id}
                               studentName={student.name}
                               claimed={Boolean(student.account_owner_user_id)}
                               hasLink={Boolean(claimResult)}
                               isExpanded={isClaimPanelOpen}
                               isGenerating={claimBusyStudentId === student.id}
                               error={isClaimPanelOpen ? null : claimError}
-                              onGenerate={() => void handleGenerateClaimLink(student)}
-                              onToggleExpanded={() => handleToggleClaimPanel(student.id)}
+                              onGenerate={handleGenerateClaimLink}
+                              onToggleExpanded={handleToggleClaimPanel}
                             />
                           </td>
                           <td className="px-4 py-3">
@@ -1290,7 +1291,7 @@ export default function AdminOnlinePage() {
                             result={claimResult}
                             error={claimError}
                             isGenerating={claimBusyStudentId === student.id}
-                            onGenerate={() => void handleGenerateClaimLink(student)}
+                            onGenerate={() => void handleGenerateClaimLink(student.id)}
                           />
                         </td>
                       </tr>

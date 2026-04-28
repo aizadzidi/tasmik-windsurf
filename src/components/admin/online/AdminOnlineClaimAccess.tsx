@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Copy, ExternalLink, Link2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -13,14 +13,15 @@ export type ClaimLinkResult = {
 };
 
 type AdminOnlineClaimAccessCellProps = {
+  studentId: string;
   studentName: string;
   claimed: boolean;
   hasLink: boolean;
   isExpanded: boolean;
   isGenerating: boolean;
   error?: string | null;
-  onGenerate: () => void;
-  onToggleExpanded: () => void;
+  onGenerate: (studentId: string) => void;
+  onToggleExpanded: (studentId: string) => void;
 };
 
 type AdminOnlineClaimPanelProps = {
@@ -37,7 +38,8 @@ const formatExpiry = (value: string) =>
     timeStyle: "short",
   });
 
-export function AdminOnlineClaimAccessCell({
+export const AdminOnlineClaimAccessCell = memo(function AdminOnlineClaimAccessCell({
+  studentId,
   studentName,
   claimed,
   hasLink,
@@ -74,7 +76,13 @@ export function AdminOnlineClaimAccessCell({
       <div className="flex flex-col gap-2 sm:flex-row">
         <Button
           type="button"
-          onClick={hasLink ? onToggleExpanded : onGenerate}
+          onClick={() => {
+            if (hasLink) {
+              onToggleExpanded(studentId);
+              return;
+            }
+            onGenerate(studentId);
+          }}
           disabled={isGenerating}
           className="h-10 rounded-2xl bg-slate-900 px-4 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-slate-800"
         >
@@ -89,7 +97,7 @@ export function AdminOnlineClaimAccessCell({
       ) : null}
     </div>
   );
-}
+});
 
 export function AdminOnlineClaimPanel({
   studentName,
