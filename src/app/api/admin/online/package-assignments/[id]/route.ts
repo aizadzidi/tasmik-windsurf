@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireAdminPermission } from "@/lib/adminPermissions";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
-import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
 import { isMissingColumnError } from "@/lib/online/db";
 import {
   fetchOnlineStudentPackageAssignments,
@@ -43,16 +42,6 @@ const LINKABLE_RECURRING_STATUSES: OnlineRecurringPackageStatus[] = [
   "paused",
   "legacy_review_required",
 ];
-
-const resolveTenantIdOrThrow = async (request: NextRequest) =>
-  adminOperationSimple(async (client) => {
-    const tenantId = await resolveTenantIdFromRequest(request, client);
-    if (tenantId) return tenantId;
-    const { data, error } = await client.from("tenants").select("id").limit(2);
-    if (error) throw error;
-    if (!data || data.length !== 1) throw new Error("Tenant context missing");
-    return data[0].id;
-  });
 
 const adminErrorDetails = (error: unknown, fallback: string) => {
   let message = fallback;
@@ -220,7 +209,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Invalid status" }, { status: 400 });
     }
 
-    const tenantId = await resolveTenantIdOrThrow(request);
+    const tenantId = guard.tenantId;
     const payload = await adminOperationSimple(async (client) => {
       const assignmentRes = await client
         .from("online_student_package_assignments")
@@ -394,7 +383,7 @@ export async function DELETE(
       return NextResponse.json({ error: "id is required" }, { status: 400 });
     }
 
-    const tenantId = await resolveTenantIdOrThrow(request);
+    const tenantId = guard.tenantId;
     const payload = await adminOperationSimple(async (client) => {
       const assignmentRes = await client
         .from("online_student_package_assignments")

@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireAdminPermission } from "@/lib/adminPermissions";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
-import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
 import { isMissingColumnError } from "@/lib/online/db";
 import {
   fetchOnlineStudentPackageAssignments,
@@ -28,16 +27,6 @@ type CourseSnapshot = {
   monthly_fee_cents: number;
   default_slot_duration_minutes: number;
 };
-
-const resolveTenantIdOrThrow = async (request: NextRequest) =>
-  adminOperationSimple(async (client) => {
-    const tenantId = await resolveTenantIdFromRequest(request, client);
-    if (tenantId) return tenantId;
-    const { data, error } = await client.from("tenants").select("id").limit(2);
-    if (error) throw error;
-    if (!data || data.length !== 1) throw new Error("Tenant context missing");
-    return data[0].id;
-  });
 
 const adminErrorDetails = (error: unknown, fallback: string) => {
   const message = error instanceof Error ? error.message : fallback;
@@ -105,7 +94,7 @@ export async function GET(request: NextRequest) {
     const guard = await requireAdminPermission(request, ["admin:online", "admin:dashboard"]);
     if (!guard.ok) return guard.response;
 
-    const tenantId = await resolveTenantIdOrThrow(request);
+    const tenantId = guard.tenantId;
     const studentId = (new URL(request.url).searchParams.get("student_id") ?? "").trim();
     const payload = await adminOperationSimple(async (client) => {
       const result = await fetchOnlineStudentPackageAssignments({
@@ -159,19 +148,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const tenantId = await resolveTenantIdOrThrow(request);
+    const tenantId = guard.tenantId;
 
     const payload = await adminOperationSimple(async (client) => {
       const [studentRes, teacherRes, course] = await Promise.all([
         client
           .from("students")
-          .select("id, record_type")
+          .select("id, name, parent_name, parent_contact_number, record_type")
           .eq("tenant_id", tenantId)
           .eq("id", studentId)
           .maybeSingle(),
         client
           .from("users")
-          .select("id, role")
+          .select("id, name, role")
           .eq("id", teacherId)
           .maybeSingle(),
         loadCourseSnapshot(client, tenantId, courseId),
@@ -218,17 +207,27 @@ export async function POST(request: NextRequest) {
           created_by: guard.userId,
           updated_by: guard.userId,
         })
-        .select("id")
+        .select(
+          "id, tenant_id, student_id, course_id, teacher_id, status, effective_from, effective_to, sessions_per_week_snapshot, duration_minutes_snapshot, monthly_fee_cents_snapshot, notes, created_by, updated_by, created_at, updated_at"
+        )
         .single();
       if (insertRes.error) throw insertRes.error;
 
-      const summaryRes = await fetchOnlineStudentPackageAssignments({
-        client,
-        tenantId,
-        studentIds: [studentId],
-      });
-      const summary = summaryRes.rows.find((row) => row.id === insertRes.data.id) ?? null;
-      return { assignment: summary };
+      const assignment = insertRes.data;
+      return {
+        assignment: {
+          ...assignment,
+          student_name: studentRes.data.name ?? "Student",
+          parent_name: studentRes.data.parent_name ?? null,
+          parent_contact_number: studentRes.data.parent_contact_number ?? null,
+          course_name: course.name,
+          teacher_name: teacherRes.data.name ?? "Unnamed Teacher",
+          schedule_state: "waiting_for_slot",
+          scheduled_slot_count: 0,
+          linked_recurring_package_id: null,
+          linked_recurring_package_status: null,
+        },
+      };
     });
 
     return NextResponse.json(payload, { status: 201 });

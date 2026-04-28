@@ -478,11 +478,18 @@ export default function AdminOnlinePage() {
       const returnedAssignment = payload.assignment;
       if (returnedAssignment) {
         const nextSummary = toPackageAssignmentSummary(returnedAssignment);
+        const nextPackageAssignmentCount = wasEditing
+          ? packageAssignments.some((assignment) => assignment.id === returnedAssignment.id)
+            ? packageAssignments.length
+            : packageAssignments.length + 1
+          : packageAssignments.length + 1;
         setPackageAssignments((current) => {
           if (wasEditing) {
-            return current.map((assignment) =>
-              assignment.id === returnedAssignment.id ? returnedAssignment : assignment
-            );
+            return current.some((assignment) => assignment.id === returnedAssignment.id)
+              ? current.map((assignment) =>
+                  assignment.id === returnedAssignment.id ? returnedAssignment : assignment
+                )
+              : [returnedAssignment, ...current];
           }
           return [returnedAssignment, ...current];
         });
@@ -503,12 +510,12 @@ export default function AdminOnlinePage() {
             };
           })
         );
+        resetPackageForm(null, null, nextPackageAssignmentCount === 0 ? "create" : "hidden");
+      } else {
+        const assignments = await loadPackageAssignments(packageStudentId);
+        resetPackageForm(null, null, assignments.length === 0 ? "create" : "hidden");
       }
 
-      await refreshData(false);
-      const assignments = await loadPackageAssignments(packageStudentId);
-      const currentStudent = students.find((student) => student.id === packageStudentId) ?? null;
-      resetPackageForm(currentStudent, null, assignments.length === 0 ? "create" : "hidden");
       setPackageSuccess(wasEditing ? "Package assignment updated successfully." : "Package assignment added successfully.");
       clearPackageSuccessSoon();
     } catch (caughtError) {
@@ -531,15 +538,41 @@ export default function AdminOnlinePage() {
         `/api/admin/online/package-assignments/${encodeURIComponent(assignmentId)}`,
         { method: "DELETE" }
       );
-      const payload = await response.json();
+      const payload = (await response.json()) as { assignment?: PackageAssignmentDetail; error?: string };
       if (!response.ok) {
         throw new Error(extractError(payload, "Failed to cancel package assignment"));
       }
 
-      await refreshData(false);
-      const assignments = await loadPackageAssignments(packageStudentId);
-      const currentStudent = students.find((student) => student.id === packageStudentId) ?? null;
-      resetPackageForm(currentStudent, null, assignments.length === 0 ? "create" : "hidden");
+      const returnedAssignment = payload.assignment;
+      if (returnedAssignment) {
+        const nextSummary = toPackageAssignmentSummary(returnedAssignment);
+        setPackageAssignments((current) =>
+          current.some((assignment) => assignment.id === returnedAssignment.id)
+            ? current.map((assignment) =>
+                assignment.id === returnedAssignment.id ? returnedAssignment : assignment
+              )
+            : [returnedAssignment, ...current]
+        );
+        setStudents((current) =>
+          current.map((student) => {
+            if (student.id !== packageStudentId) return student;
+            const currentAssignments = student.package_assignments ?? [];
+            const nextAssignments = currentAssignments.some((assignment) => assignment.id === nextSummary.id)
+              ? currentAssignments.map((assignment) =>
+                  assignment.id === nextSummary.id ? nextSummary : assignment
+                )
+              : [nextSummary, ...currentAssignments];
+            return {
+              ...student,
+              package_assignments: nextAssignments,
+            };
+          })
+        );
+        resetPackageForm(null, null, "hidden");
+      } else {
+        const assignments = await loadPackageAssignments(packageStudentId);
+        resetPackageForm(null, null, assignments.length === 0 ? "create" : "hidden");
+      }
       setPackageSuccess("Package assignment cancelled successfully.");
       clearPackageSuccessSoon();
     } catch (caughtError) {
