@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useEffect, useRef, useState } from "react";
-import { CheckCircle2, Copy, ExternalLink, Link2, Sparkles } from "lucide-react";
+import { CheckCircle2, Copy, ExternalLink, Link2, Sparkles, Users } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 
@@ -21,6 +21,7 @@ type AdminOnlineClaimAccessCellProps = {
   isGenerating: boolean;
   error?: string | null;
   onGenerate: (studentId: string) => void;
+  onRecoverFamily?: (studentId: string) => void;
   onToggleExpanded: (studentId: string) => void;
 };
 
@@ -47,16 +48,28 @@ export const AdminOnlineClaimAccessCell = memo(function AdminOnlineClaimAccessCe
   isGenerating,
   error,
   onGenerate,
+  onRecoverFamily,
   onToggleExpanded,
 }: AdminOnlineClaimAccessCellProps) {
   if (claimed) {
     return (
-      <div className="flex min-w-[200px] flex-col gap-2 rounded-3xl border border-emerald-100 bg-emerald-50/80 p-4">
+      <div className="flex min-w-[200px] flex-col gap-3 rounded-3xl border border-emerald-100 bg-emerald-50/80 p-4">
         <span className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-emerald-700">
           <CheckCircle2 className="size-3.5" />
           Claimed
         </span>
         <p className="text-sm font-medium text-slate-700">Portal already linked for {studentName}.</p>
+        {onRecoverFamily ? (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onRecoverFamily(studentId)}
+            className="h-9 rounded-2xl border-emerald-200 bg-white px-3 text-sm font-semibold text-emerald-800 hover:bg-emerald-50"
+          >
+            <Users className="size-4" />
+            Recover family
+          </Button>
+        ) : null}
       </div>
     );
   }

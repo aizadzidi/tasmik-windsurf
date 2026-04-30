@@ -697,7 +697,7 @@ export default function AdminPage() {
         body: JSON.stringify({
           student_id: student.id,
           transition_mode: "switch",
-          close_previous_status: "paused",
+          close_previous_status: "cancelled",
           clear_class_on_online_switch: true,
           reason: "Moved from campus UI quick action",
         }),

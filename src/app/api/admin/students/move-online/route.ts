@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
 
     const transitionMode = body.transition_mode === "coexist" ? "coexist" : "switch";
     const closePreviousStatus =
-      body.close_previous_status === "cancelled" ? "cancelled" : "paused";
+      body.close_previous_status === "paused" ? "paused" : "cancelled";
     const clearClassOnSwitch = body.clear_class_on_online_switch ?? true;
     const reason = (body.reason || "Admin UI quick move to online").trim();
 

@@ -81,6 +81,12 @@ type FamilyClaimLinkResult = {
   expires_at: string;
 };
 
+type FamilyRecoveryResult = {
+  family_user_id: string;
+  linked_student_ids: string[];
+  promoted_user: boolean;
+};
+
 type EditStudentForm = {
   name: string;
   assigned_teacher_id: string;
@@ -192,6 +198,11 @@ export default function AdminOnlinePage() {
   const [familyClaimResult, setFamilyClaimResult] = useState<FamilyClaimLinkResult | null>(null);
   const [familyClaimError, setFamilyClaimError] = useState("");
   const [familyClaimCopyMessage, setFamilyClaimCopyMessage] = useState("");
+  const [familyRecoveryStudentId, setFamilyRecoveryStudentId] = useState<string | null>(null);
+  const [familyRecoveryStudentIds, setFamilyRecoveryStudentIds] = useState<string[]>([]);
+  const [familyRecoverySearch, setFamilyRecoverySearch] = useState("");
+  const [familyRecoveryBusy, setFamilyRecoveryBusy] = useState(false);
+  const [familyRecoveryError, setFamilyRecoveryError] = useState("");
 
   const studentListRef = useRef<HTMLDivElement | null>(null);
   const packageFormRef = useRef<HTMLDivElement | null>(null);
@@ -327,6 +338,28 @@ export default function AdminOnlinePage() {
     () => students.filter((student) => Boolean(student.account_owner_user_id)).length,
     [students]
   );
+
+  const familyRecoveryStudent = useMemo(
+    () => students.find((student) => student.id === familyRecoveryStudentId) ?? null,
+    [familyRecoveryStudentId, students]
+  );
+
+  const familyRecoveryCandidates = useMemo(() => {
+    if (!familyRecoveryStudent) return [];
+    const term = familyRecoverySearch.trim().toLowerCase();
+    return students
+      .filter((student) => student.id !== familyRecoveryStudent.id)
+      .filter((student) => !student.parent_id)
+      .filter((student) => {
+        if (!term) return true;
+        return (
+          student.name.toLowerCase().includes(term) ||
+          (student.parent_name ?? "").toLowerCase().includes(term) ||
+          (student.parent_contact_number ?? "").toLowerCase().includes(term)
+        );
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [familyRecoverySearch, familyRecoveryStudent, students]);
 
   const stageChartStudents = useMemo(
     () => students.map((student) => ({ class_name: normalizeStageKey(student.crm_stage) })),
@@ -860,6 +893,75 @@ export default function AdminOnlinePage() {
     }
   };
 
+  const handleOpenFamilyRecovery = (studentId: string) => {
+    setFamilyRecoveryStudentId(studentId);
+    setFamilyRecoveryStudentIds([]);
+    setFamilyRecoverySearch("");
+    setFamilyRecoveryError("");
+  };
+
+  const handleCloseFamilyRecovery = () => {
+    if (familyRecoveryBusy) return;
+    setFamilyRecoveryStudentId(null);
+    setFamilyRecoveryStudentIds([]);
+    setFamilyRecoverySearch("");
+    setFamilyRecoveryError("");
+  };
+
+  const toggleFamilyRecoveryStudent = (studentId: string) => {
+    setFamilyRecoveryStudentIds((current) =>
+      current.includes(studentId)
+        ? current.filter((id) => id !== studentId)
+        : [...current, studentId]
+    );
+    setFamilyRecoveryError("");
+  };
+
+  const handleRecoverFamily = async () => {
+    if (!familyRecoveryStudent) return;
+    if (familyRecoveryStudentIds.length === 0) {
+      setFamilyRecoveryError("Select at least one family member to recover.");
+      return;
+    }
+
+    setFamilyRecoveryBusy(true);
+    setFamilyRecoveryError("");
+    setError("");
+
+    try {
+      const response = await authFetch("/api/admin/online/family-recovery", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          claimed_student_id: familyRecoveryStudent.id,
+          student_ids: familyRecoveryStudentIds,
+        }),
+      });
+      const payload = (await response.json()) as FamilyRecoveryResult & { error?: string };
+      if (!response.ok) {
+        throw new Error(extractError(payload, "Failed to recover family account"));
+      }
+
+      const linkedNames = (payload.linked_student_ids ?? [])
+        .map((studentId) => students.find((student) => student.id === studentId)?.name)
+        .filter((name): name is string => Boolean(name));
+      setSuccess(
+        `Family recovered for ${familyRecoveryStudent.name}. Linked ${linkedNames.length} learner(s).`
+      );
+      clearSuccessSoon();
+      setFamilyRecoveryStudentId(null);
+      setFamilyRecoveryStudentIds([]);
+      setFamilyRecoverySearch("");
+      await refreshData(false);
+    } catch (recoveryError) {
+      setFamilyRecoveryError(
+        recoveryError instanceof Error ? recoveryError.message : "Failed to recover family account"
+      );
+    } finally {
+      setFamilyRecoveryBusy(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]">
       <AdminNavbar />
@@ -1276,6 +1378,7 @@ export default function AdminOnlinePage() {
                               isGenerating={claimBusyStudentId === student.id}
                               error={isClaimPanelOpen ? null : claimError}
                               onGenerate={handleGenerateClaimLink}
+                              onRecoverFamily={handleOpenFamilyRecovery}
                               onToggleExpanded={handleToggleClaimPanel}
                             />
                           </td>
@@ -1589,6 +1692,114 @@ export default function AdminOnlinePage() {
             </table>
           </div>
         </Card>
+
+        {familyRecoveryStudent ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="max-h-[85vh] w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-xl">
+              <div className="flex items-start justify-between border-b border-gray-100 p-6">
+                <div>
+                  <h2 className="text-xl font-semibold text-gray-900">Recover Family Account</h2>
+                  <p className="text-sm text-gray-500">
+                    Link family members to the portal account claimed by {familyRecoveryStudent.name}.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCloseFamilyRecovery}
+                  disabled={familyRecoveryBusy}
+                  className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-50"
+                  aria-label="Close family recovery modal"
+                >
+                  <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="max-h-[calc(85vh-96px)] space-y-4 overflow-y-auto p-6">
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-900">
+                  <p className="font-semibold">Family owner</p>
+                  <p className="mt-1">
+                    {familyRecoveryStudent.name} will become the family account owner. Existing
+                    student login ownership stays unchanged.
+                  </p>
+                </div>
+
+                <input
+                  type="text"
+                  placeholder="Search family members..."
+                  className="w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm"
+                  value={familyRecoverySearch}
+                  onChange={(event) => setFamilyRecoverySearch(event.target.value)}
+                />
+
+                {familyRecoveryError ? (
+                  <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                    {familyRecoveryError}
+                  </p>
+                ) : null}
+
+                <div className="rounded-xl border border-slate-200">
+                  <div className="border-b border-slate-100 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
+                    Select learners to link ({familyRecoveryStudentIds.length})
+                  </div>
+                  <div className="max-h-72 divide-y divide-slate-100 overflow-y-auto">
+                    {familyRecoveryCandidates.map((candidate) => (
+                      <label
+                        key={candidate.id}
+                        className="flex cursor-pointer items-start gap-3 px-4 py-3 hover:bg-slate-50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={familyRecoveryStudentIds.includes(candidate.id)}
+                          onChange={() => toggleFamilyRecoveryStudent(candidate.id)}
+                          className="mt-1 size-4 rounded border-slate-300 text-slate-900"
+                        />
+                        <span>
+                          <span className="block text-sm font-medium text-slate-900">
+                            {candidate.name}
+                          </span>
+                          <span className="block text-xs text-slate-500">
+                            {candidate.account_owner_user_id
+                              ? "Has own student login"
+                              : "No student login"}
+                            {candidate.parent_name ? ` • ${candidate.parent_name}` : ""}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                    {familyRecoveryCandidates.length === 0 ? (
+                      <div className="px-4 py-6 text-sm text-slate-500">
+                        No unlinked online learners found.
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleCloseFamilyRecovery}
+                    disabled={familyRecoveryBusy}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => void handleRecoverFamily()}
+                    disabled={familyRecoveryBusy || familyRecoveryStudentIds.length === 0}
+                    className="bg-emerald-600 text-white hover:bg-emerald-700"
+                  >
+                    {familyRecoveryBusy
+                      ? "Recovering..."
+                      : `Recover Family (${familyRecoveryStudentIds.length})`}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {isAddStudentModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
