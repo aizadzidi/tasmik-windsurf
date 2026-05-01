@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import MonthlyAttendancePanel from "@/components/online/MonthlyAttendancePanel";
 import { PlannerContextMenu, type PlannerContextAction } from "@/components/online/PlannerContextMenu";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -151,53 +152,6 @@ const getCourseTone = (courseName: string) => {
   if (/hafazan|tahfiz/i.test(courseName)) return "border-emerald-200 bg-emerald-50 text-emerald-800";
   if (/islamic|islam|muamalah/i.test(courseName)) return "border-sky-200 bg-sky-50 text-sky-800";
   return "border-slate-200 bg-slate-50 text-slate-700";
-};
-
-const getCourseCalendarFill = (courseName: string) => {
-  if (/hafazan|tahfiz/i.test(courseName)) return "bg-emerald-500 text-white shadow-sm ring-1 ring-emerald-400/50";
-  if (/islamic|islam|muamalah/i.test(courseName)) return "bg-sky-500 text-white shadow-sm ring-1 ring-sky-400/50";
-  return "bg-slate-600 text-white shadow-sm ring-1 ring-slate-400/50";
-};
-
-type CalendarCell = {
-  day: number;
-  dateStr: string;
-  inMonth: boolean;
-};
-
-const buildCalendarGrid = (monthKey: string): CalendarCell[][] => {
-  const [year, mon] = monthKey.split("-").map(Number);
-  const daysInMonth = new Date(Date.UTC(year, mon, 0)).getUTCDate();
-  const firstDayOfWeek = (new Date(Date.UTC(year, mon - 1, 1)).getUTCDay() + 6) % 7;
-
-  const weeks: CalendarCell[][] = [];
-  let week: CalendarCell[] = [];
-
-  for (let i = 0; i < firstDayOfWeek; i++) {
-    week.push({ day: 0, dateStr: "", inMonth: false });
-  }
-
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dateStr = `${year}-${String(mon).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-    week.push({ day: d, dateStr, inMonth: true });
-    if (week.length === 7) {
-      weeks.push(week);
-      week = [];
-    }
-  }
-
-  if (week.length > 0) {
-    while (week.length < 7) week.push({ day: 0, dateStr: "", inMonth: false });
-    weeks.push(week);
-  }
-
-  return weeks;
-};
-
-type StudentCalendarData = {
-  student_id: string;
-  student_name: string;
-  occurrencesByDate: Map<string, OccurrenceRow[]>;
 };
 
 type SelectedCalendarDay = {
@@ -392,23 +346,6 @@ export default function TeacherOnlineAttendancePage() {
   const sortedTodayQueue = useMemo(() => {
     return [...(payload?.today_queue ?? [])].sort((a, b) => a.start_time.localeCompare(b.start_time));
   }, [payload?.today_queue]);
-
-  const monthlyByStudent = useMemo<StudentCalendarData[]>(() => {
-    const map = new Map<string, StudentCalendarData>();
-    for (const occ of payload?.monthly_occurrences ?? []) {
-      let entry = map.get(occ.student_id);
-      if (!entry) {
-        entry = { student_id: occ.student_id, student_name: occ.student_name, occurrencesByDate: new Map() };
-        map.set(occ.student_id, entry);
-      }
-      const dateList = entry.occurrencesByDate.get(occ.session_date) ?? [];
-      dateList.push(occ);
-      entry.occurrencesByDate.set(occ.session_date, dateList);
-    }
-    return Array.from(map.values()).sort((a, b) => a.student_name.localeCompare(b.student_name));
-  }, [payload?.monthly_occurrences]);
-
-  const calendarGrid = useMemo(() => buildCalendarGrid(month), [month]);
 
   const selectedCalendarDayDetails = useMemo(() => {
     if (!selectedCalendarDay) return null;
@@ -1076,150 +1013,15 @@ export default function TeacherOnlineAttendancePage() {
               )}
             </>
           ) : (
-            <>
-              {loading ? (
-                <div className="space-y-3">
-                  {[1, 2, 3].map((i) => (
-                    <Card key={i} className="animate-pulse rounded-2xl p-5">
-                      <div className="h-5 w-36 rounded bg-slate-200" />
-                    </Card>
-                  ))}
-                </div>
-              ) : monthlyByStudent.length === 0 ? (
-                <Card className="rounded-2xl p-8 text-center">
-                  <p className="text-sm text-slate-500">No sessions for this month.</p>
-                  <p className="mt-1 text-xs text-slate-400">Sessions will appear once packages are assigned and scheduled.</p>
-                </Card>
-              ) : (
-                <div className="space-y-3">
-                  {monthlyByStudent.map((studentData) => {
-                    const isExpanded = expandedStudents.has(studentData.student_id);
-                    const totalSessions = studentData.occurrencesByDate.size;
-                    const presentDays = Array.from(studentData.occurrencesByDate.values()).filter((occs) =>
-                      occs.every((o) => o.attendance_status === "present"),
-                    ).length;
-
-                    return (
-                      <div
-                        key={studentData.student_id}
-                        className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm transition-shadow duration-200 hover:shadow-md"
-                      >
-                        {/* Accordion header */}
-                        <button
-                          type="button"
-                          className="flex w-full items-center justify-between px-5 py-4 text-left transition-colors hover:bg-slate-50/50"
-                          onClick={() => toggleStudentExpanded(studentData.student_id)}
-                        >
-                          <div className="flex items-center gap-3">
-                            <span className="text-sm font-semibold text-slate-900">
-                              {studentData.student_name}
-                            </span>
-                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
-                              {presentDays}/{totalSessions}
-                            </span>
-                          </div>
-                          <svg
-                            className={cn(
-                              "h-4 w-4 text-slate-400 transition-transform duration-200",
-                              isExpanded && "rotate-180",
-                            )}
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                            strokeWidth={2}
-                          >
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                          </svg>
-                        </button>
-
-                        {/* Accordion body: calendar grid */}
-                        {isExpanded ? (
-                          <div className="mx-auto max-w-md border-t border-slate-100 px-4 py-4 sm:px-5">
-                            {/* Day headers */}
-                            <div className="mb-2 grid grid-cols-7 gap-1 text-center">
-                              {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-                                <div
-                                  key={d}
-                                  className="pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400"
-                                >
-                                  {d}
-                                </div>
-                              ))}
-                            </div>
-                            {/* Week rows */}
-                            <div className="space-y-1">
-                              {calendarGrid.map((weekRow, weekIdx) => (
-                                <div key={weekIdx} className="grid grid-cols-7 gap-1">
-                                  {weekRow.map((cell, cellIdx) => {
-                                    if (!cell.inMonth) {
-                                      return <div key={cellIdx} className="aspect-square" />;
-                                    }
-
-                                    const dayOccurrences = studentData.occurrencesByDate.get(cell.dateStr);
-                                    const hasClass = dayOccurrences && dayOccurrences.length > 0;
-
-                                    if (!hasClass) {
-                                      return (
-                                        <div
-                                          key={cellIdx}
-                                          className="flex aspect-square items-center justify-center rounded-lg bg-slate-50 text-[11px] text-slate-300"
-                                        >
-                                          {cell.day}
-                                        </div>
-                                      );
-                                    }
-
-                                    const allPresent = dayOccurrences.every(
-                                      (o) => o.attendance_status === "present",
-                                    );
-                                    const somePresent = !allPresent && dayOccurrences.some(
-                                      (o) => o.attendance_status === "present",
-                                    );
-                                    const isBusy = dayOccurrences.some(
-                                      (o) => busyKey === `mark:${o.id}`,
-                                    );
-                                    const primaryCourse = dayOccurrences[0].course_name;
-                                    const multiSession = dayOccurrences.length > 1;
-
-                                    return (
-                                      <button
-                                        key={cellIdx}
-                                        type="button"
-                                        disabled={isBusy}
-                                        className={cn(
-                                          "relative flex aspect-square items-center justify-center rounded-lg text-[11px] font-semibold transition-all duration-200",
-                                          allPresent
-                                            ? getCourseCalendarFill(primaryCourse)
-                                            : somePresent
-                                              ? "border border-emerald-300 bg-emerald-50 text-emerald-700"
-                                              : "border border-slate-200 bg-white text-slate-600 hover:border-emerald-300 hover:bg-emerald-50",
-                                          isBusy && "pointer-events-none opacity-50",
-                                        )}
-                                        onClick={() => handleCalendarCellClick(dayOccurrences)}
-                                        title={
-                                          multiSession
-                                            ? `${dayOccurrences.length} sessions - click to review`
-                                            : undefined
-                                        }
-                                      >
-                                        {cell.day}
-                                        {multiSession ? (
-                                          <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-sky-500" />
-                                        ) : null}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </>
+            <MonthlyAttendancePanel
+              month={month}
+              occurrences={payload?.monthly_occurrences ?? []}
+              loading={loading}
+              busyKey={busyKey}
+              expandedStudentIds={expandedStudents}
+              onStudentToggle={toggleStudentExpanded}
+              onDayClick={handleCalendarCellClick}
+            />
           )}
         </section>
       </main>
