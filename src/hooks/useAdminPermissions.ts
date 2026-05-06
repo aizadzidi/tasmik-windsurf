@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { isGlobalAdminRole, isTenantAdminRole } from "@/lib/adminRoles";
 import { supabase } from "@/lib/supabaseClient";
 
 export type AdminPermissionState = {
@@ -30,8 +31,9 @@ export function useAdminPermissions(): AdminPermissionState {
         return;
       }
 
-      const [userRes, permRes] = await Promise.all([
+      const [userRes, profileRes, permRes] = await Promise.all([
         supabase.from("users").select("role").eq("id", userId).maybeSingle(),
+        supabase.from("user_profiles").select("role").eq("user_id", userId).maybeSingle(),
         supabase.from("user_permissions").select("permission_key").eq("user_id", userId),
       ]);
 
@@ -42,8 +44,9 @@ export function useAdminPermissions(): AdminPermissionState {
         setRole(null);
       } else {
         const nextRole = (userRes.data?.role as AdminPermissionState["role"]) ?? null;
+        const profileRole = profileRes.data?.role ?? null;
         setRole(nextRole);
-        setIsAdmin(nextRole === "admin");
+        setIsAdmin(isGlobalAdminRole(nextRole) || isTenantAdminRole(profileRole));
       }
 
       if (permRes.error) {

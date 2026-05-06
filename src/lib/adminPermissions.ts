@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { isGlobalAdminRole, isTenantAdminRole } from "@/lib/adminRoles";
 import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -79,7 +80,7 @@ export async function requireAdminPermission(
   ]);
 
   const isAdmin =
-    userRowRes.data?.role === "admin" || profileRes.data?.role === "school_admin";
+    isGlobalAdminRole(userRowRes.data?.role) || isTenantAdminRole(profileRes.data?.role);
 
   if (isAdmin) {
     return { ok: true, userId, tenantId, isAdmin: true };
