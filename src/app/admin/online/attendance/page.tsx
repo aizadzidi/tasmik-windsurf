@@ -4,6 +4,7 @@ import React from "react";
 import { Check, ChevronDown, RefreshCw, Search } from "lucide-react";
 import AdminNavbar from "@/components/admin/AdminNavbar";
 import AdminScopeSwitch from "@/components/admin/AdminScopeSwitch";
+import MonthDropdown from "@/components/online/MonthDropdown";
 import MonthlyAttendancePanel, {
   type OnlineAttendanceOccurrence,
 } from "@/components/online/MonthlyAttendancePanel";
@@ -240,12 +241,7 @@ export default function AdminOnlineAttendancePage() {
                   </PopoverContent>
                 </Popover>
 
-                <input
-                  type="month"
-                  value={month}
-                  onChange={(event) => setMonth(event.target.value)}
-                  className="h-10 rounded-2xl border border-slate-200 bg-white px-4 text-sm shadow-sm transition focus:ring-2 focus:ring-slate-300"
-                />
+                <MonthDropdown value={month} onChange={setMonth} />
 
                 <Button
                   variant="outline"

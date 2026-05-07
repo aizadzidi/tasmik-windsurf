@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import MonthDropdown from "@/components/online/MonthDropdown";
 import MonthlyAttendancePanel from "@/components/online/MonthlyAttendancePanel";
 import { PlannerContextMenu, type PlannerContextAction } from "@/components/online/PlannerContextMenu";
 import { Button } from "@/components/ui/Button";
@@ -912,12 +913,7 @@ export default function TeacherOnlineAttendancePage() {
               </div>
             </div>
             {classView === "monthly" ? (
-              <input
-                type="month"
-                value={month}
-                onChange={(event) => setMonth(event.target.value)}
-                className="h-10 rounded-2xl border border-slate-200 bg-white px-4 text-sm shadow-sm transition focus:ring-2 focus:ring-slate-300"
-              />
+              <MonthDropdown value={month} onChange={setMonth} />
             ) : null}
           </div>
 
