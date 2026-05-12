@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import DateDropdown from "@/components/online/DateDropdown";
 import MonthDropdown from "@/components/online/MonthDropdown";
 import MonthlyAttendancePanel from "@/components/online/MonthlyAttendancePanel";
 import { PlannerContextMenu, type PlannerContextAction } from "@/components/online/PlannerContextMenu";
@@ -116,6 +117,14 @@ const currentMonthKey = () => {
   return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
 };
 
+const currentDateKey = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
 const timeLabel = (value: string) => value.slice(0, 5);
 
 const formatTimeWithMeridiem = (value: string) => {
@@ -202,6 +211,7 @@ export default function TeacherOnlineAttendancePage() {
   const [teacherId, setTeacherId] = useState<string | null>(null);
   const { programScope } = useTeachingModeContext();
   const [month, setMonth] = useState(currentMonthKey());
+  const [selectedDate, setSelectedDate] = useState(currentDateKey());
   const [payload, setPayload] = useState<TeacherPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -344,9 +354,11 @@ export default function TeacherOnlineAttendancePage() {
     setConfirmUnassign(false);
   }, [selectedPill]);
 
-  const sortedTodayQueue = useMemo(() => {
-    return [...(payload?.today_queue ?? [])].sort((a, b) => a.start_time.localeCompare(b.start_time));
-  }, [payload?.today_queue]);
+  const sortedDailyQueue = useMemo(() => {
+    return (payload?.monthly_occurrences ?? [])
+      .filter((occurrence) => occurrence.session_date === selectedDate)
+      .sort((a, b) => a.start_time.localeCompare(b.start_time));
+  }, [payload?.monthly_occurrences, selectedDate]);
 
   const selectedCalendarDayDetails = useMemo(() => {
     if (!selectedCalendarDay) return null;
@@ -892,8 +904,9 @@ export default function TeacherOnlineAttendancePage() {
                   )}
                   onClick={() => {
                     setClassView("daily");
-                    // Reset month to current so Daily view always shows today's data
-                    setMonth(currentMonthKey());
+                    const today = currentDateKey();
+                    setSelectedDate(today);
+                    setMonth(today.slice(0, 7));
                   }}
                 >
                   Daily
@@ -912,7 +925,15 @@ export default function TeacherOnlineAttendancePage() {
                 </button>
               </div>
             </div>
-            {classView === "monthly" ? (
+            {classView === "daily" ? (
+              <DateDropdown
+                value={selectedDate}
+                onChange={(nextDate) => {
+                  setSelectedDate(nextDate);
+                  setMonth(nextDate.slice(0, 7));
+                }}
+              />
+            ) : classView === "monthly" ? (
               <MonthDropdown value={month} onChange={setMonth} />
             ) : null}
           </div>
@@ -937,12 +958,14 @@ export default function TeacherOnlineAttendancePage() {
                     </Card>
                   ))}
                 </div>
-              ) : sortedTodayQueue.length === 0 ? (
+              ) : sortedDailyQueue.length === 0 ? (
                 <Card className="p-6 text-center">
-                  <p className="text-sm text-slate-500">No online sessions scheduled for today.</p>
+                  <p className="text-sm text-slate-500">
+                    No online sessions scheduled for {formatDateHeading(selectedDate)}.
+                  </p>
                 </Card>
               ) : (
-                sortedTodayQueue.map((occurrence) => {
+                sortedDailyQueue.map((occurrence) => {
                   const isMarked = occurrence.attendance_status !== null;
                   const isBusy = busyKey === `mark:${occurrence.id}`;
                   return (
