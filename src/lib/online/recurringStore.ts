@@ -33,6 +33,11 @@ type SnapshotResult = {
   packageChangeRequests: OnlinePackageChangeRequest[];
 };
 
+type SnapshotOptions = {
+  teacherId?: string | null;
+  includePackageChangeRequests?: boolean;
+};
+
 const isSafeRecurringFallbackError = (error: { message?: string } | null | undefined, table: string) =>
   isMissingRelationError(error, table) ||
   isMissingColumnError(error, "tenant_id", table) ||
@@ -87,11 +92,19 @@ const toTemplateRows = async (client: SupabaseLike, tenantId: string) => {
   return (response.data ?? []) as OnlineSlotTemplateRow[];
 };
 
-const toTeacherAvailabilityRows = async (client: SupabaseLike, tenantId: string) => {
-  const withAssigned = await client
+const toTeacherAvailabilityRows = async (
+  client: SupabaseLike,
+  tenantId: string,
+  teacherId?: string | null,
+) => {
+  let withAssignedQuery = client
     .from("online_teacher_slot_preferences")
     .select("slot_template_id, teacher_id, is_available, last_assigned_at")
     .eq("tenant_id", tenantId);
+  if (teacherId) {
+    withAssignedQuery = withAssignedQuery.eq("teacher_id", teacherId);
+  }
+  const withAssigned = await withAssignedQuery;
 
   if (!withAssigned.error) {
     return (withAssigned.data ?? []) as OnlineTeacherAvailabilityRow[];
@@ -101,10 +114,14 @@ const toTeacherAvailabilityRows = async (client: SupabaseLike, tenantId: string)
     throw withAssigned.error;
   }
 
-  const fallback = await client
+  let fallbackQuery = client
     .from("online_teacher_slot_preferences")
     .select("slot_template_id, teacher_id, is_available")
     .eq("tenant_id", tenantId);
+  if (teacherId) {
+    fallbackQuery = fallbackQuery.eq("teacher_id", teacherId);
+  }
+  const fallback = await fallbackQuery;
   if (fallback.error) {
     if (isSafeRecurringFallbackError(fallback.error, "online_teacher_slot_preferences")) {
       return [] as OnlineTeacherAvailabilityRow[];
@@ -119,8 +136,12 @@ const toTeacherAvailabilityRows = async (client: SupabaseLike, tenantId: string)
   }>).map((row) => ({ ...row, last_assigned_at: null }));
 };
 
-const toRecurringPackages = async (client: SupabaseLike, tenantId: string) => {
-  const response = await client
+const toRecurringPackages = async (
+  client: SupabaseLike,
+  tenantId: string,
+  teacherId?: string | null,
+) => {
+  let query = client
     .from("online_recurring_packages")
     .select(
       "id, tenant_id, student_id, course_id, teacher_id, student_package_assignment_id, status, source, effective_month, effective_from, effective_to, sessions_per_week, monthly_fee_cents_snapshot, notes, hold_expires_at, created_by, updated_by, created_at, updated_at"
@@ -128,6 +149,10 @@ const toRecurringPackages = async (client: SupabaseLike, tenantId: string) => {
     .eq("tenant_id", tenantId)
     .order("effective_month", { ascending: false })
     .order("created_at", { ascending: false });
+  if (teacherId) {
+    query = query.eq("teacher_id", teacherId);
+  }
+  const response = await query;
 
   if (response.error) {
     if (isSafeRecurringFallbackError(response.error, "online_recurring_packages")) {
@@ -192,14 +217,16 @@ const toPackageChangeRequests = async (client: SupabaseLike, tenantId: string) =
 export const fetchRecurringSnapshot = async (
   client: SupabaseLike,
   tenantId: string,
+  options: SnapshotOptions = {},
 ): Promise<SnapshotResult> => {
+  const includePackageChangeRequests = options.includePackageChangeRequests ?? true;
   const [courses, templates, teacherAvailability, packagesResult, packageChangeRequests] =
     await Promise.all([
       toCourseRows(client, tenantId),
       toTemplateRows(client, tenantId),
-      toTeacherAvailabilityRows(client, tenantId),
-      toRecurringPackages(client, tenantId),
-      toPackageChangeRequests(client, tenantId),
+      toTeacherAvailabilityRows(client, tenantId, options.teacherId),
+      toRecurringPackages(client, tenantId, options.teacherId),
+      includePackageChangeRequests ? toPackageChangeRequests(client, tenantId) : Promise.resolve([]),
     ]);
 
   const packages = packagesResult.rows;

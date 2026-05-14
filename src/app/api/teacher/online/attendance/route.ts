@@ -26,6 +26,9 @@ type AttendanceBody = {
 type TeacherOccurrenceRow = Omit<OnlineRecurringOccurrence, "id" | "created_at" | "updated_at"> &
   Partial<Pick<OnlineRecurringOccurrence, "id" | "created_at" | "updated_at">>;
 
+const occurrenceSelectColumns =
+  "id, tenant_id, package_id, package_slot_id, student_id, course_id, teacher_id, slot_template_id, session_date, start_time, duration_minutes, attendance_status, attendance_notes, recorded_at, cancelled_at, created_at, updated_at";
+
 const monthDateRange = (monthKey: string) => {
   const match = /^(\d{4})-(\d{2})$/.exec(monthKey);
   if (!match) return null;
@@ -36,6 +39,29 @@ const monthDateRange = (monthKey: string) => {
   const end = new Date(Date.UTC(year, month, 1));
   return { start, end };
 };
+
+const occurrenceKey = (occurrence: Pick<TeacherOccurrenceRow, "package_slot_id" | "session_date">) =>
+  `${occurrence.package_slot_id}:${occurrence.session_date}`;
+
+const normalizeTime = (value: string) => value.slice(0, 8);
+
+const occurrenceMatchesDraft = (existing: TeacherOccurrenceRow, draft: TeacherOccurrenceRow) =>
+  existing.package_id === draft.package_id &&
+  existing.student_id === draft.student_id &&
+  existing.course_id === draft.course_id &&
+  existing.teacher_id === draft.teacher_id &&
+  existing.slot_template_id === draft.slot_template_id &&
+  normalizeTime(existing.start_time) === normalizeTime(draft.start_time) &&
+  existing.duration_minutes === draft.duration_minutes;
+
+const activeOccurrences = (rows: TeacherOccurrenceRow[]) =>
+  rows
+    .filter((occurrence) => !occurrence.cancelled_at)
+    .sort((left, right) => {
+      const byDate = left.session_date.localeCompare(right.session_date);
+      if (byDate !== 0) return byDate;
+      return left.start_time.localeCompare(right.start_time);
+    });
 
 const emptyPayload = (monthKey: string, warning?: string) => ({
   month: monthKey,
@@ -81,7 +107,10 @@ export async function GET(request: NextRequest) {
     }
 
     const [snapshot, schedulerOptions] = await Promise.all([
-      fetchRecurringSnapshot(supabaseService, auth.tenantId),
+      fetchRecurringSnapshot(supabaseService, auth.tenantId, {
+        teacherId: auth.userId,
+        includePackageChangeRequests: false,
+      }),
       buildTeacherSchedulerOptions({
         client: supabaseService,
         tenantId: auth.tenantId,
@@ -115,59 +144,98 @@ export async function GET(request: NextRequest) {
 
     let monthlyOccurrences: TeacherOccurrenceRow[] = occurrenceDrafts;
 
-    // Strip attendance/cancellation fields so upsert only touches scheduling columns.
-    // This preserves attendance_status, attendance_notes, recorded_at on existing rows
-    // while still allowing cancelled rows to be resurrected with updated scheduling data.
-    const upsertSafeDrafts = occurrenceDrafts.map(
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      ({ attendance_status, attendance_notes, recorded_at, cancelled_at, ...scheduling }) => scheduling,
-    );
-    const upsertRes = await supabaseService
+    const existingOccurrencesRes = await supabaseService
       .from("online_recurring_occurrences")
-      .upsert(upsertSafeDrafts, { onConflict: "tenant_id,package_slot_id,session_date" });
+      .select(occurrenceSelectColumns)
+      .eq("tenant_id", auth.tenantId)
+      .eq("teacher_id", auth.userId)
+      .gte("session_date", range.start.toISOString().slice(0, 10))
+      .lt("session_date", range.end.toISOString().slice(0, 10))
+      .order("session_date", { ascending: true })
+      .order("start_time", { ascending: true });
 
-    // Resurrect cancelled rows that now match active drafts (e.g. slot moved to
-    // same weekday with a different time — the upsert updated scheduling columns
-    // but cancelled_at was stripped, so clear it explicitly).
-    if (!upsertRes.error && occurrenceDrafts.length > 0) {
-      const timestamp = new Date().toISOString();
-      const draftDatesBySlotId = new Map<string, Set<string>>();
-
-      occurrenceDrafts.forEach((draft) => {
-        const dates = draftDatesBySlotId.get(draft.package_slot_id) ?? new Set<string>();
-        dates.add(draft.session_date);
-        draftDatesBySlotId.set(draft.package_slot_id, dates);
+    if (!existingOccurrencesRes.error) {
+      const existingOccurrences = (existingOccurrencesRes.data ?? []) as TeacherOccurrenceRow[];
+      const existingByKey = new Map(
+        existingOccurrences.map((occurrence) => [occurrenceKey(occurrence), occurrence]),
+      );
+      const draftsToUpsert = occurrenceDrafts.filter((draft) => {
+        const existing = existingByKey.get(occurrenceKey(draft));
+        return !existing || Boolean(existing.cancelled_at) || !occurrenceMatchesDraft(existing, draft);
       });
+      const resurrectIds = draftsToUpsert
+        .map((draft) => existingByKey.get(occurrenceKey(draft)))
+        .filter(
+          (occurrence): occurrence is TeacherOccurrenceRow & { id: string } =>
+            Boolean(occurrence?.id && occurrence.cancelled_at),
+        )
+        .map((occurrence) => occurrence.id);
 
-      for (const [packageSlotId, sessionDates] of draftDatesBySlotId) {
+      if (draftsToUpsert.length > 0) {
+        // Strip attendance fields so upsert only touches scheduling columns.
+        // This preserves attendance_status, attendance_notes, and recorded_at on existing rows.
+        const upsertSafeDrafts = draftsToUpsert.map(
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          ({ attendance_status, attendance_notes, recorded_at, cancelled_at, ...scheduling }) => scheduling,
+        );
+        const upsertRes = await supabaseService
+          .from("online_recurring_occurrences")
+          .upsert(upsertSafeDrafts, { onConflict: "tenant_id,package_slot_id,session_date" });
+        if (upsertRes.error) throw upsertRes.error;
+      }
+
+      if (resurrectIds.length > 0) {
         const resurrectRes = await supabaseService
           .from("online_recurring_occurrences")
-          .update({ cancelled_at: null, updated_at: timestamp })
+          .update({ cancelled_at: null, updated_at: new Date().toISOString() })
           .eq("tenant_id", auth.tenantId)
-          .eq("package_slot_id", packageSlotId)
-          .in("session_date", [...sessionDates])
-          .not("cancelled_at", "is", null);
+          .in("id", resurrectIds);
         if (resurrectRes.error) throw resurrectRes.error;
       }
-    }
 
-    if (!upsertRes.error) {
-      const selectRes = await supabaseService
+      if (draftsToUpsert.length > 0 || resurrectIds.length > 0) {
+        const selectRes = await supabaseService
+          .from("online_recurring_occurrences")
+          .select(occurrenceSelectColumns)
+          .eq("tenant_id", auth.tenantId)
+          .eq("teacher_id", auth.userId)
+          .is("cancelled_at", null)
+          .gte("session_date", range.start.toISOString().slice(0, 10))
+          .lt("session_date", range.end.toISOString().slice(0, 10))
+          .order("session_date", { ascending: true })
+          .order("start_time", { ascending: true });
+        if (selectRes.error) throw selectRes.error;
+        monthlyOccurrences = (selectRes.data ?? occurrenceDrafts) as TeacherOccurrenceRow[];
+      } else {
+        monthlyOccurrences = activeOccurrences(existingOccurrences);
+      }
+    } else if (!isMissingRelationError(existingOccurrencesRes.error, "online_recurring_occurrences")) {
+      throw existingOccurrencesRes.error;
+    } else if (occurrenceDrafts.length > 0) {
+      const upsertSafeDrafts = occurrenceDrafts.map(
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        ({ attendance_status, attendance_notes, recorded_at, cancelled_at, ...scheduling }) => scheduling,
+      );
+      const upsertRes = await supabaseService
         .from("online_recurring_occurrences")
-        .select(
-          "id, tenant_id, package_id, package_slot_id, student_id, course_id, teacher_id, slot_template_id, session_date, start_time, duration_minutes, attendance_status, attendance_notes, recorded_at, cancelled_at, created_at, updated_at"
-        )
-        .eq("tenant_id", auth.tenantId)
-        .eq("teacher_id", auth.userId)
-        .is("cancelled_at", null)
-        .gte("session_date", range.start.toISOString().slice(0, 10))
-        .lt("session_date", range.end.toISOString().slice(0, 10))
-        .order("session_date", { ascending: true })
-        .order("start_time", { ascending: true });
-      if (selectRes.error) throw selectRes.error;
-      monthlyOccurrences = selectRes.data ?? occurrenceDrafts;
-    } else if (!isMissingRelationError(upsertRes.error, "online_recurring_occurrences")) {
-      throw upsertRes.error;
+        .upsert(upsertSafeDrafts, { onConflict: "tenant_id,package_slot_id,session_date" });
+
+      if (!upsertRes.error) {
+        const selectRes = await supabaseService
+          .from("online_recurring_occurrences")
+          .select(occurrenceSelectColumns)
+          .eq("tenant_id", auth.tenantId)
+          .eq("teacher_id", auth.userId)
+          .is("cancelled_at", null)
+          .gte("session_date", range.start.toISOString().slice(0, 10))
+          .lt("session_date", range.end.toISOString().slice(0, 10))
+          .order("session_date", { ascending: true })
+          .order("start_time", { ascending: true });
+        if (selectRes.error) throw selectRes.error;
+        monthlyOccurrences = (selectRes.data ?? occurrenceDrafts) as TeacherOccurrenceRow[];
+      } else if (!isMissingRelationError(upsertRes.error, "online_recurring_occurrences")) {
+        throw upsertRes.error;
+      }
     }
 
     const studentById = new Map(snapshot.students.map((student) => [student.id, student]));
@@ -262,18 +330,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const occurrenceRes = await supabaseService
-      .from("online_recurring_occurrences")
-      .select("id, teacher_id")
-      .eq("tenant_id", auth.tenantId)
-      .eq("id", occurrenceId)
-      .is("cancelled_at", null)
-      .maybeSingle();
-    if (occurrenceRes.error) throw occurrenceRes.error;
-    if (!occurrenceRes.data?.id || occurrenceRes.data.teacher_id !== auth.userId) {
-      return NextResponse.json({ error: "Occurrence not found for this teacher." }, { status: 404 });
-    }
-
     const updateRes = await supabaseService
       .from("online_recurring_occurrences")
       .update({
@@ -284,9 +340,14 @@ export async function POST(request: NextRequest) {
       })
       .eq("tenant_id", auth.tenantId)
       .eq("id", occurrenceId)
+      .eq("teacher_id", auth.userId)
+      .is("cancelled_at", null)
       .select("*")
-      .single();
+      .maybeSingle();
     if (updateRes.error) throw updateRes.error;
+    if (!updateRes.data?.id) {
+      return NextResponse.json({ error: "Occurrence not found for this teacher." }, { status: 404 });
+    }
 
     return NextResponse.json(updateRes.data);
   } catch (error: unknown) {
