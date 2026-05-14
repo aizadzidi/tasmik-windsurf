@@ -1,27 +1,44 @@
 "use client";
 
 import React from "react";
-import { Check, ChevronDown, RefreshCw, Search } from "lucide-react";
+import {
+  CalendarDays,
+  CheckCircle2,
+  ChevronDown,
+  RefreshCw,
+  UserRound,
+  Users,
+  XCircle,
+} from "lucide-react";
 import AdminNavbar from "@/components/admin/AdminNavbar";
 import AdminScopeSwitch from "@/components/admin/AdminScopeSwitch";
 import MonthDropdown from "@/components/online/MonthDropdown";
-import MonthlyAttendancePanel, {
+import {
+  buildCalendarGrid,
+  groupOccurrencesByStudent,
   type OnlineAttendanceOccurrence,
+  type StudentCalendarData,
 } from "@/components/online/MonthlyAttendancePanel";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
 import { Modal } from "@/components/ui/Modal";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { authFetch } from "@/lib/authFetch";
 import { cn } from "@/lib/utils";
+
+type MonthlySummary = {
+  total_attendance: number;
+  total_sessions: number;
+  marked_sessions: number;
+  present_count: number;
+  absent_count: number;
+  attendance_rate_pct: number;
+};
+
+type StudentSummary = {
+  student_id: string;
+  student_name: string;
+  summary: MonthlySummary;
+};
 
 type TeacherOption = {
   id: string;
@@ -30,20 +47,30 @@ type TeacherOption = {
   available_slot_count: number;
 };
 
+type TeacherMonthlySummary = TeacherOption & {
+  summary: MonthlySummary;
+  students: StudentSummary[];
+  monthly_occurrences: OnlineAttendanceOccurrence[];
+};
+
 type MonthlyPayload = {
   warning?: string;
   month: string;
   selected_teacher: TeacherOption | null;
   teachers: TeacherOption[];
-  summary: {
-    total_attendance: number;
-    total_sessions: number;
-    marked_sessions: number;
-    present_count: number;
-    absent_count: number;
-    attendance_rate_pct: number;
-  };
+  overall_summary?: MonthlySummary;
+  summary: MonthlySummary;
+  teacher_summaries?: TeacherMonthlySummary[];
   monthly_occurrences: OnlineAttendanceOccurrence[];
+};
+
+const emptySummary: MonthlySummary = {
+  total_attendance: 0,
+  total_sessions: 0,
+  marked_sessions: 0,
+  present_count: 0,
+  absent_count: 0,
+  attendance_rate_pct: 0,
 };
 
 const currentMonthKey = () => {
@@ -57,6 +84,16 @@ const extractError = (payload: unknown, fallback: string) => {
     if (typeof candidate === "string" && candidate.trim().length > 0) return candidate;
   }
   return fallback;
+};
+
+const formatMonthLabel = (monthKey: string) => {
+  const [year, month] = monthKey.split("-").map(Number);
+  if (!year || !month) return monthKey;
+  return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString("en-GB", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 };
 
 const timeLabel = (value: string) => value.slice(0, 5);
@@ -98,40 +135,174 @@ const formatDateHeading = (dateStr: string) => {
   });
 };
 
+const getCourseCalendarFill = (courseName: string) => {
+  if (/hafazan|tahfiz/i.test(courseName)) return "bg-emerald-600 text-white ring-1 ring-emerald-500";
+  if (/islamic|islam|muamalah/i.test(courseName)) return "bg-sky-600 text-white ring-1 ring-sky-500";
+  return "bg-slate-700 text-white ring-1 ring-slate-500";
+};
+
+function SummaryCard({
+  label,
+  value,
+  icon: Icon,
+  tone,
+}: {
+  label: string;
+  value: string | number;
+  icon: React.ElementType;
+  tone: "emerald" | "slate" | "rose";
+}) {
+  const toneClass = {
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    slate: "border-slate-200 bg-white text-slate-900",
+    rose: "border-rose-200 bg-rose-50 text-rose-700",
+  }[tone];
+
+  return (
+    <div className={cn("rounded-xl border px-4 py-4 shadow-sm", toneClass)}>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</p>
+        <Icon className="h-4 w-4 opacity-75" />
+      </div>
+      <p className="mt-3 text-3xl font-semibold tracking-tight">{value}</p>
+    </div>
+  );
+}
+
+function StudentMonthlyCalendar({
+  month,
+  studentData,
+  onDayClick,
+}: {
+  month: string;
+  studentData: StudentCalendarData;
+  onDayClick: (occurrences: OnlineAttendanceOccurrence[]) => void;
+}) {
+  const calendarGrid = React.useMemo(() => buildCalendarGrid(month), [month]);
+
+  return (
+    <div className="border-t border-slate-100 bg-slate-50 px-4 py-4 sm:px-6">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-slate-900">{studentData.student_name}</p>
+          <p className="text-xs text-slate-500">Monthly attendance for {formatMonthLabel(month)}</p>
+        </div>
+        <div className="flex gap-2 text-xs">
+          <span className="rounded-full bg-emerald-100 px-2 py-1 font-medium text-emerald-700">Present</span>
+          <span className="rounded-full bg-rose-100 px-2 py-1 font-medium text-rose-700">Absent</span>
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-md rounded-xl border border-slate-200 bg-white p-3">
+        <div className="mb-2 grid grid-cols-7 gap-1 text-center">
+          {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => (
+            <div key={day} className="pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+              {day}
+            </div>
+          ))}
+        </div>
+
+        <div className="space-y-1">
+          {calendarGrid.map((weekRow, weekIndex) => (
+            <div key={weekIndex} className="grid grid-cols-7 gap-1">
+              {weekRow.map((cell, cellIndex) => {
+                if (!cell.inMonth) return <div key={cellIndex} className="aspect-square" />;
+
+                const dayOccurrences = studentData.occurrencesByDate.get(cell.dateStr);
+                const hasClass = dayOccurrences && dayOccurrences.length > 0;
+                if (!hasClass) {
+                  return (
+                    <div
+                      key={cellIndex}
+                      className="flex aspect-square items-center justify-center rounded-lg bg-slate-50 text-[11px] text-slate-300"
+                    >
+                      {cell.day}
+                    </div>
+                  );
+                }
+
+                const allPresent = dayOccurrences.every(
+                  (occurrence) => occurrence.attendance_status === "present",
+                );
+                const somePresent = !allPresent && dayOccurrences.some(
+                  (occurrence) => occurrence.attendance_status === "present",
+                );
+                const allAbsent = dayOccurrences.every(
+                  (occurrence) => occurrence.attendance_status === "absent",
+                );
+                const primaryCourse = dayOccurrences[0].course_name;
+                const multiSession = dayOccurrences.length > 1;
+
+                return (
+                  <button
+                    key={cellIndex}
+                    type="button"
+                    className={cn(
+                      "relative flex aspect-square items-center justify-center rounded-lg text-[11px] font-semibold",
+                      "transition-all duration-200 hover:scale-[1.03]",
+                      allPresent
+                        ? getCourseCalendarFill(primaryCourse)
+                        : somePresent
+                          ? "border border-emerald-300 bg-emerald-50 text-emerald-700"
+                          : allAbsent
+                            ? "border border-rose-200 bg-rose-50 text-rose-700"
+                            : "border border-slate-200 bg-white text-slate-600 hover:border-emerald-300",
+                    )}
+                    onClick={() => onDayClick(dayOccurrences)}
+                    title={multiSession ? `${dayOccurrences.length} sessions - click to review` : undefined}
+                  >
+                    {cell.day}
+                    {multiSession ? (
+                      <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-sky-500" />
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminOnlineAttendancePage() {
   const [month, setMonth] = React.useState(currentMonthKey());
-  const [selectedTeacherId, setSelectedTeacherId] = React.useState("");
   const [payload, setPayload] = React.useState<MonthlyPayload | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState("");
-  const [teacherPickerOpen, setTeacherPickerOpen] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
-  const [expandedStudentId, setExpandedStudentId] = React.useState<string | null>(null);
+  const [expandedTeacherId, setExpandedTeacherId] = React.useState<string | null>(null);
+  const [selectedStudentId, setSelectedStudentId] = React.useState<string | null>(null);
   const [selectedDayOccurrences, setSelectedDayOccurrences] = React.useState<OnlineAttendanceOccurrence[]>([]);
 
-  const expandedStudentIds = React.useMemo(
-    () => new Set(expandedStudentId ? [expandedStudentId] : []),
-    [expandedStudentId],
-  );
-
   const refreshData = React.useCallback(
-    async (withLoading = true, nextTeacherId = selectedTeacherId) => {
+    async (withLoading = true) => {
       if (withLoading) setLoading(true);
       else setRefreshing(true);
       setError("");
+
       try {
         const query = new URLSearchParams({ month });
-        if (nextTeacherId) query.set("teacher_id", nextTeacherId);
         const response = await authFetch(`/api/admin/online/attendance/monthly?${query.toString()}`);
         const nextPayload = (await response.json()) as MonthlyPayload & { error?: string };
+
         if (!response.ok) {
           throw new Error(extractError(nextPayload, "Failed to load monthly online attendance"));
         }
+
         setPayload(nextPayload);
-        setExpandedStudentId(null);
-        if (!nextTeacherId && nextPayload.selected_teacher?.id) {
-          setSelectedTeacherId(nextPayload.selected_teacher.id);
-        }
+        setExpandedTeacherId((current) => {
+          const teachers = nextPayload.teacher_summaries ?? [];
+          return teachers.some((teacher) => teacher.id === current) ? current : null;
+        });
+        setSelectedStudentId((current) => {
+          const teachers = nextPayload.teacher_summaries ?? [];
+          const stillExists = teachers.some((teacher) =>
+            teacher.students.some((student) => student.student_id === current),
+          );
+          return stillExists ? current : null;
+        });
       } catch (refreshError) {
         setError(
           refreshError instanceof Error ? refreshError.message : "Failed to load monthly online attendance",
@@ -141,152 +312,228 @@ export default function AdminOnlineAttendancePage() {
         else setRefreshing(false);
       }
     },
-    [month, selectedTeacherId],
+    [month],
   );
+
+  React.useEffect(() => {
+    setExpandedTeacherId(null);
+    setSelectedStudentId(null);
+  }, [month]);
 
   React.useEffect(() => {
     void refreshData();
   }, [refreshData]);
 
-  const teacherName = payload?.selected_teacher?.name ?? "No teacher selected";
+  const teacherSummaries = payload?.teacher_summaries ?? [];
+  const overallSummary = payload?.overall_summary ?? payload?.summary ?? emptySummary;
+  const expandedTeacher = teacherSummaries.find((teacher) => teacher.id === expandedTeacherId) ?? null;
+  const selectedStudentOccurrences = React.useMemo(() => {
+    if (!expandedTeacher || !selectedStudentId) return [];
+    return expandedTeacher.monthly_occurrences.filter(
+      (occurrence) => occurrence.student_id === selectedStudentId,
+    );
+  }, [expandedTeacher, selectedStudentId]);
+  const selectedStudentData = React.useMemo(
+    () => groupOccurrencesByStudent(selectedStudentOccurrences)[0] ?? null,
+    [selectedStudentOccurrences],
+  );
   const selectedDayHeading = selectedDayOccurrences[0]?.session_date
     ? formatDateHeading(selectedDayOccurrences[0].session_date)
     : undefined;
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(186,230,253,0.45),_transparent_34%),linear-gradient(180deg,_#f8fafc_0%,_#eef2ff_100%)]">
+    <div className="min-h-screen bg-slate-50">
       <AdminNavbar />
-      <div className="mx-auto max-w-5xl p-4 sm:p-6">
-        <header className="mb-6 flex flex-wrap items-center justify-end gap-3">
+      <div className="mx-auto max-w-6xl p-4 sm:p-6">
+        <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-950">Online Attendance</h1>
+            <p className="mt-1 text-sm text-slate-500">Overview semua guru untuk {formatMonthLabel(month)}.</p>
+          </div>
           <AdminScopeSwitch />
         </header>
 
-        <Card className="rounded-[28px] border border-slate-200/70 bg-white/95 p-4 shadow-[0_24px_80px_rgba(15,23,42,0.08)] sm:p-6">
-          <div className="flex flex-col gap-5 border-b border-slate-100 pb-5">
-            <div className="flex flex-col gap-4">
-              <div>
-                <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Monthly Attendance</h2>
-                <p className="mt-1 text-sm text-slate-500">Monitor student attendance by selected teacher.</p>
-              </div>
+        <section className="grid gap-3 sm:grid-cols-3">
+          <SummaryCard
+            label="Total Attendance"
+            value={overallSummary.total_attendance}
+            icon={CheckCircle2}
+            tone="emerald"
+          />
+          <SummaryCard
+            label="Total Sessions"
+            value={overallSummary.total_sessions}
+            icon={CalendarDays}
+            tone="slate"
+          />
+          <SummaryCard label="Absent" value={overallSummary.absent_count} icon={XCircle} tone="rose" />
+        </section>
 
-              <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-center sm:justify-start">
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-                  <p className="text-[11px] uppercase tracking-[0.2em] text-emerald-600">Total Attendance</p>
-                  <p className="mt-1 text-2xl font-semibold text-emerald-700">
-                    {payload?.summary.total_attendance ?? 0}
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                  <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Total Sessions</p>
-                  <p className="mt-1 text-2xl font-semibold text-slate-900">
-                    {payload?.summary.total_sessions ?? 0}
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
-                  <p className="text-[11px] uppercase tracking-[0.2em] text-rose-500">Absent</p>
-                  <p className="mt-1 text-2xl font-semibold text-rose-700">
-                    {payload?.summary.absent_count ?? 0}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <Popover open={teacherPickerOpen} onOpenChange={setTeacherPickerOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className="min-w-[240px] justify-between rounded-2xl border-slate-200 px-4"
-                    >
-                      <span className="truncate text-left">
-                        <span className="block text-sm font-medium text-slate-900">{teacherName}</span>
-                      </span>
-                      <ChevronDown className="h-4 w-4 text-slate-400" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="start" className="w-[320px] p-0">
-                    <Command>
-                      <div className="flex items-center border-b border-slate-100 px-3">
-                        <Search className="h-4 w-4 text-slate-400" />
-                        <CommandInput placeholder="Search teacher..." className="border-0" />
-                      </div>
-                      <CommandList>
-                        <CommandEmpty>No teacher found.</CommandEmpty>
-                        <CommandGroup heading="Teachers">
-                          {(payload?.teachers ?? []).map((teacher) => (
-                            <CommandItem
-                              key={teacher.id}
-                              value={teacher.name}
-                              onSelect={() => {
-                                setSelectedTeacherId(teacher.id);
-                                setTeacherPickerOpen(false);
-                              }}
-                              className="flex items-center justify-between"
-                            >
-                              <div>
-                                <p className="text-sm font-medium text-slate-900">{teacher.name}</p>
-                                <p className="text-xs text-slate-500">
-                                  {teacher.active_package_count} active package(s)
-                                </p>
-                              </div>
-                              {teacher.id === selectedTeacherId ? (
-                                <Check className="h-4 w-4 text-emerald-600" />
-                              ) : null}
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
-
-                <MonthDropdown value={month} onChange={setMonth} />
-
-                <Button
-                  variant="outline"
-                  className="rounded-2xl border-slate-200"
-                  onClick={() => void refreshData(false)}
-                  disabled={refreshing}
-                >
-                  <RefreshCw className={cn("h-4 w-4", refreshing ? "animate-spin" : "")} />
-                  {refreshing ? "Refreshing..." : "Refresh"}
-                </Button>
-              </div>
-            </div>
+        <section className="mt-6 rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <MonthDropdown value={month} onChange={setMonth} />
+            <Button
+              variant="outline"
+              className="rounded-xl border-slate-200"
+              onClick={() => void refreshData(false)}
+              disabled={refreshing}
+            >
+              <RefreshCw className={cn("h-4 w-4", refreshing ? "animate-spin" : "")} />
+              {refreshing ? "Refreshing..." : "Refresh"}
+            </Button>
           </div>
 
           {payload?.warning ? (
-            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <div className="m-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
               {payload.warning}
             </div>
           ) : null}
           {error ? (
-            <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <div className="m-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
               {error}
             </div>
           ) : null}
 
-          <div className="mt-6">
-            <MonthlyAttendancePanel
-              month={month}
-              occurrences={payload?.monthly_occurrences ?? []}
-              loading={loading}
-              expandedStudentIds={expandedStudentIds}
-              onStudentToggle={(studentId) => setExpandedStudentId((current) => (current === studentId ? null : studentId))}
-              onDayClick={(occurrences) => setSelectedDayOccurrences(occurrences)}
-              studentCountMode="presentOnly"
-              emptyTitle={payload?.selected_teacher ? "No sessions for this month." : "No teacher selected."}
-              emptyDescription={
-                payload?.selected_teacher
-                  ? "Sessions will appear once packages are assigned and scheduled."
-                  : "Choose an online teacher to view monthly attendance."
-              }
-            />
-          </div>
+          {loading ? (
+            <div className="space-y-2 p-4">
+              {[1, 2, 3].map((index) => (
+                <div key={index} className="h-14 animate-pulse rounded-xl bg-slate-100" />
+              ))}
+            </div>
+          ) : teacherSummaries.length === 0 ? (
+            <div className="px-4 py-10 text-center">
+              <p className="text-sm font-medium text-slate-700">No online teachers found.</p>
+              <p className="mt-1 text-xs text-slate-500">Attendance will appear once teachers have packages.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {teacherSummaries.map((teacher) => {
+                const isExpanded = expandedTeacherId === teacher.id;
+                const hasStudents = teacher.students.length > 0;
 
-          {loading ? <div className="mt-4 text-sm text-slate-500">Loading monthly attendance...</div> : null}
-        </Card>
+                return (
+                  <div key={teacher.id}>
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left hover:bg-slate-50"
+                      onClick={() => {
+                        setExpandedTeacherId((current) => (current === teacher.id ? null : teacher.id));
+                        setSelectedStudentId(null);
+                      }}
+                    >
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100">
+                          <UserRound className="h-4 w-4 text-slate-600" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-base font-semibold text-slate-950">{teacher.name}</p>
+                          <p className="text-xs text-slate-500">
+                            {teacher.students.length} students - {teacher.active_package_count} active packages
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex shrink-0 items-center gap-3">
+                        <span className="text-2xl font-semibold tabular-nums text-slate-950">
+                          {teacher.summary.total_attendance}
+                        </span>
+                        <ChevronDown
+                          className={cn("h-5 w-5 text-slate-400 transition-transform", isExpanded && "rotate-180")}
+                        />
+                      </div>
+                    </button>
+
+                    {isExpanded ? (
+                      <div className="border-t border-slate-100 bg-white">
+                        <div className="grid gap-2 px-4 py-3 sm:grid-cols-4">
+                          <div className="rounded-lg bg-emerald-50 px-3 py-2">
+                            <p className="text-xs text-emerald-700">Attendance</p>
+                            <p className="text-lg font-semibold text-emerald-800">
+                              {teacher.summary.total_attendance}
+                            </p>
+                          </div>
+                          <div className="rounded-lg bg-slate-50 px-3 py-2">
+                            <p className="text-xs text-slate-500">Sessions</p>
+                            <p className="text-lg font-semibold text-slate-900">{teacher.summary.total_sessions}</p>
+                          </div>
+                          <div className="rounded-lg bg-rose-50 px-3 py-2">
+                            <p className="text-xs text-rose-700">Absent</p>
+                            <p className="text-lg font-semibold text-rose-800">{teacher.summary.absent_count}</p>
+                          </div>
+                          <div className="rounded-lg bg-sky-50 px-3 py-2">
+                            <p className="text-xs text-sky-700">Rate</p>
+                            <p className="text-lg font-semibold text-sky-800">
+                              {teacher.summary.attendance_rate_pct}%
+                            </p>
+                          </div>
+                        </div>
+
+                        {!hasStudents ? (
+                          <div className="px-4 pb-4 text-sm text-slate-500">
+                            No sessions scheduled for this teacher in {formatMonthLabel(month)}.
+                          </div>
+                        ) : (
+                          <div className="px-4 pb-4">
+                            <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                              <Users className="h-3.5 w-3.5" />
+                              Student Summary
+                            </div>
+                            <div className="overflow-hidden rounded-xl border border-slate-200">
+                              {teacher.students.map((student) => {
+                                const isSelected = selectedStudentId === student.student_id;
+
+                                return (
+                                  <div key={student.student_id} className="border-b border-slate-100 last:border-b-0">
+                                    <button
+                                      type="button"
+                                      className={cn(
+                                        "flex w-full items-center justify-between gap-3 px-4 py-3 text-left",
+                                        isSelected ? "bg-sky-50" : "bg-white hover:bg-slate-50",
+                                      )}
+                                      onClick={() => {
+                                        setSelectedStudentId((current) =>
+                                          current === student.student_id ? null : student.student_id,
+                                        );
+                                      }}
+                                    >
+                                      <div className="min-w-0">
+                                        <p className="truncate text-sm font-semibold text-slate-900">
+                                          {student.student_name}
+                                        </p>
+                                        <p className="text-xs text-slate-500">
+                                          {student.summary.total_attendance}/{student.summary.total_sessions} sessions
+                                          - {student.summary.attendance_rate_pct}%
+                                        </p>
+                                      </div>
+                                      <ChevronDown
+                                        className={cn(
+                                          "h-4 w-4 shrink-0 text-slate-400 transition-transform",
+                                          isSelected && "rotate-180",
+                                        )}
+                                      />
+                                    </button>
+
+                                    {isSelected && selectedStudentData ? (
+                                      <StudentMonthlyCalendar
+                                        month={month}
+                                        studentData={selectedStudentData}
+                                        onDayClick={setSelectedDayOccurrences}
+                                      />
+                                    ) : null}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
       </div>
 
       <Modal

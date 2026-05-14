@@ -16,6 +16,63 @@ import type { OnlineRecurringOccurrence } from "@/types/online";
 type AdminOccurrenceRow = Omit<OnlineRecurringOccurrence, "id" | "created_at" | "updated_at"> &
   Partial<Pick<OnlineRecurringOccurrence, "id" | "created_at" | "updated_at">>;
 
+type AdminMonthlyOccurrence = AdminOccurrenceRow & {
+  student_name: string;
+  course_name: string;
+};
+
+type MonthlySummary = {
+  total_attendance: number;
+  total_sessions: number;
+  marked_sessions: number;
+  present_count: number;
+  absent_count: number;
+  attendance_rate_pct: number;
+};
+
+const emptySummary = (): MonthlySummary => ({
+  total_attendance: 0,
+  total_sessions: 0,
+  marked_sessions: 0,
+  present_count: 0,
+  absent_count: 0,
+  attendance_rate_pct: 0,
+});
+
+const buildSummary = (occurrences: AdminMonthlyOccurrence[]): MonthlySummary => {
+  const markedSessions = occurrences.filter((occurrence) => Boolean(occurrence.attendance_status));
+  const presentCount = markedSessions.filter((occurrence) => occurrence.attendance_status === "present").length;
+  const absentCount = markedSessions.filter((occurrence) => occurrence.attendance_status === "absent").length;
+  const attendanceRatePct =
+    markedSessions.length > 0 ? Math.round((presentCount / markedSessions.length) * 100) : 0;
+
+  return {
+    total_attendance: presentCount,
+    total_sessions: occurrences.length,
+    marked_sessions: markedSessions.length,
+    present_count: presentCount,
+    absent_count: absentCount,
+    attendance_rate_pct: attendanceRatePct,
+  };
+};
+
+const buildStudentSummaries = (occurrences: AdminMonthlyOccurrence[]) => {
+  const byStudent = new Map<string, AdminMonthlyOccurrence[]>();
+  occurrences.forEach((occurrence) => {
+    const list = byStudent.get(occurrence.student_id) ?? [];
+    list.push(occurrence);
+    byStudent.set(occurrence.student_id, list);
+  });
+
+  return Array.from(byStudent.entries())
+    .map(([studentId, studentOccurrences]) => ({
+      student_id: studentId,
+      student_name: studentOccurrences[0]?.student_name ?? "Student",
+      summary: buildSummary(studentOccurrences),
+    }))
+    .sort((left, right) => left.student_name.localeCompare(right.student_name));
+};
+
 const resolveTenantIdOrThrow = async (request: NextRequest) =>
   adminOperationSimple(async (client) => {
     const tenantId = await resolveTenantIdFromRequest(request, client);
@@ -103,24 +160,25 @@ export async function GET(request: NextRequest) {
         month: requestedMonth,
         selected_teacher: selectedTeacher,
         teachers: teacherOptions,
-        summary: {
-          total_attendance: 0,
-          total_sessions: 0,
-          marked_sessions: 0,
-          present_count: 0,
-          absent_count: 0,
-          attendance_rate_pct: 0,
-        },
+        overall_summary: emptySummary(),
+        summary: emptySummary(),
+        teacher_summaries: teacherOptions.map((teacher) => ({
+          ...teacher,
+          summary: emptySummary(),
+          students: [],
+          monthly_occurrences: [],
+        })),
         monthly_occurrences: [],
       };
 
-      if (snapshot.warning || !selectedTeacherId) {
+      if (snapshot.warning || teacherOptions.length === 0) {
         return emptyPayload;
       }
 
+      const visibleTeacherIds = new Set(teacherOptions.map((teacher) => teacher.id));
       const monthPackages = hydratePlannerPackages({
-        packages: filterPackagesForMonth(snapshot.packages, requestedMonth).filter(
-          (pkg) => pkg.teacher_id === selectedTeacherId,
+        packages: filterPackagesForMonth(snapshot.packages, requestedMonth).filter((pkg) =>
+          visibleTeacherIds.has(pkg.teacher_id),
         ),
         packageSlots: snapshot.packageSlots,
         students: snapshot.students,
@@ -179,7 +237,6 @@ export async function GET(request: NextRequest) {
               "id, tenant_id, package_id, package_slot_id, student_id, course_id, teacher_id, slot_template_id, session_date, start_time, duration_minutes, attendance_status, attendance_notes, recorded_at, cancelled_at, created_at, updated_at",
             )
             .eq("tenant_id", tenantId)
-            .eq("teacher_id", selectedTeacherId)
             .in("package_slot_id", currentMonthPackageSlotIds)
             .is("cancelled_at", null)
             .gte("session_date", range.start.toISOString().slice(0, 10))
@@ -198,25 +255,32 @@ export async function GET(request: NextRequest) {
         student_name: studentById.get(occurrence.student_id)?.name ?? "Student",
         course_name: courseById.get(occurrence.course_id)?.name ?? "Online Course",
       }));
-      const markedSessions = enrichedOccurrences.filter((occurrence) => Boolean(occurrence.attendance_status));
-      const presentCount = markedSessions.filter((occurrence) => occurrence.attendance_status === "present").length;
-      const absentCount = markedSessions.filter((occurrence) => occurrence.attendance_status === "absent").length;
-      const attendanceRatePct =
-        markedSessions.length > 0 ? Math.round((presentCount / markedSessions.length) * 100) : 0;
+      const occurrencesByTeacherId = new Map<string, AdminMonthlyOccurrence[]>();
+      enrichedOccurrences.forEach((occurrence) => {
+        const list = occurrencesByTeacherId.get(occurrence.teacher_id) ?? [];
+        list.push(occurrence);
+        occurrencesByTeacherId.set(occurrence.teacher_id, list);
+      });
+
+      const teacherSummaries = teacherOptions.map((teacher) => {
+        const teacherOccurrences = occurrencesByTeacherId.get(teacher.id) ?? [];
+        return {
+          ...teacher,
+          summary: buildSummary(teacherOccurrences),
+          students: buildStudentSummaries(teacherOccurrences),
+          monthly_occurrences: teacherOccurrences,
+        };
+      });
+      const selectedTeacherOccurrences = occurrencesByTeacherId.get(selectedTeacherId) ?? [];
 
       return {
         month: requestedMonth,
         selected_teacher: selectedTeacher,
         teachers: teacherOptions,
-        summary: {
-          total_attendance: presentCount,
-          total_sessions: enrichedOccurrences.length,
-          marked_sessions: markedSessions.length,
-          present_count: presentCount,
-          absent_count: absentCount,
-          attendance_rate_pct: attendanceRatePct,
-        },
-        monthly_occurrences: enrichedOccurrences,
+        overall_summary: buildSummary(enrichedOccurrences),
+        summary: buildSummary(selectedTeacherOccurrences),
+        teacher_summaries: teacherSummaries,
+        monthly_occurrences: selectedTeacherOccurrences,
       };
     });
 
