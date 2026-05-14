@@ -207,6 +207,26 @@ const formatDateHeading = (dateStr: string) => {
   });
 };
 
+const buildAttendanceSummary = (occurrences: OccurrenceRow[]): TeacherPayload["summary"] => {
+  const markedSessions = occurrences.filter((occurrence) => Boolean(occurrence.attendance_status));
+  const presentCount = markedSessions.filter(
+    (occurrence) => occurrence.attendance_status === "present",
+  ).length;
+  const absentCount = markedSessions.filter(
+    (occurrence) => occurrence.attendance_status === "absent",
+  ).length;
+
+  return {
+    total_sessions: occurrences.length,
+    marked_sessions: markedSessions.length,
+    present_count: presentCount,
+    absent_count: absentCount,
+    attendance_rate_pct: markedSessions.length > 0
+      ? Math.round((presentCount / markedSessions.length) * 100)
+      : 0,
+  };
+};
+
 export default function TeacherOnlineAttendancePage() {
   const [teacherId, setTeacherId] = useState<string | null>(null);
   const { programScope } = useTeachingModeContext();
@@ -423,16 +443,25 @@ export default function TeacherOnlineAttendancePage() {
     const previousStatus = occurrence.attendance_status;
     setBusyKey(`mark:${occurrence.id}`);
 
-    // Optimistic update
-    setPayload((prev) => {
+    const applyAttendanceStatus = (
+      prev: TeacherPayload | null,
+      nextStatus: OccurrenceRow["attendance_status"],
+    ) => {
       if (!prev) return prev;
       const updateOcc = (occ: OccurrenceRow) =>
-        occ.id === occurrence.id ? { ...occ, attendance_status: status } : occ;
+        occ.id === occurrence.id ? { ...occ, attendance_status: nextStatus } : occ;
+      const monthlyOccurrences = prev.monthly_occurrences.map(updateOcc);
+
       return {
         ...prev,
+        summary: buildAttendanceSummary(monthlyOccurrences),
         today_queue: prev.today_queue.map(updateOcc),
-        monthly_occurrences: prev.monthly_occurrences.map(updateOcc),
+        monthly_occurrences: monthlyOccurrences,
       };
+    };
+
+    setPayload((prev) => {
+      return applyAttendanceStatus(prev, status);
     });
 
     try {
@@ -446,19 +475,9 @@ export default function TeacherOnlineAttendancePage() {
       });
       const data = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(data.error || "Failed to mark attendance");
-      // Refresh counts and derived lists without wiping the optimistic UI if this follow-up fetch fails.
-      void loadAttendance({ preservePayloadOnError: true, showLoading: false });
     } catch (markError) {
-      // Revert optimistic update
       setPayload((prev) => {
-        if (!prev) return prev;
-        const revertOcc = (occ: OccurrenceRow) =>
-          occ.id === occurrence.id ? { ...occ, attendance_status: previousStatus } : occ;
-        return {
-          ...prev,
-          today_queue: prev.today_queue.map(revertOcc),
-          monthly_occurrences: prev.monthly_occurrences.map(revertOcc),
-        };
+        return applyAttendanceStatus(prev, previousStatus);
       });
       setError(markError instanceof Error ? markError.message : "Failed to mark attendance");
     } finally {
