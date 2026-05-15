@@ -1,19 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isMissingRelationError } from "@/lib/online/db";
 import { requireAuthenticatedTenantUser } from "@/lib/requestAuth";
 import { supabaseService } from "@/lib/supabaseServiceClient";
 
-const rollbackCancelledOccurrences = async (tenantId: string, occurrenceIds: string[]) => {
-  if (occurrenceIds.length === 0) return;
+const rollbackSlotCancellation = async (tenantId: string, slotIds: string[]) => {
+  if (slotIds.length === 0) return;
   const rollbackRes = await supabaseService
-    .from("online_recurring_occurrences")
+    .from("online_recurring_package_slots")
     .update({
-      cancelled_at: null,
+      status: "active",
       updated_at: new Date().toISOString(),
     })
     .eq("tenant_id", tenantId)
-    .in("id", occurrenceIds);
+    .in("id", slotIds);
   if (rollbackRes.error) {
-    console.error("Teacher bulk unassign rollback error:", rollbackRes.error);
+    console.error("Teacher bulk unassign slot rollback error:", rollbackRes.error);
   }
 };
 
@@ -23,8 +24,6 @@ export async function DELETE(
 ) {
   const auth = await requireAuthenticatedTenantUser(request);
   if (!auth.ok) return auth.response;
-
-  let cancelledOccurrenceIds: string[] = [];
 
   try {
     const { packageId } = await context.params;
@@ -71,46 +70,6 @@ export async function DELETE(
     const timestamp = new Date().toISOString();
     const todayKey = timestamp.slice(0, 10);
 
-    const [futureOccurrenceRes, todayOccurrenceRes] = await Promise.all([
-      supabaseService
-        .from("online_recurring_occurrences")
-        .select("id")
-        .eq("tenant_id", auth.tenantId)
-        .in("package_slot_id", slotIds)
-        .is("cancelled_at", null)
-        .gt("session_date", todayKey),
-      supabaseService
-        .from("online_recurring_occurrences")
-        .select("id")
-        .eq("tenant_id", auth.tenantId)
-        .in("package_slot_id", slotIds)
-        .is("cancelled_at", null)
-        .eq("session_date", todayKey)
-        .is("attendance_status", null),
-    ]);
-    if (futureOccurrenceRes.error) throw futureOccurrenceRes.error;
-    if (todayOccurrenceRes.error) throw todayOccurrenceRes.error;
-
-    cancelledOccurrenceIds = Array.from(
-      new Set(
-        [...(futureOccurrenceRes.data ?? []), ...(todayOccurrenceRes.data ?? [])]
-          .map((occurrence) => String(occurrence.id ?? ""))
-          .filter(Boolean),
-      ),
-    );
-
-    if (cancelledOccurrenceIds.length > 0) {
-      const cancelOccurrenceRes = await supabaseService
-        .from("online_recurring_occurrences")
-        .update({
-          cancelled_at: timestamp,
-          updated_at: timestamp,
-        })
-        .eq("tenant_id", auth.tenantId)
-        .in("id", cancelledOccurrenceIds);
-      if (cancelOccurrenceRes.error) throw cancelOccurrenceRes.error;
-    }
-
     const slotUpdateRes = await supabaseService
       .from("online_recurring_package_slots")
       .update({
@@ -121,8 +80,44 @@ export async function DELETE(
       .in("id", slotIds)
       .select("id");
     if (slotUpdateRes.error) {
-      await rollbackCancelledOccurrences(auth.tenantId, cancelledOccurrenceIds);
       throw slotUpdateRes.error;
+    }
+
+    const futureOccurrenceRes = await supabaseService
+      .from("online_recurring_occurrences")
+      .update({
+        cancelled_at: timestamp,
+        updated_at: timestamp,
+      })
+      .eq("tenant_id", auth.tenantId)
+      .in("package_slot_id", slotIds)
+      .is("cancelled_at", null)
+      .gt("session_date", todayKey);
+    if (
+      futureOccurrenceRes.error &&
+      !isMissingRelationError(futureOccurrenceRes.error, "online_recurring_occurrences")
+    ) {
+      await rollbackSlotCancellation(auth.tenantId, slotIds);
+      throw futureOccurrenceRes.error;
+    }
+
+    const todayOccurrenceRes = await supabaseService
+      .from("online_recurring_occurrences")
+      .update({
+        cancelled_at: timestamp,
+        updated_at: timestamp,
+      })
+      .eq("tenant_id", auth.tenantId)
+      .in("package_slot_id", slotIds)
+      .is("cancelled_at", null)
+      .eq("session_date", todayKey)
+      .is("attendance_status", null);
+    if (
+      todayOccurrenceRes.error &&
+      !isMissingRelationError(todayOccurrenceRes.error, "online_recurring_occurrences")
+    ) {
+      await rollbackSlotCancellation(auth.tenantId, slotIds);
+      throw todayOccurrenceRes.error;
     }
 
     return NextResponse.json({

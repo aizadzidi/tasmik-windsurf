@@ -67,6 +67,8 @@ type OccurrenceRow = {
 
 type TeacherPayload = {
   month: string;
+  occurrence_view?: "daily" | "monthly";
+  selected_date?: string;
   warning?: string;
   summary: {
     total_sessions: number;
@@ -101,6 +103,18 @@ type TeacherPayload = {
 
 type SlotDraft = OnlineTeacherScheduleSlotInput;
 type PendingAssignment = OnlineTeacherSchedulerOptions["pending_assignments"][number];
+type WeeklyPackage = TeacherPayload["weekly_packages"][number];
+type WeeklyPackageSlot = WeeklyPackage["slots"][number];
+
+type ScheduleResponse = {
+  package?: Partial<WeeklyPackage> & { id?: string };
+  package_slots?: WeeklyPackageSlot[];
+};
+
+type FillSlotsResponse = {
+  package_id?: string;
+  new_slots?: WeeklyPackageSlot[];
+};
 
 const DAY_OPTIONS = [
   { value: 1, label: "Monday" },
@@ -124,6 +138,13 @@ const currentDateKey = () => {
   const day = String(now.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 };
+
+const attendanceCacheKey = (
+  teacherId: string,
+  monthKey: string,
+  view: "daily" | "monthly",
+  dateKey?: string,
+) => `teacher-online-attendance:${teacherId}:${monthKey}:${view}:${dateKey ?? "all"}`;
 
 const timeLabel = (value: string) => value.slice(0, 5);
 
@@ -227,6 +248,67 @@ const buildAttendanceSummary = (occurrences: OccurrenceRow[]): TeacherPayload["s
   };
 };
 
+const updateAttendanceSummaryForChange = (
+  summary: TeacherPayload["summary"],
+  fromStatus: OccurrenceRow["attendance_status"],
+  toStatus: OccurrenceRow["attendance_status"],
+): TeacherPayload["summary"] => {
+  if (fromStatus === toStatus) return summary;
+
+  const markedDelta = (toStatus ? 1 : 0) - (fromStatus ? 1 : 0);
+  const presentDelta = (toStatus === "present" ? 1 : 0) - (fromStatus === "present" ? 1 : 0);
+  const absentDelta = (toStatus === "absent" ? 1 : 0) - (fromStatus === "absent" ? 1 : 0);
+  const markedSessions = Math.max(summary.marked_sessions + markedDelta, 0);
+  const presentCount = Math.max(summary.present_count + presentDelta, 0);
+
+  return {
+    ...summary,
+    marked_sessions: markedSessions,
+    present_count: presentCount,
+    absent_count: Math.max(summary.absent_count + absentDelta, 0),
+    attendance_rate_pct: markedSessions > 0 ? Math.round((presentCount / markedSessions) * 100) : 0,
+  };
+};
+
+const getDayLabel = (dayOfWeek: number) =>
+  DAY_OPTIONS.find((option) => option.value === dayOfWeek)?.label.slice(0, 3).toUpperCase() ??
+  String(dayOfWeek);
+
+const buildWeeklySlotActions = (packages: WeeklyPackage[], monthKey: string): PlannerDay[] =>
+  DAY_OPTIONS.map<PlannerDay>((day) => ({
+    day_of_week: day.value,
+    label: getDayLabel(day.value),
+    hidden_empty_count: 0,
+    empty_slots: [],
+    occupied_pills: packages.flatMap((pkg) =>
+      pkg.slots
+        .filter((slot) => slot.status === "active" && slot.day_of_week_snapshot === day.value)
+        .map<PlannerPill>((slot) => ({
+          slot_template_id: slot.slot_template_id,
+          package_id: pkg.id,
+          package_slot_id: slot.id,
+          student_id: pkg.student_id,
+          student_name: pkg.student_name,
+          parent_name: null,
+          parent_contact_number: null,
+          course_id: pkg.course_id,
+          course_name: pkg.course_name,
+          day_of_week: slot.day_of_week_snapshot,
+          start_time: slot.start_time_snapshot,
+          duration_minutes: slot.duration_minutes_snapshot,
+          effective_month: `${monthKey}-01`,
+          next_occurrence_date: null,
+          next_month_change_pending: false,
+        })),
+    ),
+  }));
+
+const refreshAttendanceInBackground = (loadAttendance: () => Promise<void>) => {
+  window.setTimeout(() => {
+    void loadAttendance();
+  }, 250);
+};
+
 export default function TeacherOnlineAttendancePage() {
   const [teacherId, setTeacherId] = useState<string | null>(null);
   const { programScope } = useTeachingModeContext();
@@ -278,18 +360,46 @@ export default function TeacherOnlineAttendancePage() {
     };
   }, []);
 
-  const loadAttendance = useCallback(async (options?: { preservePayloadOnError?: boolean; showLoading?: boolean }) => {
+  const loadAttendance = useCallback(async (options?: {
+    preservePayloadOnError?: boolean;
+    showLoading?: boolean;
+    view?: "daily" | "monthly";
+    date?: string;
+  }) => {
     const preservePayloadOnError = options?.preservePayloadOnError ?? false;
     const showLoading = options?.showLoading ?? true;
-    if (showLoading) setLoading(true);
+    const view = options?.view ?? "daily";
+    const date = options?.date ?? selectedDate;
+    if (!teacherId) return;
+    if (showLoading) {
+      const cachedPayload = window.sessionStorage.getItem(
+        attendanceCacheKey(teacherId, month, view, view === "daily" ? date : undefined),
+      );
+      if (cachedPayload) {
+        try {
+          setPayload(JSON.parse(cachedPayload) as TeacherPayload);
+          setLoading(false);
+        } catch {
+          setLoading(true);
+        }
+      } else {
+        setLoading(true);
+      }
+    }
     setError(null);
     try {
-      const response = await authFetch(`/api/teacher/online/attendance?month=${month}`);
+      const params = new URLSearchParams({ month, view });
+      if (view === "daily") params.set("date", date);
+      const response = await authFetch(`/api/teacher/online/attendance?${params.toString()}`);
       const data = (await response.json()) as TeacherPayload & { error?: string };
       if (!response.ok) {
         throw new Error(data.error || "Failed to fetch online attendance");
       }
       setPayload(data);
+      window.sessionStorage.setItem(
+        attendanceCacheKey(teacherId, month, view, view === "daily" ? date : undefined),
+        JSON.stringify(data),
+      );
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load attendance");
       if (!preservePayloadOnError) {
@@ -298,12 +408,24 @@ export default function TeacherOnlineAttendancePage() {
     } finally {
       if (showLoading) setLoading(false);
     }
-  }, [month]);
+  }, [month, selectedDate, teacherId]);
+
+  const silentlyRefreshAttendance = useCallback(async () => {
+    await loadAttendance({
+      preservePayloadOnError: true,
+      showLoading: false,
+      view: classView === "monthly" ? "monthly" : "daily",
+      date: selectedDate,
+    });
+  }, [classView, loadAttendance, selectedDate]);
 
   useEffect(() => {
     if (!teacherId) return;
-    void loadAttendance();
-  }, [teacherId, loadAttendance]);
+    void loadAttendance({
+      view: classView === "monthly" ? "monthly" : "daily",
+      date: selectedDate,
+    });
+  }, [classView, selectedDate, teacherId, loadAttendance]);
 
   const dayById = useMemo(
     () => new Map((payload?.weekly_slot_actions ?? []).map((day) => [day.day_of_week, day])),
@@ -375,10 +497,24 @@ export default function TeacherOnlineAttendancePage() {
   }, [selectedPill]);
 
   const sortedDailyQueue = useMemo(() => {
-    return (payload?.monthly_occurrences ?? [])
-      .filter((occurrence) => occurrence.session_date === selectedDate)
-      .sort((a, b) => a.start_time.localeCompare(b.start_time));
-  }, [payload?.monthly_occurrences, selectedDate]);
+    const monthlyMatches = (payload?.monthly_occurrences ?? []).filter(
+      (occurrence) => occurrence.session_date === selectedDate,
+    );
+    const source =
+      monthlyMatches.length > 0 || payload?.occurrence_view === "monthly"
+        ? monthlyMatches
+        : payload?.selected_date === selectedDate
+          ? payload.today_queue
+          : [];
+
+    return [...source].sort((a, b) => a.start_time.localeCompare(b.start_time));
+  }, [
+    payload?.monthly_occurrences,
+    payload?.occurrence_view,
+    payload?.selected_date,
+    payload?.today_queue,
+    selectedDate,
+  ]);
 
   const selectedCalendarDayDetails = useMemo(() => {
     if (!selectedCalendarDay) return null;
@@ -446,6 +582,7 @@ export default function TeacherOnlineAttendancePage() {
     const applyAttendanceStatus = (
       prev: TeacherPayload | null,
       nextStatus: OccurrenceRow["attendance_status"],
+      fromStatus: OccurrenceRow["attendance_status"],
     ) => {
       if (!prev) return prev;
       const updateOcc = (occ: OccurrenceRow) =>
@@ -454,14 +591,14 @@ export default function TeacherOnlineAttendancePage() {
 
       return {
         ...prev,
-        summary: buildAttendanceSummary(monthlyOccurrences),
+        summary: updateAttendanceSummaryForChange(prev.summary, fromStatus, nextStatus),
         today_queue: prev.today_queue.map(updateOcc),
         monthly_occurrences: monthlyOccurrences,
       };
     };
 
     setPayload((prev) => {
-      return applyAttendanceStatus(prev, status);
+      return applyAttendanceStatus(prev, status, previousStatus);
     });
 
     try {
@@ -477,7 +614,7 @@ export default function TeacherOnlineAttendancePage() {
       if (!response.ok) throw new Error(data.error || "Failed to mark attendance");
     } catch (markError) {
       setPayload((prev) => {
-        return applyAttendanceStatus(prev, previousStatus);
+        return applyAttendanceStatus(prev, previousStatus, status);
       });
       setError(markError instanceof Error ? markError.message : "Failed to mark attendance");
     } finally {
@@ -557,12 +694,37 @@ export default function TeacherOnlineAttendancePage() {
       const data = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(data.error || "Failed to reschedule weekly slots");
 
+      setPayload((prev) => {
+        if (!prev) return prev;
+        const responseData = data as ScheduleResponse;
+        const nextSlots = responseData.package_slots ?? [];
+        const weeklyPackages = prev.weekly_packages.map((item) =>
+          item.id === pkg.id ? { ...item, slots: nextSlots } : item,
+        );
+        const nextSlotIds = new Set(nextSlots.map((slot) => slot.id));
+        const monthlyOccurrences = prev.monthly_occurrences.filter(
+          (occurrence) =>
+            occurrence.package_id !== pkg.id || nextSlotIds.has(occurrence.package_slot_id),
+        );
+
+        return {
+          ...prev,
+          summary: prev.occurrence_view === "monthly" ? buildAttendanceSummary(monthlyOccurrences) : prev.summary,
+          weekly_packages: weeklyPackages,
+          weekly_slot_actions: buildWeeklySlotActions(weeklyPackages, month),
+          monthly_occurrences: monthlyOccurrences,
+          today_queue: prev.today_queue.filter(
+            (occurrence) =>
+              occurrence.package_id !== pkg.id || nextSlotIds.has(occurrence.package_slot_id),
+          ),
+        };
+      });
       setRescheduleExpanded(false);
       setRescheduleSlots([]);
       setRescheduleError(null);
       setError(null);
       setSelectedPill(null);
-      await loadAttendance();
+      refreshAttendanceInBackground(silentlyRefreshAttendance);
     } catch (caughtError) {
       setRescheduleError(
         caughtError instanceof Error ? caughtError.message : "Failed to reschedule weekly slots",
@@ -599,15 +761,47 @@ export default function TeacherOnlineAttendancePage() {
           slots: scheduleSlots,
         }),
       });
-      const data = (await response.json()) as { error?: string };
+      const data = (await response.json()) as ScheduleResponse & { error?: string };
       if (!response.ok) throw new Error(data.error || "Failed to schedule student");
 
+      setPayload((prev) => {
+        if (!prev) return prev;
+        const scheduledPackageId = data.package?.id;
+        if (!scheduledPackageId) return prev;
+
+        const scheduledPackage: WeeklyPackage = {
+          id: scheduledPackageId,
+          student_id: selectedAssignment.student_id,
+          student_name: selectedAssignment.student_name,
+          course_id: selectedAssignment.course_id,
+          course_name: selectedAssignment.course_name,
+          student_package_assignment_id: selectedAssignment.id,
+          sessions_per_week: selectedAssignment.sessions_per_week,
+          slots: data.package_slots ?? [],
+        };
+        const packageExists = prev.weekly_packages.some((pkg) => pkg.id === scheduledPackageId);
+        const weeklyPackages = packageExists
+          ? prev.weekly_packages.map((pkg) => (pkg.id === scheduledPackageId ? scheduledPackage : pkg))
+          : [...prev.weekly_packages, scheduledPackage];
+
+        return {
+          ...prev,
+          weekly_packages: weeklyPackages,
+          weekly_slot_actions: buildWeeklySlotActions(weeklyPackages, month),
+          scheduler: {
+            ...prev.scheduler,
+            pending_assignments: prev.scheduler.pending_assignments.filter(
+              (assignment) => assignment.id !== selectedAssignment.id,
+            ),
+          },
+        };
+      });
       setScheduleOpen(false);
       setScheduleAssignmentId("");
       setScheduleSlots([]);
       setScheduleError(null);
       setError(null);
-      await loadAttendance();
+      refreshAttendanceInBackground(silentlyRefreshAttendance);
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : "Failed to schedule student";
       if (message.includes("already has a schedule for the selected month")) {
@@ -650,14 +844,27 @@ export default function TeacherOnlineAttendancePage() {
           slots: fillSlots,
         }),
       });
-      const data = (await response.json()) as { error?: string };
+      const data = (await response.json()) as FillSlotsResponse & { error?: string };
       if (!response.ok) throw new Error(data.error || "Failed to fill slots");
+      setPayload((prev) => {
+        if (!prev) return prev;
+        const nextSlots = data.new_slots ?? [];
+        const weeklyPackages = prev.weekly_packages.map((pkg) =>
+          pkg.id === fillPackageId ? { ...pkg, slots: [...pkg.slots, ...nextSlots] } : pkg,
+        );
+
+        return {
+          ...prev,
+          weekly_packages: weeklyPackages,
+          weekly_slot_actions: buildWeeklySlotActions(weeklyPackages, month),
+        };
+      });
       setFillOpen(false);
       setFillPackageId("");
       setFillSlots([]);
       setFillError(null);
       setError(null);
-      await loadAttendance();
+      refreshAttendanceInBackground(silentlyRefreshAttendance);
     } catch (caughtError) {
       setFillError(caughtError instanceof Error ? caughtError.message : "Failed to fill slots");
     } finally {
@@ -682,11 +889,35 @@ export default function TeacherOnlineAttendancePage() {
       const data = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(data.error || "Failed to unassign slots");
 
+      setPayload((prev) => {
+        if (!prev) return prev;
+        const removedSlotIds = new Set(activeSlotIds);
+        const weeklyPackages = prev.weekly_packages.map((item) =>
+          item.id === pill.package_id
+            ? { ...item, slots: item.slots.filter((slot) => !removedSlotIds.has(slot.id)) }
+            : item,
+        );
+        const monthlyOccurrences = prev.monthly_occurrences.filter(
+          (occurrence) => !removedSlotIds.has(occurrence.package_slot_id),
+        );
+
+        return {
+          ...prev,
+          summary: prev.occurrence_view === "monthly" ? buildAttendanceSummary(monthlyOccurrences) : prev.summary,
+          weekly_packages: weeklyPackages,
+          weekly_slot_actions: buildWeeklySlotActions(weeklyPackages, month),
+          monthly_occurrences: monthlyOccurrences,
+          today_queue: prev.today_queue.filter(
+            (occurrence) => !removedSlotIds.has(occurrence.package_slot_id),
+          ),
+        };
+      });
       if (selectedPill?.package_id === pill.package_id) {
         setSelectedPill(null);
       }
-
-      await loadAttendance();
+      setConfirmUnassign(false);
+      setError(null);
+      refreshAttendanceInBackground(silentlyRefreshAttendance);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Failed to unassign slots");
     } finally {
