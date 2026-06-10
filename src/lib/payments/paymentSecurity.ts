@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import type { PaymentLineItem, PaymentRecord, PaymentStatus } from "@/types/payments";
+import type { PaymentContext } from "@/lib/payments/gatewayConfig";
 
 const monthKeyPattern = /^\d{4}-(0[1-9]|1[0-2])$/;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -214,4 +215,17 @@ export function isPaymentOwnedByTenantParent(
 ): boolean {
   if (!payment) return false;
   return payment.tenant_id === tenantId && payment.parent_id === parentId;
+}
+
+export function getPaymentContext(payment: Pick<PaymentRecord, "provider_metadata">): PaymentContext {
+  const metadata = payment.provider_metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return "campus";
+  return metadata.paymentContext === "online" ? "online" : "campus";
+}
+
+export function getExpectedCollectionId(payment: Pick<PaymentRecord, "provider_metadata">): string | null {
+  const metadata = payment.provider_metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+  const value = metadata.expectedCollectionId;
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }

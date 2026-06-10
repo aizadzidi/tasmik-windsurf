@@ -4,7 +4,11 @@ import {
   isLocalDevelopmentHost,
   isPublicSaasRegistrationHost,
 } from "@/lib/hostResolution";
-import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
+import {
+  normalizeTenantSlugInput,
+  resolveTenantIdFromRequest,
+  resolveTenantIdFromSlug,
+} from "@/lib/tenantProvisioning";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdminClient";
 import {
   asTrimmedText,
@@ -19,6 +23,7 @@ import {
 } from "@/lib/publicApi";
 import { enforceRateLimit } from "@/lib/rateLimit";
 import { hashStudentClaimToken } from "@/lib/studentClaims";
+import { resolveOnlineProgramIds } from "@/lib/online/duplicates";
 
 type StudentRegisterBody = {
   name?: unknown;
@@ -26,9 +31,11 @@ type StudentRegisterBody = {
   password?: unknown;
   phone?: unknown;
   claim_token?: unknown;
+  tenant_slug?: unknown;
 };
 
 type ClaimLookupRow = {
+  id: string;
   student_id: string;
   expires_at: string;
   consumed_at: string | null;
@@ -50,6 +57,7 @@ type ClaimLookupRow = {
 };
 
 type ValidatedClaim = {
+  claim_id: string;
   student_id: string;
   student_name: string | null;
 };
@@ -58,6 +66,130 @@ type ExistingUserRow = {
   id: string;
   role: string | null;
 };
+
+type EnrollmentStudentRow = {
+  student_id: string | null;
+};
+
+type DuplicateCandidateRow = {
+  id: string;
+  name: string | null;
+  parent_contact_number: string | null;
+};
+
+type DuplicateMatch = {
+  count: number;
+  phoneMatched: boolean;
+};
+
+const normalizeNameForMatch = (value: string | null | undefined) =>
+  (value ?? "")
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+
+const normalizePhoneForMatch = (value: string | null | undefined) =>
+  (value ?? "").replace(/\D/g, "");
+
+async function findUnclaimedOnlineDuplicate(params: {
+  client: ReturnType<typeof getSupabaseAdminClient>;
+  tenantId: string;
+  name: string;
+  phone: string | null;
+}): Promise<DuplicateMatch | null> {
+  const normalizedName = normalizeNameForMatch(params.name);
+  if (!normalizedName) return null;
+
+  const { data: programRows, error: programError } = await params.client
+    .from("programs")
+    .select("id")
+    .eq("tenant_id", params.tenantId)
+    .in("type", ["online", "hybrid"]);
+  if (programError) throw programError;
+
+  const onlineProgramIds = (programRows ?? [])
+    .map((row) => row.id as string | null)
+    .filter((id): id is string => Boolean(id));
+  if (onlineProgramIds.length === 0) return null;
+
+  const { data: enrollmentRows, error: enrollmentError } = await params.client
+    .from("enrollments")
+    .select("student_id")
+    .eq("tenant_id", params.tenantId)
+    .in("program_id", onlineProgramIds)
+    .in("status", ["pending_payment", "active", "paused"]);
+  if (enrollmentError) throw enrollmentError;
+
+  const onlineStudentIds = Array.from(
+    new Set(
+      ((enrollmentRows ?? []) as EnrollmentStudentRow[])
+        .map((row) => row.student_id)
+        .filter((id): id is string => Boolean(id))
+    )
+  );
+  if (onlineStudentIds.length === 0) return null;
+
+  const { data: candidateRows, error: candidateError } = await params.client
+    .from("students")
+    .select("id, name, parent_contact_number")
+    .eq("tenant_id", params.tenantId)
+    .in("id", onlineStudentIds)
+    .is("account_owner_user_id", null)
+    .neq("record_type", "prospect");
+  if (candidateError) throw candidateError;
+
+  const candidates = ((candidateRows ?? []) as DuplicateCandidateRow[]).filter(
+    (student) => normalizeNameForMatch(student.name) === normalizedName
+  );
+  if (candidates.length === 0) return null;
+
+  const normalizedPhone = normalizePhoneForMatch(params.phone);
+  return {
+    count: candidates.length,
+    phoneMatched:
+      normalizedPhone.length > 0 &&
+      candidates.some(
+        (student) => normalizePhoneForMatch(student.parent_contact_number) === normalizedPhone
+      ),
+  };
+}
+
+async function upsertOnlineEnrollmentAudit(params: {
+  client: ReturnType<typeof getSupabaseAdminClient>;
+  tenantId: string;
+  studentId: string;
+  metadata: Record<string, unknown>;
+}) {
+  const onlineProgramIds = await resolveOnlineProgramIds(params.client, params.tenantId);
+  const programId = onlineProgramIds[0];
+  if (!programId) return;
+
+  const { data: existingEnrollment, error: existingEnrollmentError } = await params.client
+    .from("enrollments")
+    .select("metadata")
+    .eq("tenant_id", params.tenantId)
+    .eq("student_id", params.studentId)
+    .eq("program_id", programId)
+    .maybeSingle<{ metadata: Record<string, unknown> | null }>();
+  if (existingEnrollmentError) throw existingEnrollmentError;
+
+  const { error } = await params.client.from("enrollments").upsert(
+    {
+      tenant_id: params.tenantId,
+      student_id: params.studentId,
+      program_id: programId,
+      status: "pending_payment",
+      start_date: new Date().toISOString().slice(0, 10),
+      metadata: {
+        ...(existingEnrollment?.metadata ?? {}),
+        ...params.metadata,
+      },
+    },
+    { onConflict: "student_id,program_id,tenant_id" }
+  );
+  if (error) throw error;
+}
 
 export async function POST(request: NextRequest) {
   const requestId = crypto.randomUUID();
@@ -96,8 +228,9 @@ export async function POST(request: NextRequest) {
   const phone = asTrimmedText(body.phone, 32);
   const claimToken = asTrimmedText(body.claim_token, 255);
   const claimTokenHash = claimToken ? hashStudentClaimToken(claimToken) : null;
+  const localTenantSlug = normalizeTenantSlugInput(body.tenant_slug);
 
-  if (isPublicSaasRegistrationHost(host) && !(isLocalHost && claimToken)) {
+  if (isPublicSaasRegistrationHost(host) && !(isLocalHost && (claimToken || localTenantSlug))) {
     return jsonError(requestId, {
       error: "Student self-signup is only available on tenant subdomains.",
       code: "TENANT_HOST_REQUIRED",
@@ -107,6 +240,9 @@ export async function POST(request: NextRequest) {
 
   const supabaseAdmin = getSupabaseAdminClient();
   let tenantId = await resolveTenantIdFromRequest(request, supabaseAdmin);
+  if (!tenantId && isLocalHost && localTenantSlug) {
+    tenantId = await resolveTenantIdFromSlug(supabaseAdmin, localTenantSlug);
+  }
   if (!tenantId && isLocalHost && claimToken) {
     const claimTenantRes = await supabaseAdmin
       .from("online_student_claim_tokens")
@@ -144,7 +280,9 @@ export async function POST(request: NextRequest) {
   if (claimTokenHash) {
     const claimRes = await supabaseAdmin
       .from("online_student_claim_tokens")
-      .select("student_id, expires_at, consumed_at, revoked_at, students(id, name, record_type, account_owner_user_id)")
+      .select(
+        "id, student_id, expires_at, consumed_at, revoked_at, students(id, name, record_type, account_owner_user_id)"
+      )
       .eq("tenant_id", tenantId)
       .eq("token_hash", claimTokenHash)
       .maybeSingle<ClaimLookupRow>();
@@ -177,6 +315,7 @@ export async function POST(request: NextRequest) {
     }
 
     validatedClaim = {
+      claim_id: claim.id,
       student_id: student.id,
       student_name: asTrimmedText(student.name, 120),
     };
@@ -220,6 +359,27 @@ export async function POST(request: NextRequest) {
 
     let userId = pickUuidScalar(existingAuthData);
     let createdNewUser = false;
+
+    if (!userId && !validatedClaim) {
+      const duplicateMatch = await findUnclaimedOnlineDuplicate({
+        client: supabaseAdmin,
+        tenantId,
+        name: resolvedName,
+        phone,
+      });
+      if (duplicateMatch?.phoneMatched) {
+        return jsonError(requestId, {
+          error:
+            "An existing online student record may already exist for this name. Please use the claim link from admin or contact support to link your portal.",
+          code: "POTENTIAL_DUPLICATE_STUDENT",
+          status: 409,
+          extra: {
+            duplicate_candidate_count: duplicateMatch.count,
+            duplicate_phone_match: duplicateMatch.phoneMatched,
+          },
+        });
+      }
+    }
 
     if (!userId) {
       const createResult = await supabaseAdmin.auth.admin.createUser({
@@ -324,6 +484,27 @@ export async function POST(request: NextRequest) {
     let studentId = existingOwnedStudentRes.data?.id ?? null;
     let signupCode = createdNewUser ? "STUDENT_REGISTERED" : "STUDENT_ALREADY_REGISTERED";
     let idempotent = !createdNewUser;
+
+    if (userId && !createdNewUser && !studentId && !validatedClaim) {
+      const duplicateMatch = await findUnclaimedOnlineDuplicate({
+        client: supabaseAdmin,
+        tenantId,
+        name: resolvedName,
+        phone,
+      });
+      if (duplicateMatch?.phoneMatched) {
+        return jsonError(requestId, {
+          error:
+            "An existing online student record may already exist for this name. Please use the claim link from admin or contact support to link your portal.",
+          code: "POTENTIAL_DUPLICATE_STUDENT",
+          status: 409,
+          extra: {
+            duplicate_candidate_count: duplicateMatch.count,
+            duplicate_phone_match: duplicateMatch.phoneMatched,
+          },
+        });
+      }
+    }
 
     if (validatedClaim) {
       if (studentId) {
@@ -502,6 +683,19 @@ export async function POST(request: NextRequest) {
       studentId = claimStudentUpdate.data.id;
       signupCode = "STUDENT_CLAIMED";
       idempotent = false;
+
+      await upsertOnlineEnrollmentAudit({
+        client: supabaseAdmin,
+        tenantId,
+        studentId,
+        metadata: {
+          status_reason: "Online student claimed through admin claim link",
+          source: "admin_claim_link",
+          claimed_at: new Date().toISOString(),
+          claim_token_id: validatedClaim.claim_id,
+          claimed_by_user_id: userId,
+        },
+      });
     } else {
       const profileErrorResponse = await upsertTenantProfile();
       if (profileErrorResponse) {
@@ -560,9 +754,10 @@ export async function POST(request: NextRequest) {
             status: "pending_payment",
             start_date: new Date().toISOString().slice(0, 10),
             metadata: {
-              status_reason: claimToken
-                ? "Online student claimed through self-signup"
-                : "Online student self-signup",
+              status_reason: "Online student self-signup",
+              source: "student_self_signup",
+              self_signup_at: new Date().toISOString(),
+              registered_user_id: userId,
             },
           },
           { onConflict: "student_id,program_id,tenant_id" }

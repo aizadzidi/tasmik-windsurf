@@ -25,6 +25,7 @@
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
   "exclude": [
     "node_modules",
+    "Payment page UI design",
     "supabase",
     "src/components/admin/exam/StudentDetailsPanel.tsx"
   ]

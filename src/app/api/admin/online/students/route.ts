@@ -7,6 +7,8 @@ import {
   TenantPlanLimitExceededError,
 } from "@/lib/planLimits";
 import { fetchOnlineStudentPackageAssignments } from "@/lib/online/packageAssignments";
+import { resolveOnlineFamilyLinkedStudentIds } from "@/lib/online/familyLinks";
+import { fetchOnlineDuplicateCandidates } from "@/lib/online/duplicates";
 
 type CreateOnlineStudentBody = {
   name?: string;
@@ -34,6 +36,14 @@ type StudentPackageSummary = {
   effective_from: string;
   effective_to: string | null;
   schedule_state: string;
+};
+
+type DuplicateSummary = {
+  duplicate_group_id: string;
+  canonical_student_id: string;
+  duplicate_student_id: string;
+  confidence: "high" | "medium";
+  reason: string;
 };
 
 const adminErrorDetails = (error: unknown, fallback: string) => {
@@ -103,7 +113,7 @@ export async function GET(request: NextRequest) {
       const { data: students, error: studentError } = await client
         .from("students")
         .select(
-          "id, name, record_type, parent_id, assigned_teacher_id, account_owner_user_id, parent_name, parent_contact_number, crm_stage, crm_status_reason"
+          "id, name, record_type, parent_id, assigned_teacher_id, account_owner_user_id, parent_name, parent_contact_number, crm_stage, crm_status_reason, created_at"
         )
         .eq("tenant_id", tenantId)
         .in("id", onlineStudentIds)
@@ -111,11 +121,47 @@ export async function GET(request: NextRequest) {
       if (studentError) throw studentError;
 
       const filteredStudents = (students ?? []).filter((student) => student.record_type !== "prospect");
-      const assignmentResult = await fetchOnlineStudentPackageAssignments({
-        client,
-        tenantId,
-        studentIds: filteredStudents.map((student) => String(student.id)),
-      });
+      const studentSummaries = filteredStudents.map((student) => ({
+        id: String(student.id),
+        name: student.name ? String(student.name) : null,
+        parent_id: student.parent_id ? String(student.parent_id) : null,
+        parent_contact_number: student.parent_contact_number
+          ? String(student.parent_contact_number)
+          : null,
+        assigned_teacher_id: student.assigned_teacher_id
+          ? String(student.assigned_teacher_id)
+          : null,
+        account_owner_user_id: student.account_owner_user_id
+          ? String(student.account_owner_user_id)
+          : null,
+        crm_stage: student.crm_stage ? String(student.crm_stage) : null,
+        crm_status_reason: student.crm_status_reason
+          ? String(student.crm_status_reason)
+          : null,
+        created_at: student.created_at ? String(student.created_at) : null,
+      }));
+      const [onlineFamilyLinkedStudentIds, assignmentResult, duplicateCandidates] =
+        await Promise.all([
+          resolveOnlineFamilyLinkedStudentIds(
+            client,
+            tenantId,
+            studentSummaries.map((student) => ({
+              id: student.id,
+              parent_id: student.parent_id,
+              account_owner_user_id: student.account_owner_user_id,
+            }))
+          ),
+          fetchOnlineStudentPackageAssignments({
+            client,
+            tenantId,
+            studentIds: studentSummaries.map((student) => student.id),
+          }),
+          fetchOnlineDuplicateCandidates({
+            client,
+            tenantId,
+            students: studentSummaries,
+          }),
+        ]);
       const packageSummariesByStudentId = new Map<string, StudentPackageSummary[]>();
       assignmentResult.rows.forEach((row) => {
         const current = packageSummariesByStudentId.get(row.student_id) ?? [];
@@ -132,10 +178,20 @@ export async function GET(request: NextRequest) {
         });
         packageSummariesByStudentId.set(row.student_id, current);
       });
+      const duplicateSummariesByStudentId = new Map<string, DuplicateSummary[]>();
+      duplicateCandidates.forEach((candidate) => {
+        [candidate.canonical_student_id, candidate.duplicate_student_id].forEach((studentId) => {
+          const current = duplicateSummariesByStudentId.get(studentId) ?? [];
+          current.push(candidate);
+          duplicateSummariesByStudentId.set(studentId, current);
+        });
+      });
 
       return filteredStudents.map((student) => ({
         ...student,
+        online_family_linked: onlineFamilyLinkedStudentIds.has(String(student.id)),
         package_assignments: packageSummariesByStudentId.get(String(student.id)) ?? [],
+        duplicate_candidates: duplicateSummariesByStudentId.get(String(student.id)) ?? [],
       }));
     });
 

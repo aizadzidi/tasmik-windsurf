@@ -8,6 +8,7 @@ import { jsonError } from "@/lib/publicApi";
 import { hashFamilyClaimToken } from "@/lib/studentClaims";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdminClient";
 import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
+import { resolveOnlineFamilyLinkedStudentIds } from "@/lib/online/familyLinks";
 
 type FamilyClaimTokenRow = {
   id: string;
@@ -135,11 +136,18 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const students = ((studentsRes.data ?? []) as ClaimStudentRow[]).map((student) => {
+    const claimStudents = (studentsRes.data ?? []) as ClaimStudentRow[];
+    const onlineFamilyLinkedStudentIds = await resolveOnlineFamilyLinkedStudentIds(
+      supabaseAdmin,
+      tenantId,
+      claimStudents
+    );
+
+    const students = claimStudents.map((student) => {
       const unavailableReason =
         student.record_type === "prospect"
           ? "Prospect records cannot be claimed."
-          : student.parent_id
+          : student.parent_id || onlineFamilyLinkedStudentIds.has(student.id)
             ? "Already linked to a family account."
             : null;
 

@@ -5,8 +5,10 @@ import {
   verifyBillplzSignature,
 } from "@/lib/payments/billplzClient";
 import { resolveBillplzConfigForTenant } from "@/lib/payments/gatewayConfig";
+import { applyPaidPaymentSideEffects } from "@/lib/payments/paymentSideEffects";
 import {
   getPaymentByBillplzId,
+  getPaymentById,
   hasProcessedWebhookEvent,
   processBillplzWebhookAtomically,
   recordPaymentEvent,
@@ -18,6 +20,8 @@ import {
   createBillplzProviderEventId,
   createWebhookFingerprint,
   expectedPaymentAmountCents,
+  getExpectedCollectionId,
+  getPaymentContext,
   isFormUrlEncodedContentType,
   parseAmountCents,
   readRequestBodyTextWithLimit,
@@ -78,7 +82,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, ignored: true });
     }
 
-    const gatewayConfig = await resolveBillplzConfigForTenant(payment.tenant_id);
+    const paymentContext = getPaymentContext(payment);
+    const gatewayConfig = await resolveBillplzConfigForTenant(payment.tenant_id, paymentContext);
 
     if (!verifyBillplzSignature(payload, gatewayConfig)) {
       await recordPaymentEvent(payment.id, "billplz", "webhook_rejected_invalid_signature", {
@@ -98,6 +103,21 @@ export async function POST(request: NextRequest) {
         billId: payload.id,
         collectionId: payload.collection_id ?? null,
         allowedCollectionIds: gatewayConfig.allowedCollectionIds,
+        fingerprint: webhookFingerprint,
+      }, {
+        tenantId: payment.tenant_id,
+        providerId: gatewayConfig.providerId,
+        providerEventId: createBillplzProviderEventId(payload.id, webhookFingerprint),
+        providerEventFingerprint: webhookFingerprint,
+      });
+      return NextResponse.json({ error: "Invalid collection ID" }, { status: 400 });
+    }
+    const expectedCollectionId = getExpectedCollectionId(payment);
+    if (expectedCollectionId && payload.collection_id !== expectedCollectionId) {
+      await recordPaymentEvent(payment.id, "billplz", "webhook_rejected_expected_collection_mismatch", {
+        billId: payload.id,
+        collectionId: payload.collection_id ?? null,
+        expectedCollectionId,
         fingerprint: webhookFingerprint,
       }, {
         tenantId: payment.tenant_id,
@@ -137,11 +157,19 @@ export async function POST(request: NextRequest) {
     });
 
     if (atomicResult) {
-      if (atomicResult.outcome === "replay") return NextResponse.json({ ok: true, replay: true });
+      if (atomicResult.outcome === "replay") {
+        const replayedPayment = await getPaymentByBillplzId(payload.id);
+        await applyPaidPaymentSideEffects(replayedPayment);
+        return NextResponse.json({ ok: true, replay: true });
+      }
       if (atomicResult.outcome === "ignored") return NextResponse.json({ ok: true, ignored: true });
       if (atomicResult.outcome === "not_found") return NextResponse.json({ ok: true, ignored: true });
       if (atomicResult.outcome === "rejected") {
         return NextResponse.json({ error: "Invalid webhook payload." }, { status: 400 });
+      }
+      if (atomicResult.nextStatus === "paid" && atomicResult.paymentId) {
+        const updatedPayment = await getPaymentById(atomicResult.paymentId);
+        await applyPaidPaymentSideEffects(updatedPayment);
       }
       return NextResponse.json({ ok: true });
     }
@@ -198,11 +226,15 @@ export async function POST(request: NextRequest) {
       (payload.due_at && payment.expires_at !== payload.due_at);
 
     if (shouldUpdate) {
-      await updatePayment(payment.id, {
+      const updated = await updatePayment(payment.id, {
         status: nextStatus,
         paidAt: resolvedPaidAt,
         expiresAt: payload.due_at ?? payment.expires_at ?? null,
       });
+      if (updated.status === "paid") {
+        const updatedPayment = await getPaymentById(updated.id);
+        await applyPaidPaymentSideEffects(updatedPayment);
+      }
     }
 
     await recordPaymentEvent(payment.id, "billplz", "webhook_processed", {

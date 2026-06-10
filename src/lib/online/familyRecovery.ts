@@ -24,17 +24,24 @@ export type OnlineFamilyRecoveryStore = {
     studentIds: string[];
     parentId: string;
   }) => Promise<void>;
+  unlinkStudentsFromParent: (params: {
+    tenantId: string;
+    studentIds: string[];
+    parentId: string;
+  }) => Promise<void>;
 };
 
 export type RecoverOnlineClaimedFamilyParams = {
   tenantId: string;
   claimedStudentId: string;
   studentIds: string[];
+  removeStudentIds?: string[];
 };
 
 export type RecoverOnlineClaimedFamilyResult = {
   family_user_id: string;
   linked_student_ids: string[];
+  unlinked_student_ids: string[];
   promoted_user: boolean;
 };
 
@@ -60,6 +67,7 @@ export async function recoverOnlineClaimedFamily(
   const tenantId = params.tenantId.trim();
   const claimedStudentId = params.claimedStudentId.trim();
   const selectedStudentIds = uniqueTrimmed(params.studentIds);
+  const removeStudentIds = uniqueTrimmed(params.removeStudentIds ?? []);
 
   if (!tenantId || !claimedStudentId) {
     throw new OnlineFamilyRecoveryError(
@@ -68,14 +76,34 @@ export async function recoverOnlineClaimedFamily(
     );
   }
 
-  if (selectedStudentIds.length === 0) {
+  if (selectedStudentIds.length === 0 && removeStudentIds.length === 0) {
     throw new OnlineFamilyRecoveryError(
       "VALIDATION_ERROR",
-      "Select at least one family member to recover."
+      "Choose at least one family change."
     );
   }
 
-  const targetStudentIds = uniqueTrimmed([claimedStudentId, ...selectedStudentIds]);
+  if (removeStudentIds.includes(claimedStudentId)) {
+    throw new OnlineFamilyRecoveryError(
+      "FAMILY_ANCHOR_REQUIRED",
+      "Choose another family owner before removing this learner.",
+      409
+    );
+  }
+
+  const overlappingStudentId = selectedStudentIds.find((studentId) =>
+    removeStudentIds.includes(studentId)
+  );
+  if (overlappingStudentId) {
+    throw new OnlineFamilyRecoveryError(
+      "CONFLICTING_FAMILY_CHANGE",
+      "A learner cannot be added and removed in the same update.",
+      409
+    );
+  }
+
+  const addStudentIds = uniqueTrimmed([claimedStudentId, ...selectedStudentIds]);
+  const targetStudentIds = uniqueTrimmed([...addStudentIds, ...removeStudentIds]);
   const students = await store.fetchStudentsByIds(tenantId, targetStudentIds);
   const studentById = new Map(students.map((student) => [student.id, student]));
   const missingStudentIds = targetStudentIds.filter((studentId) => !studentById.has(studentId));
@@ -92,16 +120,23 @@ export async function recoverOnlineClaimedFamily(
     throw new OnlineFamilyRecoveryError("STUDENT_NOT_FOUND", "Claimed student not found.", 404);
   }
 
-  const familyUserId = claimedStudent.account_owner_user_id;
+  const familyUserId = claimedStudent.account_owner_user_id ?? claimedStudent.parent_id;
   if (!familyUserId) {
     throw new OnlineFamilyRecoveryError(
       "CLAIMED_STUDENT_OWNER_MISSING",
-      "This student has not been claimed by a portal account yet.",
+      "Select a claimed learner or an existing family group.",
       409
     );
   }
 
-  const prospectStudent = students.find((student) => student.record_type === "prospect");
+  const addStudents = addStudentIds
+    .map((studentId) => studentById.get(studentId))
+    .filter((student): student is OnlineFamilyRecoveryStudent => Boolean(student));
+  const removeStudents = removeStudentIds
+    .map((studentId) => studentById.get(studentId))
+    .filter((student): student is OnlineFamilyRecoveryStudent => Boolean(student));
+
+  const prospectStudent = addStudents.find((student) => student.record_type === "prospect");
   if (prospectStudent) {
     throw new OnlineFamilyRecoveryError(
       "PROSPECT_NOT_ALLOWED",
@@ -110,8 +145,8 @@ export async function recoverOnlineClaimedFamily(
     );
   }
 
-  const onlineStudentIds = await store.fetchOnlineStudentIds(tenantId, targetStudentIds);
-  const nonOnlineStudent = targetStudentIds.find((studentId) => !onlineStudentIds.has(studentId));
+  const onlineStudentIds = await store.fetchOnlineStudentIds(tenantId, addStudentIds);
+  const nonOnlineStudent = addStudentIds.find((studentId) => !onlineStudentIds.has(studentId));
   if (nonOnlineStudent) {
     throw new OnlineFamilyRecoveryError(
       "ONLINE_ENROLLMENT_REQUIRED",
@@ -120,13 +155,22 @@ export async function recoverOnlineClaimedFamily(
     );
   }
 
-  const linkedElsewhere = students.find(
+  const linkedElsewhere = addStudents.find(
     (student) => student.parent_id && student.parent_id !== familyUserId
   );
   if (linkedElsewhere) {
     throw new OnlineFamilyRecoveryError(
       "STUDENT_LINKED_TO_ANOTHER_PARENT",
       "One or more selected students are already linked to another parent account.",
+      409
+    );
+  }
+
+  const notInFamily = removeStudents.find((student) => student.parent_id !== familyUserId);
+  if (notInFamily) {
+    throw new OnlineFamilyRecoveryError(
+      "STUDENT_NOT_IN_FAMILY",
+      "One or more selected learners are not in this family.",
       409
     );
   }
@@ -151,13 +195,22 @@ export async function recoverOnlineClaimedFamily(
 
   await store.linkStudentsToParent({
     tenantId,
-    studentIds: targetStudentIds,
+    studentIds: addStudentIds,
     parentId: familyUserId,
   });
 
+  if (removeStudentIds.length > 0) {
+    await store.unlinkStudentsFromParent({
+      tenantId,
+      studentIds: removeStudentIds,
+      parentId: familyUserId,
+    });
+  }
+
   return {
     family_user_id: familyUserId,
-    linked_student_ids: targetStudentIds,
+    linked_student_ids: addStudentIds,
+    unlinked_student_ids: removeStudentIds,
     promoted_user: promotedUser,
   };
 }

@@ -13,6 +13,7 @@ import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
 type FamilyRecoveryBody = {
   claimed_student_id?: unknown;
   student_ids?: unknown;
+  remove_student_ids?: unknown;
 };
 
 type EnrollmentRow = {
@@ -95,6 +96,17 @@ const createRecoveryStore = (client: SupabaseClient): OnlineFamilyRecoveryStore 
       .in("id", studentIds);
     if (error) throw error;
   },
+
+  async unlinkStudentsFromParent({ tenantId, studentIds, parentId }) {
+    if (studentIds.length === 0) return;
+    const { error } = await client
+      .from("students")
+      .update({ parent_id: null })
+      .eq("tenant_id", tenantId)
+      .eq("parent_id", parentId)
+      .in("id", studentIds);
+    if (error) throw error;
+  },
 });
 
 const errorResponse = (error: unknown) => {
@@ -119,12 +131,14 @@ export async function POST(request: NextRequest) {
     const claimedStudentId =
       typeof body.claimed_student_id === "string" ? body.claimed_student_id.trim() : "";
     const studentIds = toStudentIds(body.student_ids);
+    const removeStudentIds = toStudentIds(body.remove_student_ids);
 
     const payload = await adminOperationSimple(async (client) =>
       recoverOnlineClaimedFamily(createRecoveryStore(client), {
         tenantId: guard.tenantId,
         claimedStudentId,
         studentIds,
+        removeStudentIds,
       })
     );
 

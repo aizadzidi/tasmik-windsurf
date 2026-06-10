@@ -32,8 +32,6 @@ import {
   formatAbsoluteDate,
   filterStudentsBySearch,
   getInactivityRowClass,
-  getSummaryStats,
-  type SummaryStats,
 } from "@/lib/reportUtils";
 import type { Report, ViewMode } from "@/types/teacher";
 
@@ -84,7 +82,6 @@ export default function StudentPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("tasmik");
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
-  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [showFullRecordsModal, setShowFullRecordsModal] = useState(false);
   const [fullRecordsChild, setFullRecordsChild] = useState<ExtendedStudentProgress | null>(null);
 
@@ -205,23 +202,7 @@ export default function StudentPage() {
     return [...filtered].sort((a, b) => a.name.localeCompare(b.name));
   }, [children, debouncedSearchTerm]);
 
-  const summaryStats: SummaryStats = useMemo(() => {
-    if (viewMode === "juz_tests") {
-      const childrenWithGaps = filteredChildren.filter((child) => (child.juz_test_gap || 0) > 0);
-      const childrenWithLargeGaps = filteredChildren.filter((child) => (child.juz_test_gap || 0) >= 3);
-
-      return {
-        totalStudents: filteredChildren.length,
-        inactive7Days: childrenWithGaps.length,
-        inactive14Days: childrenWithLargeGaps.length,
-      };
-    }
-
-    return getSummaryStats(filteredChildren);
-  }, [filteredChildren, viewMode]);
-
-  const selectedIdsForCharts =
-    selectedStudentIds.length > 0 ? selectedStudentIds : filteredChildren.map((child) => child.id);
+  const selectedIdsForCharts = filteredChildren.map((child) => child.id);
 
   const chartReports = useMemo(
     () =>
@@ -448,46 +429,16 @@ export default function StudentPage() {
           <header className="mb-6">
             <div>
               <h1 className="text-2xl font-bold text-gray-800">Hafazan Report</h1>
-              <p className="text-gray-600">Track your Quran memorization progress using the same report view as campus parents.</p>
+              <p className="text-gray-600">Track your Quran memorization progress effectively.</p>
             </div>
           </header>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-            <Card className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-3xl font-bold text-gray-900">{summaryStats.totalStudents}</div>
-                  <div className="text-gray-600 font-medium">Total Children</div>
-                </div>
-                <div className="h-12 w-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                  <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                  </svg>
-                </div>
-              </div>
-            </Card>
-
-            <Card className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-3xl font-bold text-amber-600">{summaryStats.inactive7Days}</div>
-                  <div className="text-gray-600 font-medium">Need Attention</div>
-                </div>
-                <div className="h-12 w-12 bg-amber-100 rounded-lg flex items-center justify-center">
-                  <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.664-.833-2.464 0L4.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                  </svg>
-                </div>
-              </div>
-            </Card>
-          </div>
 
           {viewMode !== "juz_tests" ? (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
               <Card className="p-6">
-                <h3 className="text-lg font-semibold text-gray-800 mb-4">Children Progress Overview</h3>
+                <h3 className="text-lg font-semibold text-gray-800 mb-4">Your Progress Overview</h3>
                 {filteredChildren.length > 0 && (
-                  selectedStudentIds.length === 0 && viewMode === "murajaah" ? (
+                  viewMode === "murajaah" ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="rounded-xl border border-amber-100 bg-amber-50/60 p-3">
                         <div className="text-xs font-semibold text-amber-700 uppercase tracking-wide">Old Murajaah</div>
@@ -515,9 +466,7 @@ export default function StudentPage() {
                   ) : (
                     <div className="space-y-4">
                       {(() => {
-                        const ids = selectedStudentIds.length > 0
-                          ? selectedStudentIds
-                          : filteredChildren.map((child) => child.id);
+                        const ids = filteredChildren.map((child) => child.id);
 
                         return filteredChildren
                           .filter((child) => ids.includes(child.id))
@@ -597,7 +546,7 @@ export default function StudentPage() {
               <div>
                 <input
                   type="text"
-                  placeholder="Search children..."
+                  placeholder="Search progress..."
                   value={searchTerm}
                   onChange={(event) => setSearchTerm(event.target.value)}
                   className="w-full border-gray-300 rounded-md shadow-sm p-2 border"
@@ -607,14 +556,13 @@ export default function StudentPage() {
 
             {children.length === 0 ? (
               <div className="text-center py-8 text-gray-600">
-                <p>No children registered in the system.</p>
+                <p>No progress registered in the system.</p>
               </div>
             ) : (
               <div className="overflow-x-auto border rounded-lg">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
                       {viewMode === "juz_tests" ? (
                         <>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Current Progress</th>
@@ -623,8 +571,8 @@ export default function StudentPage() {
                         </>
                       ) : (
                         <>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Week</th>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Latest Reading</th>
-                          <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Week</th>
                         </>
                       )}
                       <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
@@ -645,59 +593,6 @@ export default function StudentPage() {
 
                       return (
                         <tr key={child.id} className={rowClass}>
-                          <td className="px-4 py-3 font-medium text-gray-900">
-                            <div className="flex items-start gap-2">
-                              {selectedStudentIds.length > 0 ? (
-                                <input
-                                  type="checkbox"
-                                  checked={selectedStudentIds.includes(child.id)}
-                                  onChange={() => {
-                                    setSelectedStudentIds((previous) =>
-                                      previous.includes(child.id)
-                                        ? previous.filter((id) => id !== child.id)
-                                        : [...previous, child.id],
-                                    );
-                                  }}
-                                  className="mt-1 h-4 w-4 text-blue-600 border-gray-300 rounded"
-                                  aria-label={`Select ${child.name}`}
-                                />
-                              ) : null}
-
-                              <div>
-                                <button
-                                  onClick={() => {
-                                    setSelectedStudentIds((previous) =>
-                                      previous.includes(child.id)
-                                        ? previous.filter((id) => id !== child.id)
-                                        : [...previous, child.id],
-                                    );
-                                  }}
-                                  className={`font-semibold underline-offset-2 ${
-                                    selectedStudentIds.includes(child.id)
-                                      ? "text-blue-700 underline"
-                                      : "text-blue-600 hover:underline"
-                                  }`}
-                                  title={selectedStudentIds.includes(child.id) ? "Selected for charts" : "Select for charts"}
-                                >
-                                  {child.name}
-                                </button>
-                                {child.class_name ? (
-                                  <div className="text-xs text-gray-600">{child.class_name}</div>
-                                ) : null}
-                                {child.teacher_name ? (
-                                  <div className="text-xs text-gray-500">Teacher: {child.teacher_name}</div>
-                                ) : null}
-                                {child.memorization_completed ? (
-                                  <div className="mt-1">
-                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
-                                      Completed
-                                    </span>
-                                  </div>
-                                ) : null}
-                              </div>
-                            </div>
-                          </td>
-
                           {viewMode === "juz_tests" ? (
                             <>
                               <td className="px-4 py-3 text-gray-600">
@@ -765,13 +660,13 @@ export default function StudentPage() {
                             </>
                           ) : (
                             <>
-                              <td className="px-4 py-3 text-gray-800">
-                                {child.latest_reading || <span className="italic text-gray-400">No records</span>}
-                              </td>
-                              <td className="px-4 py-3 text-center text-gray-700">
+                              <td className="px-4 py-3 text-left text-gray-700">
                                 <div className="text-sm">
                                   {child.last_read_date ? <div>{formatWeekLabel(child.last_read_date)}</div> : "-"}
                                 </div>
+                              </td>
+                              <td className="px-4 py-3 text-gray-800">
+                                {child.latest_reading || <span className="italic text-gray-400">No records</span>}
                               </td>
                             </>
                           )}
@@ -816,8 +711,8 @@ export default function StudentPage() {
 
                     {filteredChildren.length === 0 ? (
                       <tr>
-                        <td colSpan={viewMode === "juz_tests" ? 5 : 4} className="text-center py-8 text-gray-600">
-                          <p>No children match the current filters.</p>
+                        <td colSpan={viewMode === "juz_tests" ? 4 : 3} className="text-center py-8 text-gray-600">
+                          <p>No progress matches the current filters.</p>
                         </td>
                       </tr>
                     ) : null}

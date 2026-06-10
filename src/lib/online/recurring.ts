@@ -164,10 +164,17 @@ export const getSharedTeacherCandidates = (params: {
 };
 
 export const isPackageCurrentForMonth = (
-  row: Pick<OnlineRecurringPackage, "effective_month" | "effective_to" | "status">,
+  row: Pick<OnlineRecurringPackage, "effective_month" | "effective_to" | "status" | "hold_expires_at">,
   monthKey: string,
 ) => {
   if (row.status !== "active" && row.status !== "pending_payment" && row.status !== "draft") return false;
+  if (
+    (row.status === "pending_payment" || row.status === "draft") &&
+    row.hold_expires_at &&
+    new Date(row.hold_expires_at).getTime() <= Date.now()
+  ) {
+    return false;
+  }
 
   const monthStart = normalizeDateKey(`${monthKey}-01`);
   const effectiveMonth = normalizeDateKey(row.effective_month);

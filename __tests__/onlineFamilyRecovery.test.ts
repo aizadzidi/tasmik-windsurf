@@ -42,6 +42,13 @@ const createStore = (state: FakeStoreState): OnlineFamilyRecoveryStore => {
         }
       });
     },
+    async unlinkStudentsFromParent({ studentIds, parentId }) {
+      state.students.forEach((student) => {
+        if (studentIds.includes(student.id) && student.parent_id === parentId) {
+          student.parent_id = null;
+        }
+      });
+    },
   };
 };
 
@@ -99,6 +106,7 @@ describe("online family recovery", () => {
     expect(result).toEqual({
       family_user_id: "user-claimed",
       linked_student_ids: ["student-claimed", "student-sibling"],
+      unlinked_student_ids: [],
       promoted_user: true,
     });
     expect(state.users[0].role).toBe("parent");
@@ -149,6 +157,56 @@ describe("online family recovery", () => {
       parent_id: "user-claimed",
       account_owner_user_id: "sibling-login",
     });
+  });
+
+  it("removes a learner from the family without changing their login", async () => {
+    const state = {
+      students: [
+        { ...baseStudents[0], parent_id: "user-claimed" },
+        {
+          ...baseStudents[1],
+          parent_id: "user-claimed",
+          account_owner_user_id: "sibling-login",
+        },
+      ],
+      users: [{ id: "user-claimed", role: "parent" }],
+    };
+
+    const result = await recoverOnlineClaimedFamily(createStore(state), {
+      tenantId: "tenant-1",
+      claimedStudentId: "student-claimed",
+      studentIds: [],
+      removeStudentIds: ["student-sibling"],
+    });
+
+    expect(result).toEqual({
+      family_user_id: "user-claimed",
+      linked_student_ids: ["student-claimed"],
+      unlinked_student_ids: ["student-sibling"],
+      promoted_user: false,
+    });
+    expect(state.students.find((student) => student.id === "student-sibling")).toMatchObject({
+      parent_id: null,
+      account_owner_user_id: "sibling-login",
+    });
+  });
+
+  it("rejects conflicting add and remove requests for the same learner", async () => {
+    const state = {
+      students: baseStudents.map((student) => ({ ...student })),
+      users: [{ id: "user-claimed", role: "parent" }],
+    };
+
+    await expect(
+      recoverOnlineClaimedFamily(createStore(state), {
+        tenantId: "tenant-1",
+        claimedStudentId: "student-claimed",
+        studentIds: ["student-sibling"],
+        removeStudentIds: ["student-sibling"],
+      })
+    ).rejects.toMatchObject({
+      code: "CONFLICTING_FAMILY_CHANGE",
+    } satisfies Partial<OnlineFamilyRecoveryError>);
   });
 
   it("rejects non-online selected students", async () => {

@@ -97,6 +97,7 @@ interface CreateBillInput {
   redirectUrl: string;
   reference1: string;
   reference2?: string;
+  dueAt?: string | null;
 }
 
 export async function createBillplzBill(input: CreateBillInput): Promise<BillplzCreateResponse> {
@@ -119,6 +120,7 @@ export async function createBillplzBillWithConfig(
     redirect_url: input.redirectUrl,
     reference_1: input.reference1,
     reference_2: input.reference2 ?? undefined,
+    due_at: input.dueAt ? input.dueAt.slice(0, 10) : undefined,
     deliver: true
   };
 

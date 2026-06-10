@@ -6,6 +6,8 @@ import type { BillplzCallbackPayload } from "@/types/payments";
 import {
   PayloadTooLargeError,
   createBillplzProviderEventId,
+  getExpectedCollectionId,
+  getPaymentContext,
   isJsonContentType,
   isPaymentOwnedByTenantParent,
   readRequestBodyTextWithLimit,
@@ -107,5 +109,27 @@ describe("payment security guards", () => {
       body: "{}",
     });
     expect(isJsonContentType(request)).toBe(true);
+  });
+
+  it("derives payment context and expected collection from provider metadata", () => {
+    expect(
+      getPaymentContext({
+        provider_metadata: {
+          paymentContext: "online",
+          expectedCollectionId: "zfc0jaod",
+        },
+      })
+    ).toBe("online");
+
+    expect(
+      getExpectedCollectionId({
+        provider_metadata: {
+          paymentContext: "online",
+          expectedCollectionId: "zfc0jaod",
+        },
+      })
+    ).toBe("zfc0jaod");
+
+    expect(getPaymentContext({ provider_metadata: { paymentContext: "other" } })).toBe("campus");
   });
 });

@@ -86,6 +86,21 @@ const fetchProgramTypesForStudents = async (studentIds: string[]) => {
   return extractProgramTypes(data as Array<{ programs?: { type?: ProgramType | null } | null }>);
 };
 
+const hasOnlinePackageForStudents = async (studentIds: string[]) => {
+  if (studentIds.length === 0) return false;
+
+  const { data, error } = await supabase
+    .from("online_recurring_packages")
+    .select("id")
+    .in("student_id", studentIds)
+    .in("status", ["draft", "pending_payment", "active", "paused"])
+    .limit(1);
+
+  if (isMissingRelationError(error, "online_recurring_packages")) return false;
+  if (error || !data) return false;
+  return data.length > 0;
+};
+
 export const useProgramScope = ({ role, userId }: ProgramScopeParams): ProgramScopeState => {
   const [programScope, setProgramScope] = useState<ProgramScope>("unknown");
   const [loading, setLoading] = useState(true);
@@ -110,6 +125,10 @@ export const useProgramScope = ({ role, userId }: ProgramScopeParams): ProgramSc
       } else {
         const studentIds = await fetchStudentIds(role, id);
         programTypes = await fetchProgramTypesForStudents(studentIds);
+        const hasOnlinePackage = await hasOnlinePackageForStudents(studentIds);
+        if (hasOnlinePackage && !programTypes.includes("online")) {
+          programTypes = [...programTypes, "online"];
+        }
         programScopeForUser = resolveParentProgramScope(programTypes);
       }
       if (isMounted) {

@@ -436,6 +436,11 @@ export async function POST(request: NextRequest) {
         payableMonths: preview.payableMonths,
         idempotencyKey,
         status: "initiated",
+        providerMetadata: {
+          paymentContext: "campus",
+          expectedCollectionId: gatewayConfig.primaryCollectionId,
+          checkoutFingerprint,
+        },
       });
     } catch (error) {
       if (error instanceof PaymentIdempotencyConflictError) {

@@ -25,6 +25,7 @@ supabase.auth.onAuthStateChange((event, session) => {
         '/',
         '/join',
         '/join/student',
+        '/join/family',
         '/login',
         '/signup',
         '/forgot-password',

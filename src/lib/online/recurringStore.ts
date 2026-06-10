@@ -278,6 +278,13 @@ export const hydratePlannerPackages = (params: {
 export const filterPackagesForMonth = (packages: OnlineRecurringPackage[], monthKey: string) =>
   packages.filter((pkg) => {
     if (pkg.status !== "active" && pkg.status !== "pending_payment" && pkg.status !== "draft") return false;
+    if (
+      (pkg.status === "pending_payment" || pkg.status === "draft") &&
+      pkg.hold_expires_at &&
+      new Date(pkg.hold_expires_at).getTime() <= Date.now()
+    ) {
+      return false;
+    }
 
     const monthStart = normalizeDateKey(`${monthKey}-01`);
     const effectiveMonth = normalizeDateKey(pkg.effective_month);

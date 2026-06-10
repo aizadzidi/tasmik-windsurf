@@ -25,7 +25,8 @@ export default function Navbar({ programScope }: NavbarProps) {
 
   // Keep teacher nav mode stable across route transitions by using layout-level scope.
   const isTeacher = pathname.startsWith("/teacher");
-  const isParent = pathname.startsWith("/parent");
+  const isFamily = pathname.startsWith("/family");
+  const isParent = pathname.startsWith("/parent") || isFamily;
   const isStudent = pathname.startsWith("/student");
   const isAdminRoute = pathname.startsWith("/admin");
   const isStaff = pathname.startsWith("/staff");
@@ -38,6 +39,8 @@ export default function Navbar({ programScope }: NavbarProps) {
   const isOnlineOnly = resolvedProgramScope === "online";
   const effectiveOnline = isOnlineOnly || isMixedOnline;
   const hasOnlineScope = resolvedProgramScope === "online" || resolvedProgramScope === "mixed";
+  const familyDashboardHref = hasOnlineScope ? "/family" : "/parent";
+  const familyFeesHref = hasOnlineScope ? "/family/fees" : "/parent/online";
 
   const hasAdminAccess =
     isAdminUser || ADMIN_PERMISSION_KEYS.some((key) => permissions.has(key));
@@ -78,11 +81,11 @@ export default function Navbar({ programScope }: NavbarProps) {
   const getDashboardInfo = () => {
     if (isParent) {
       return {
-        dashboardHref: "/parent",
-        dashboardLabel: "Parent Dashboard",
+        dashboardHref: familyDashboardHref,
+        dashboardLabel: "Family Dashboard",
         navItems: [
           { 
-            href: "/parent", 
+            href: familyDashboardHref, 
             label: "Dashboard", 
             icon: (
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -90,14 +93,15 @@ export default function Navbar({ programScope }: NavbarProps) {
               </svg>
             )
           },
-          ...(hasOnlineScope && !isOnlineOnly
+          ...(hasOnlineScope
             ? [
                 {
-                  href: "/parent/online",
-                  label: "Online Explore",
+                  href: familyFeesHref,
+                  label: "Fees",
                   icon: (
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h18M6 9h12M5 13h14M7 17h10" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16a1 1 0 011 1v8a1 1 0 01-1 1H4a1 1 0 01-1-1V8a1 1 0 011-1z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 10h16M9 15h3.5" />
                     </svg>
                   )
                 },
@@ -139,6 +143,16 @@ export default function Navbar({ programScope }: NavbarProps) {
             icon: (
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              </svg>
+            ),
+          },
+          {
+            href: "/student/fees",
+            label: "Fees",
+            icon: (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16a1 1 0 011 1v8a1 1 0 01-1 1H4a1 1 0 01-1-1V8a1 1 0 011-1z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 10h16M9 15h3.5" />
               </svg>
             ),
           },

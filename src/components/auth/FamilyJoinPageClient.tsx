@@ -35,6 +35,13 @@ const newLearner = (relationship: "child" | "self" = "child"): LearnerForm => ({
 export default function FamilyJoinPageClient() {
   const searchParams = useSearchParams();
   const claimFromUrl = (searchParams.get("claim") ?? "").trim();
+  const tenantSlugFromUrl = (
+    searchParams.get("tenant") ??
+    searchParams.get("tenantSlug") ??
+    ""
+  )
+    .trim()
+    .toLowerCase();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -143,6 +150,7 @@ export default function FamilyJoinPageClient() {
               relationship: learner.relationship,
             })),
           family_claim_token: claimToken.trim() || null,
+          tenant_slug: tenantSlugFromUrl || null,
         }),
       });
 

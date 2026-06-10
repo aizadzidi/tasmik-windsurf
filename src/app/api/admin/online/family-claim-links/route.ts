@@ -11,6 +11,7 @@ import {
   generateFamilyClaimToken,
   hashFamilyClaimToken,
 } from "@/lib/studentClaims";
+import { resolveOnlineFamilyLinkedStudentIds } from "@/lib/online/familyLinks";
 
 type CreateFamilyClaimLinkBody = {
   student_ids?: unknown;
@@ -21,6 +22,7 @@ type StudentRow = {
   name: string | null;
   tenant_id: string;
   parent_id: string | null;
+  account_owner_user_id: string | null;
   record_type: string | null;
 };
 
@@ -69,7 +71,7 @@ export async function POST(request: NextRequest) {
     const payload = await adminOperationSimple(async (client) => {
       const studentRes = await client
         .from("students")
-        .select("id, name, tenant_id, parent_id, record_type")
+        .select("id, name, tenant_id, parent_id, account_owner_user_id, record_type")
         .eq("tenant_id", guard.tenantId)
         .in("id", studentIds);
       if (studentRes.error) throw studentRes.error;
@@ -82,7 +84,14 @@ export async function POST(request: NextRequest) {
         throw new RequestValidationError("One or more selected students were not found.");
       }
 
-      const linkedStudents = students.filter((student) => student.parent_id);
+      const onlineFamilyLinkedStudentIds = await resolveOnlineFamilyLinkedStudentIds(
+        client,
+        guard.tenantId,
+        students
+      );
+      const linkedStudents = students.filter((student) =>
+        Boolean(student.parent_id) || onlineFamilyLinkedStudentIds.has(student.id)
+      );
       if (linkedStudents.length > 0) {
         throw new RequestValidationError(
           "One or more selected students are already linked to a parent account."

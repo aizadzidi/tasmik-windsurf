@@ -5,7 +5,11 @@ import {
   isLocalDevelopmentHost,
   isPublicSaasRegistrationHost,
 } from "@/lib/hostResolution";
-import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
+import {
+  normalizeTenantSlugInput,
+  resolveTenantIdFromRequest,
+  resolveTenantIdFromSlug,
+} from "@/lib/tenantProvisioning";
 import { getSupabaseAdminClient } from "@/lib/supabaseAdminClient";
 import {
   asTrimmedText,
@@ -19,6 +23,7 @@ import {
   pickUuidScalar,
 } from "@/lib/publicApi";
 import { hashFamilyClaimToken } from "@/lib/studentClaims";
+import { resolveOnlineFamilyLinkedStudentIds } from "@/lib/online/familyLinks";
 
 type FamilyLearnerInput = {
   name?: unknown;
@@ -32,6 +37,7 @@ type FamilyRegisterBody = {
   phone?: unknown;
   learners?: unknown;
   family_claim_token?: unknown;
+  tenant_slug?: unknown;
 };
 
 type ExistingUserRow = {
@@ -55,6 +61,7 @@ type ClaimStudentRow = {
   name: string | null;
   record_type: string | null;
   parent_id: string | null;
+  account_owner_user_id: string | null;
 };
 
 const normalizeLearners = (value: unknown) => {
@@ -95,14 +102,25 @@ async function ensureOnlineEnrollment({
   tenantId,
   studentId,
   reason,
+  metadata,
 }: {
   client: ReturnType<typeof getSupabaseAdminClient>;
   tenantId: string;
   studentId: string;
   reason: string;
+  metadata?: Record<string, unknown>;
 }) {
   const programId = await resolveOnlineProgramId(client, tenantId);
   if (!programId) return;
+
+  const { data: existingEnrollment, error: existingError } = await client
+    .from("enrollments")
+    .select("metadata")
+    .eq("tenant_id", tenantId)
+    .eq("student_id", studentId)
+    .eq("program_id", programId)
+    .maybeSingle();
+  if (existingError) throw existingError;
 
   const { error } = await client.from("enrollments").upsert(
     {
@@ -111,7 +129,11 @@ async function ensureOnlineEnrollment({
       program_id: programId,
       status: "pending_payment",
       start_date: new Date().toISOString().slice(0, 10),
-      metadata: { status_reason: reason },
+      metadata: {
+        ...((existingEnrollment?.metadata as Record<string, unknown> | null) ?? {}),
+        ...metadata,
+        status_reason: reason,
+      },
     },
     { onConflict: "student_id,program_id,tenant_id" }
   );
@@ -164,6 +186,7 @@ export async function POST(request: NextRequest) {
   const learners = normalizeLearners(body.learners);
   const familyClaimToken = asTrimmedText(body.family_claim_token, 255);
   const familyClaimTokenHash = familyClaimToken ? hashFamilyClaimToken(familyClaimToken) : null;
+  const localTenantSlug = normalizeTenantSlugInput(body.tenant_slug);
 
   if (!name) {
     return jsonError(requestId, {
@@ -196,6 +219,9 @@ export async function POST(request: NextRequest) {
 
   const supabaseAdmin = getSupabaseAdminClient();
   let tenantId = await resolveTenantIdFromRequest(request, supabaseAdmin);
+  if (!tenantId && isLocalHost && localTenantSlug) {
+    tenantId = await resolveTenantIdFromSlug(supabaseAdmin, localTenantSlug);
+  }
   if (!tenantId && isLocalHost && familyClaimTokenHash) {
     const claimTenantRes = await supabaseAdmin
       .from("online_family_claim_tokens")
@@ -407,14 +433,23 @@ export async function POST(request: NextRequest) {
     if (claimStudentIds.length > 0) {
       const studentsRes = await supabaseAdmin
         .from("students")
-        .select("id, name, record_type, parent_id")
+        .select("id, name, record_type, parent_id, account_owner_user_id")
         .eq("tenant_id", tenantId)
         .in("id", claimStudentIds);
       if (studentsRes.error) throw studentsRes.error;
 
       const claimStudents = (studentsRes.data ?? []) as ClaimStudentRow[];
+      const onlineFamilyLinkedStudentIds = await resolveOnlineFamilyLinkedStudentIds(
+        supabaseAdmin,
+        tenantId,
+        claimStudents
+      );
       for (const student of claimStudents) {
-        if (student.record_type === "prospect" || (student.parent_id && student.parent_id !== userId)) {
+        const alreadyInAnotherOnlineFamily =
+          onlineFamilyLinkedStudentIds.has(student.id) && student.parent_id !== userId;
+        const linkedToAnotherParent = Boolean(student.parent_id && student.parent_id !== userId);
+
+        if (student.record_type === "prospect" || alreadyInAnotherOnlineFamily || linkedToAnotherParent) {
           skippedStudentIds.push(student.id);
           continue;
         }
@@ -423,14 +458,14 @@ export async function POST(request: NextRequest) {
         if (student.parent_id === userId) {
           linkedId = student.id;
         } else {
-          const { data: linked, error: linkError } = await supabaseAdmin
+          const linkQuery = supabaseAdmin
             .from("students")
             .update({ parent_id: userId })
             .eq("tenant_id", tenantId)
             .eq("id", student.id)
-            .is("parent_id", null)
-            .select("id")
-            .maybeSingle();
+            .is("parent_id", null);
+
+          const { data: linked, error: linkError } = await linkQuery.select("id").maybeSingle();
           if (linkError) throw linkError;
           linkedId = linked?.id ?? null;
         }
@@ -442,6 +477,12 @@ export async function POST(request: NextRequest) {
             tenantId,
             studentId: linkedId,
             reason: "Online student linked through family claim",
+            metadata: {
+              source: "family_claim",
+              family_claim_token_id: claimRow?.id ?? null,
+              family_claimed_at: new Date().toISOString(),
+              family_owner_user_id: userId,
+            },
           });
         }
       }
@@ -516,6 +557,11 @@ export async function POST(request: NextRequest) {
           learner.relationship === "self"
             ? "Online self learner created through family signup"
             : "Online child learner created through family signup",
+        metadata: {
+          source: learner.relationship === "self" ? "family_self_signup" : "family_child_signup",
+          family_signup_at: new Date().toISOString(),
+          family_owner_user_id: userId,
+        },
       });
     }
 

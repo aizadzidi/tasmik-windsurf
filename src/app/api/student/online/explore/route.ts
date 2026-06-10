@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
   if (!auth.ok) return auth.response;
 
   try {
-    const [studentRes, snapshot] = await Promise.all([
+    const [studentRes, paymentsRes, snapshot] = await Promise.all([
       supabaseService
         .from("students")
         .select("id, name")
@@ -22,10 +22,21 @@ export async function GET(request: NextRequest) {
         .eq("account_owner_user_id", auth.userId)
         .neq("record_type", "prospect")
         .maybeSingle(),
+      supabaseService
+        .from("payments")
+        .select(
+          "id,parent_id,status,currency,total_amount_cents,merchant_fee_cents,redirect_url,billplz_id,created_at,paid_at,line_items:payment_line_items(id,label,metadata,child_id,fee_id)"
+        )
+        .eq("tenant_id", auth.tenantId)
+        .eq("parent_id", auth.userId)
+        .contains("provider_metadata", { paymentContext: "online" })
+        .order("created_at", { ascending: false })
+        .limit(8),
       fetchRecurringSnapshot(supabaseService, auth.tenantId),
     ]);
 
     if (studentRes.error) throw studentRes.error;
+    if (paymentsRes.error) throw paymentsRes.error;
     if (!studentRes.data?.id) {
       return NextResponse.json({ error: "Student profile not found." }, { status: 404 });
     }
@@ -38,6 +49,11 @@ export async function GET(request: NextRequest) {
         package_options: [],
         pending_packages: [],
         active_packages: [],
+        payments: paymentsRes.data ?? [],
+        online_fee_summary: {
+          pendingPackageCents: 0,
+          activeMonthlyCents: 0,
+        },
       });
     }
 
@@ -80,6 +96,9 @@ export async function GET(request: NextRequest) {
       }))
       .filter((row) => row.templates.length > 0);
 
+    const pendingPackages = activePackages.filter((pkg) => pkg.status === "pending_payment" || pkg.status === "draft");
+    const activeOnlinePackages = activePackages.filter((pkg) => pkg.status === "active");
+
     return NextResponse.json({
       setup_required: false,
       student: {
@@ -88,8 +107,19 @@ export async function GET(request: NextRequest) {
       },
       courses: snapshot.courses,
       package_options: packageOptions,
-      pending_packages: activePackages.filter((pkg) => pkg.status === "pending_payment" || pkg.status === "draft"),
-      active_packages: activePackages.filter((pkg) => pkg.status === "active"),
+      pending_packages: pendingPackages,
+      active_packages: activeOnlinePackages,
+      payments: paymentsRes.data ?? [],
+      online_fee_summary: {
+        pendingPackageCents: pendingPackages.reduce(
+          (sum, pkg) => sum + Math.max(0, Number(pkg.monthly_fee_cents_snapshot ?? 0)),
+          0,
+        ),
+        activeMonthlyCents: activeOnlinePackages.reduce(
+          (sum, pkg) => sum + Math.max(0, Number(pkg.monthly_fee_cents_snapshot ?? 0)),
+          0,
+        ),
+      },
     });
   } catch (error: unknown) {
     console.error("Student online package explore error:", error);

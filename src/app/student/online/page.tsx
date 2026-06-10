@@ -1,12 +1,12 @@
 import { redirect } from "next/navigation";
 
-type LegacyParentOnlinePageProps = {
+type LegacyStudentOnlinePageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
-export default async function LegacyParentOnlinePage({
+export default async function LegacyStudentOnlinePage({
   searchParams,
-}: LegacyParentOnlinePageProps) {
+}: LegacyStudentOnlinePageProps) {
   const params = await searchParams;
   const query = new URLSearchParams();
 
@@ -19,5 +19,5 @@ export default async function LegacyParentOnlinePage({
   });
 
   const suffix = query.toString() ? `?${query.toString()}` : "";
-  redirect(`/family/fees${suffix}`);
+  redirect(`/student/fees${suffix}`);
 }

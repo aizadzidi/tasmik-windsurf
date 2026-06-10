@@ -16,6 +16,8 @@ type UserProfileRow = {
   role: string | null;
 };
 
+const TENANT_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])$/;
+
 export class TenantReassignmentError extends Error {
   existingTenantId: string;
   resolvedTenantId: string;
@@ -30,6 +32,27 @@ export class TenantReassignmentError extends Error {
 
 export function normalizeHost(host: string | null) {
   return normalizeHostValue(host);
+}
+
+export function normalizeTenantSlugInput(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const slug = value.trim().toLowerCase();
+  if (!TENANT_SLUG_PATTERN.test(slug)) return null;
+  return slug;
+}
+
+export async function resolveTenantIdFromSlug(
+  supabaseAdmin: SupabaseClient,
+  slug: string | null
+) {
+  if (!slug) return null;
+  const { data, error } = await supabaseAdmin
+    .from("tenants")
+    .select("id")
+    .eq("slug", slug)
+    .maybeSingle();
+  if (error || !data?.id) return null;
+  return data.id as string;
 }
 
 export async function resolveTenantIdFromRequest(

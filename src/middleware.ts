@@ -39,6 +39,22 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/join?role=parent', request.url))
   }
 
+  if (pathname === '/parent/online') {
+    const familyFeesUrl = new URL('/family/fees', request.url)
+    searchParams.forEach((value, key) => {
+      familyFeesUrl.searchParams.append(key, value)
+    })
+    return NextResponse.redirect(familyFeesUrl)
+  }
+
+  if (pathname === '/student/online') {
+    const studentFeesUrl = new URL('/student/fees', request.url)
+    searchParams.forEach((value, key) => {
+      studentFeesUrl.searchParams.append(key, value)
+    })
+    return NextResponse.redirect(studentFeesUrl)
+  }
+
   const isClassDomain = isLegacySchoolHost(hostname)
   if (isClassDomain && pathname === '/') {
     return NextResponse.redirect(new URL('/login', request.url))

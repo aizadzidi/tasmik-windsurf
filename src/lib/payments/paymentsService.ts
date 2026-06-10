@@ -19,6 +19,7 @@ interface CreatePaymentInput {
   status?: PaymentStatus;
   billplzId?: string | null;
   redirectUrl?: string | null;
+  providerMetadata?: Record<string, unknown> | null;
 }
 
 interface UpdatePaymentInput {
@@ -93,27 +94,40 @@ export async function createPaymentRecord(input: CreatePaymentInput): Promise<Pa
     payable_months: input.payableMonths,
     billplz_id: input.billplzId ?? null,
     redirect_url: input.redirectUrl ?? null,
-    idempotency_key: input.idempotencyKey ?? null
+    idempotency_key: input.idempotencyKey ?? null,
+    provider_metadata: input.providerMetadata ?? {}
   };
 
   let insertedWithIdempotencyColumn = true;
-  let { data, error } = await supabaseService
-    .from('payments')
-    .insert([insertPayload])
-    .select('*')
-    .single();
+  let insertedWithProviderMetadataColumn = true;
+  let attemptedPayload = { ...insertPayload };
+  let data: PaymentRecord | null = null;
+  let error: { message?: string } | null = null;
 
-  if (error && isMissingColumnError(error, 'idempotency_key')) {
-    insertedWithIdempotencyColumn = false;
-    const fallbackPayload = { ...insertPayload };
-    delete fallbackPayload.idempotency_key;
-    const retry = await supabaseService
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await supabaseService
       .from('payments')
-      .insert([fallbackPayload])
+      .insert([attemptedPayload])
       .select('*')
       .single();
-    data = retry.data;
-    error = retry.error;
+    data = response.data as PaymentRecord | null;
+    error = response.error;
+
+    if (error && 'idempotency_key' in attemptedPayload && isMissingColumnError(error, 'idempotency_key')) {
+      insertedWithIdempotencyColumn = false;
+      attemptedPayload = { ...attemptedPayload };
+      delete attemptedPayload.idempotency_key;
+      continue;
+    }
+
+    if (error && 'provider_metadata' in attemptedPayload && isMissingColumnError(error, 'provider_metadata')) {
+      insertedWithProviderMetadataColumn = false;
+      attemptedPayload = { ...attemptedPayload };
+      delete attemptedPayload.provider_metadata;
+      continue;
+    }
+
+    break;
   }
 
   if (error || !data) {
@@ -141,7 +155,8 @@ export async function createPaymentRecord(input: CreatePaymentInput): Promise<Pa
         months: item.months,
         childName: item.childName,
         feeName: item.feeName,
-        idempotencyKey: input.idempotencyKey ?? null
+        idempotencyKey: input.idempotencyKey ?? null,
+        ...(item.metadata ?? {})
       }
     }));
 
@@ -164,6 +179,18 @@ export async function createPaymentRecord(input: CreatePaymentInput): Promise<Pa
     if (idempotencyError && !isMissingColumnError(idempotencyError, 'idempotency_key')) {
       logPaymentError('persist-payment-idempotency-key', idempotencyError, { paymentId: data.id });
       throw new Error(idempotencyError.message);
+    }
+  }
+
+  if (input.providerMetadata && !insertedWithProviderMetadataColumn) {
+    const { error: metadataError } = await supabaseService
+      .from('payments')
+      .update({ provider_metadata: input.providerMetadata })
+      .eq('id', data.id);
+
+    if (metadataError && !isMissingColumnError(metadataError, 'provider_metadata')) {
+      logPaymentError('persist-payment-provider-metadata', metadataError, { paymentId: data.id });
+      throw new Error(metadataError.message);
     }
   }
 

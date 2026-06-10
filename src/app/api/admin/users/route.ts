@@ -568,12 +568,15 @@ export async function DELETE(request: NextRequest) {
         .eq('assigned_teacher_id', id);
       if (unlinkTeacherError) throw unlinkTeacherError;
 
-      const { error: deleteAuthUserError } = await client.auth.admin.deleteUser(id, true);
-      if (deleteAuthUserError && !isSupabaseAuthUserNotFoundError(deleteAuthUserError)) {
-        throw new Error(
-          `Failed to delete auth user: ${formatSupabaseAuthDeleteError(deleteAuthUserError)}`
-        );
-      }
+      await runUpdate(
+        'students',
+        { account_owner_user_id: null },
+        [
+          ['tenant_id', tenantId],
+          ['account_owner_user_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'account_owner_user_id'] }
+      );
 
       await runUpdate('reports', { teacher_id: null }, [
         ['tenant_id', tenantId],
@@ -600,6 +603,46 @@ export async function DELETE(request: NextRequest) {
         ['scheduled_by', id],
       ]);
 
+      await runUpdate(
+        'lesson_class_subject_year',
+        { subject_teacher_id: null },
+        [
+          ['tenant_id', tenantId],
+          ['subject_teacher_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'subject_teacher_id'] }
+      );
+
+      await runUpdate(
+        'lesson_topics',
+        { teacher_id: null },
+        [
+          ['tenant_id', tenantId],
+          ['teacher_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'teacher_id'] }
+      );
+
+      await runUpdate(
+        'lesson_topics',
+        { created_by: null },
+        [
+          ['tenant_id', tenantId],
+          ['created_by', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'created_by'] }
+      );
+
+      await runUpdate(
+        'lesson_subtopic_progress',
+        { teacher_id: null },
+        [
+          ['tenant_id', tenantId],
+          ['teacher_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'teacher_id'] }
+      );
+
       await runDelete(
         'online_attendance_sessions',
         [
@@ -607,6 +650,34 @@ export async function DELETE(request: NextRequest) {
           ['teacher_id', id],
         ],
         { optional: true, missingColumns: ['tenant_id', 'teacher_id'] }
+      );
+
+      await runDelete(
+        'online_teacher_slot_preferences',
+        [
+          ['tenant_id', tenantId],
+          ['teacher_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'teacher_id'] }
+      );
+
+      await runDelete(
+        'online_teacher_notifications',
+        [
+          ['tenant_id', tenantId],
+          ['teacher_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'teacher_id'] }
+      );
+
+      await runUpdate(
+        'online_courses',
+        { created_by: null },
+        [
+          ['tenant_id', tenantId],
+          ['created_by', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'created_by'] }
       );
 
       await runDelete(
@@ -627,6 +698,26 @@ export async function DELETE(request: NextRequest) {
         { optional: true, missingColumns: ['tenant_id', 'teacher_id'] }
       );
 
+      await runUpdate(
+        'online_recurring_packages',
+        { created_by: null },
+        [
+          ['tenant_id', tenantId],
+          ['created_by', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'created_by'] }
+      );
+
+      await runUpdate(
+        'online_recurring_packages',
+        { updated_by: null },
+        [
+          ['tenant_id', tenantId],
+          ['updated_by', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'updated_by'] }
+      );
+
       await runDelete(
         'online_student_package_assignments',
         [
@@ -634,6 +725,26 @@ export async function DELETE(request: NextRequest) {
           ['teacher_id', id],
         ],
         { optional: true, missingColumns: ['tenant_id', 'teacher_id'] }
+      );
+
+      await runUpdate(
+        'online_student_package_assignments',
+        { created_by: null },
+        [
+          ['tenant_id', tenantId],
+          ['created_by', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'created_by'] }
+      );
+
+      await runUpdate(
+        'online_student_package_assignments',
+        { updated_by: null },
+        [
+          ['tenant_id', tenantId],
+          ['updated_by', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'updated_by'] }
       );
 
       await runDelete(
@@ -652,6 +763,46 @@ export async function DELETE(request: NextRequest) {
           ['parent_id', id],
         ],
         { optional: true, missingColumns: ['tenant_id', 'parent_id'] }
+      );
+
+      await runUpdate(
+        'online_student_claim_tokens',
+        { consumed_by_user_id: null },
+        [
+          ['tenant_id', tenantId],
+          ['consumed_by_user_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'consumed_by_user_id'] }
+      );
+
+      await runUpdate(
+        'online_student_claim_tokens',
+        { created_by: null },
+        [
+          ['tenant_id', tenantId],
+          ['created_by', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'created_by'] }
+      );
+
+      await runUpdate(
+        'online_family_claim_tokens',
+        { consumed_by_user_id: null },
+        [
+          ['tenant_id', tenantId],
+          ['consumed_by_user_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'consumed_by_user_id'] }
+      );
+
+      await runUpdate(
+        'online_family_claim_tokens',
+        { created_by: null },
+        [
+          ['tenant_id', tenantId],
+          ['created_by', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'created_by'] }
       );
 
       await runDelete('teacher_assignments', [
@@ -679,6 +830,56 @@ export async function DELETE(request: NextRequest) {
       );
 
       await runUpdate(
+        'enrollment_status_events',
+        { changed_by: null },
+        [
+          ['tenant_id', tenantId],
+          ['changed_by', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'changed_by'] }
+      );
+
+      await runUpdate(
+        'student_program_migration_staging',
+        { created_by: null },
+        [
+          ['tenant_id', tenantId],
+          ['created_by', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'created_by'] }
+      );
+
+      await runUpdate(
+        'student_program_migration_staging',
+        { applied_by: null },
+        [
+          ['tenant_id', tenantId],
+          ['applied_by', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'applied_by'] }
+      );
+
+      await runUpdate(
+        'student_merge_audit',
+        { actor_user_id: null },
+        [
+          ['tenant_id', tenantId],
+          ['actor_user_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'actor_user_id'] }
+      );
+
+      await runUpdate(
+        'students',
+        { merged_by: null },
+        [
+          ['tenant_id', tenantId],
+          ['merged_by', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'merged_by'] }
+      );
+
+      await runUpdate(
         'monthly_payroll',
         { finalized_by: null },
         [
@@ -699,6 +900,15 @@ export async function DELETE(request: NextRequest) {
 
       await runDelete(
         'staff_salary_config',
+        [
+          ['tenant_id', tenantId],
+          ['user_id', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'user_id'] }
+      );
+
+      await runDelete(
+        'push_subscriptions',
         [
           ['tenant_id', tenantId],
           ['user_id', id],
@@ -733,6 +943,30 @@ export async function DELETE(request: NextRequest) {
         ],
         { optional: true, missingColumns: ['tenant_id', 'user_id'] }
       );
+
+      await runUpdate(
+        'tenant_signup_requests',
+        { admin_user_id: null },
+        [['admin_user_id', id]],
+        { optional: true, missingColumns: ['admin_user_id'] }
+      );
+
+      await runUpdate(
+        'tenant_subscription_states',
+        { trial_started_by: null },
+        [
+          ['tenant_id', tenantId],
+          ['trial_started_by', id],
+        ],
+        { optional: true, missingColumns: ['tenant_id', 'trial_started_by'] }
+      );
+
+      const { error: deleteAuthUserError } = await client.auth.admin.deleteUser(id, true);
+      if (deleteAuthUserError && !isSupabaseAuthUserNotFoundError(deleteAuthUserError)) {
+        throw new Error(
+          `Failed to delete auth user: ${formatSupabaseAuthDeleteError(deleteAuthUserError)}`
+        );
+      }
 
       await runDelete('user_profiles', [
         ['tenant_id', tenantId],

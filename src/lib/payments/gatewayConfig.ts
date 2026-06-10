@@ -2,6 +2,8 @@ import { supabaseService } from "@/lib/supabaseServiceClient";
 
 const DEFAULT_BILLPLZ_API_BASE = "https://www.billplz.com/api/v3";
 
+export type PaymentContext = "campus" | "online";
+
 type TenantGatewayKeyRow = {
   provider_id: string;
   key_version: string | null;
@@ -73,6 +75,20 @@ function resolveEnvFallbackConfig(): BillplzRuntimeConfig {
   };
 }
 
+function withPaymentContext(config: BillplzRuntimeConfig, context: PaymentContext): BillplzRuntimeConfig {
+  if (context !== "online") return config;
+
+  const onlineCollectionId = process.env.BILLPLZ_ONLINE_COLLECTION_ID?.trim();
+  if (!onlineCollectionId) return config;
+  if (config.source === "tenant") return config;
+
+  return {
+    ...config,
+    primaryCollectionId: onlineCollectionId,
+    allowedCollectionIds: [onlineCollectionId],
+  };
+}
+
 async function resolveBillplzProviderId(): Promise<string | null> {
   if (providerIdCache) return providerIdCache;
 
@@ -139,10 +155,13 @@ function isRowActiveNow(row: TenantGatewayKeyRow, now: Date): boolean {
   return true;
 }
 
-export async function resolveBillplzConfigForTenant(tenantId: string): Promise<BillplzRuntimeConfig> {
+export async function resolveBillplzConfigForTenant(
+  tenantId: string,
+  context: PaymentContext = "campus"
+): Promise<BillplzRuntimeConfig> {
   const providerId = await resolveBillplzProviderId();
   if (!providerId) {
-    return resolveEnvFallbackConfig();
+    return withPaymentContext(resolveEnvFallbackConfig(), context);
   }
 
   const now = new Date();
@@ -157,7 +176,7 @@ export async function resolveBillplzConfigForTenant(tenantId: string): Promise<B
 
   if (error) {
     if (isMissingRelationError(error, "tenant_payment_gateway_keys")) {
-      return resolveEnvFallbackConfig();
+      return withPaymentContext(resolveEnvFallbackConfig(), context);
     }
     throw new Error(error.message);
   }
@@ -166,8 +185,8 @@ export async function resolveBillplzConfigForTenant(tenantId: string): Promise<B
     ((data ?? []) as TenantGatewayKeyRow[]).filter((row) => isRowActiveNow(row, now))
   );
   if (!tenantConfig) {
-    return resolveEnvFallbackConfig();
+    return withPaymentContext(resolveEnvFallbackConfig(), context);
   }
 
-  return tenantConfig;
+  return withPaymentContext(tenantConfig, context);
 }

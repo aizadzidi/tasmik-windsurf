@@ -18,7 +18,17 @@ import {
   TEACHER_INVITE_SCOPE_LABELS,
   type TeacherInviteScope,
 } from "@/lib/staffInvites";
-import { MoreHorizontal, SlidersHorizontal, UserPlus, Copy, X, Trash2 } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Loader2,
+  MoreHorizontal,
+  SlidersHorizontal,
+  UserPlus,
+  Copy,
+  X,
+  Trash2,
+} from "lucide-react";
 
 type UserRow = {
   id: string;
@@ -54,6 +64,10 @@ type SortOption =
   | "name-desc"
   | "registered-newest"
   | "registered-oldest";
+type DeleteFeedback = {
+  type: "info" | "success" | "error";
+  message: string;
+};
 
 const ROLE_OPTIONS: UserRow["role"][] = ["admin", "teacher", "general_worker", "parent", "student"];
 const ROLE_LABELS: Record<UserRow["role"], string> = {
@@ -91,7 +105,9 @@ export default function AdminUsersPage() {
   const [sortOption, setSortOption] = useState<SortOption>("name-asc");
   const [selectedChildByParent, setSelectedChildByParent] = useState<Record<string, string>>({});
   const [parentLinkSavingByParent, setParentLinkSavingByParent] = useState<Record<string, boolean>>({});
+  const [pendingDeleteUser, setPendingDeleteUser] = useState<UserRow | null>(null);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
+  const [deleteFeedback, setDeleteFeedback] = useState<DeleteFeedback | null>(null);
   // Invite staff state
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteMaxUses, setInviteMaxUses] = useState(20);
@@ -380,18 +396,27 @@ export default function AdminUsersPage() {
     }
   };
 
+  const requestDeleteUser = (user: UserRow) => {
+    setDeleteFeedback(null);
+    setPendingDeleteUser(user);
+  };
+
   const deleteUser = async (user: UserRow) => {
     const label = user.name || user.email || "this user";
-    const confirmed = window.confirm(
-      `Delete ${label}? This action removes the user from the system.`
-    );
-    if (!confirmed) return;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
 
+    setPendingDeleteUser(null);
     setDeletingUserId(user.id);
     setError("");
+    setDeleteFeedback({
+      type: "info",
+      message: `Deleting ${label}. Cleaning linked records first...`,
+    });
     try {
       const res = await authFetch(`/api/admin/users?id=${encodeURIComponent(user.id)}`, {
         method: "DELETE",
+        signal: controller.signal,
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => null);
@@ -436,10 +461,26 @@ export default function AdminUsersPage() {
           )
         );
       }
+      setDeleteFeedback({
+        type: "success",
+        message: `${label} deleted successfully.`,
+      });
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        setDeleteFeedback({
+          type: "error",
+          message: `Delete request for ${label} timed out. Please refresh and try again.`,
+        });
+        return;
+      }
       const message = err instanceof Error ? err.message : "Failed to delete user";
       setError(message);
+      setDeleteFeedback({
+        type: "error",
+        message: `Could not delete ${label}: ${message}`,
+      });
     } finally {
+      clearTimeout(timeoutId);
       setDeletingUserId(null);
     }
   };
@@ -793,6 +834,26 @@ export default function AdminUsersPage() {
               {permissionError}
             </div>
           ) : null}
+          {deleteFeedback ? (
+            <div
+              className={`flex items-start gap-3 rounded-lg border px-4 py-3 text-sm ${
+                deleteFeedback.type === "success"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : deleteFeedback.type === "error"
+                    ? "border-rose-200 bg-rose-50 text-rose-700"
+                    : "border-blue-200 bg-blue-50 text-blue-800"
+              }`}
+            >
+              {deleteFeedback.type === "success" ? (
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+              ) : deleteFeedback.type === "error" ? (
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              ) : (
+                <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+              )}
+              <span>{deleteFeedback.message}</span>
+            </div>
+          ) : null}
 
           <Card className="p-4">
             {loading ? (
@@ -814,6 +875,7 @@ export default function AdminUsersPage() {
                     const enabledKeys = getEnabledPermissionKeys(user.id);
                     const isAdminAccessEnabled = enabledKeys.length > 0;
                     const isExpanded = Boolean(expandedAdminAccess[user.id]);
+                    const isDeleting = deletingUserId === user.id;
                     const summary =
                       enabledLabels.length === 0
                         ? "No admin pages enabled"
@@ -826,7 +888,11 @@ export default function AdminUsersPage() {
                     return (
                       <div
                         key={user.id}
-                        className="rounded-2xl border border-slate-100 bg-white/90 px-4 py-4 shadow-sm"
+                        className={`rounded-2xl border px-4 py-4 shadow-sm transition ${
+                          isDeleting
+                            ? "border-blue-200 bg-blue-50/70"
+                            : "border-slate-100 bg-white/90"
+                        }`}
                       >
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                           <div className="min-w-[220px]">
@@ -842,21 +908,27 @@ export default function AdminUsersPage() {
                                     size="icon"
                                     className="h-8 w-8 text-slate-500 hover:text-slate-900"
                                     aria-label={`Actions for ${user.name || user.email || "user"}`}
+                                    disabled={isDeleting}
                                   >
-                                    <MoreHorizontal className="h-4 w-4" />
+                                    {isDeleting ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <MoreHorizontal className="h-4 w-4" />
+                                    )}
                                   </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
                                   <DropdownMenuItem
                                     variant="destructive"
-                                    disabled={deletingUserId === user.id}
+                                    disabled={isDeleting}
                                     onSelect={(event) => {
                                       event.preventDefault();
-                                      if (deletingUserId === user.id) return;
-                                      void deleteUser(user);
+                                      if (isDeleting) return;
+                                      requestDeleteUser(user);
                                     }}
                                   >
-                                    {deletingUserId === user.id ? "Deleting…" : "Delete user"}
+                                    <Trash2 className="h-4 w-4" />
+                                    Delete user
                                   </DropdownMenuItem>
                                 </DropdownMenuContent>
                               </DropdownMenu>
@@ -867,6 +939,12 @@ export default function AdminUsersPage() {
                             <div className="mt-1 text-xs text-slate-400">
                               {formatRegistrationDate(user.created_at)}
                             </div>
+                            {isDeleting ? (
+                              <div className="mt-2 flex items-center gap-2 rounded-lg border border-blue-200 bg-white/80 px-3 py-2 text-xs font-medium text-blue-800">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                Deleting user and cleaning linked records...
+                              </div>
+                            ) : null}
                             <div className="mt-3 flex flex-wrap items-center gap-2">
                               <select
                                 value={user.role}
@@ -875,7 +953,7 @@ export default function AdminUsersPage() {
                                 }
                                 aria-label={`Role for ${user.name || user.email || "user"}`}
                                 className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
-                                disabled={savingId === user.id}
+                                disabled={savingId === user.id || isDeleting}
                               >
                                 {ROLE_OPTIONS.map((role) => (
                                   <option key={role} value={role}>
@@ -901,7 +979,11 @@ export default function AdminUsersPage() {
                                     }
                                     aria-label={`Program assignment for ${user.name || user.email || "teacher"}`}
                                     className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
-                                    disabled={assignmentSavingId === user.id || programs.length === 0}
+                                    disabled={
+                                      assignmentSavingId === user.id ||
+                                      programs.length === 0 ||
+                                      isDeleting
+                                    }
                                   >
                                     <option value="unassigned">Unassigned</option>
                                     <option value="campus">Campus</option>
@@ -935,19 +1017,21 @@ export default function AdminUsersPage() {
                                       onCheckedChange={(nextChecked) =>
                                         toggleAdminAccess(user.id, nextChecked)
                                       }
+                                      disabled={isDeleting}
                                     />
                                     <span className="text-[11px] text-slate-500">Enable</span>
                                   </div>
                                   {isAdminAccessEnabled ? (
                                     <button
                                       type="button"
+                                      disabled={isDeleting}
                                       onClick={() =>
                                         setExpandedAdminAccess((prev) => ({
                                           ...prev,
                                           [user.id]: !isExpanded,
                                         }))
                                       }
-                                      className="text-xs font-semibold text-slate-400 hover:text-slate-600"
+                                      className="text-xs font-semibold text-slate-400 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
                                     >
                                       {isExpanded ? "Hide" : "Customize"}
                                     </button>
@@ -977,7 +1061,7 @@ export default function AdminUsersPage() {
                                               !checked
                                             )
                                           }
-                                          disabled={isSaving}
+                                          disabled={isSaving || isDeleting}
                                           className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
                                             checked
                                               ? "bg-blue-600 text-white"
@@ -1022,7 +1106,7 @@ export default function AdminUsersPage() {
                                   }
                                   aria-label={`Select child for ${user.name || user.email || "parent"}`}
                                   className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
-                                  disabled={isParentLinkSaving}
+                                  disabled={isParentLinkSaving || isDeleting}
                                 >
                                   <option value="">Select child to link</option>
                                   {linkableChildren.map((child) => (
@@ -1043,7 +1127,8 @@ export default function AdminUsersPage() {
                                   }
                                   disabled={
                                     isParentLinkSaving ||
-                                    !selectedChildByParent[user.id]
+                                    !selectedChildByParent[user.id] ||
+                                    isDeleting
                                   }
                                 >
                                   {isParentLinkSaving ? "Saving…" : "Link child"}
@@ -1062,10 +1147,10 @@ export default function AdminUsersPage() {
                                           "unlink-child"
                                         )
                                       }
-                                      disabled={isParentLinkSaving}
+                                      disabled={isParentLinkSaving || isDeleting}
                                       className="rounded-full border border-slate-200 bg-white
                                       px-2.5 py-1 text-[11px] text-slate-600
-                                      hover:border-slate-300"
+                                      hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
                                     >
                                       {child.name || "Unnamed child"}
                                       {child.class_name ? ` (${child.class_name})` : ""}
@@ -1086,6 +1171,46 @@ export default function AdminUsersPage() {
           </Card>
         </div>
       </main>
+
+      {pendingDeleteUser ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Delete user?</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  {pendingDeleteUser.name || pendingDeleteUser.email || "This user"} will be
+                  removed from the system. Linked children, teacher assignments, permissions,
+                  payroll setup, and notification records will be cleaned first.
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              This can take a few seconds. Keep this page open until the status changes.
+            </div>
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setPendingDeleteUser(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={() => void deleteUser(pendingDeleteUser)}
+              >
+                <Trash2 className="h-4 w-4" />
+                Delete user
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* Invite Teacher Modal */}
       {showInviteModal ? (

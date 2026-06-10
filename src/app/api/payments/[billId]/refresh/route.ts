@@ -4,8 +4,10 @@ import {
   isAllowedBillplzCollection,
 } from "@/lib/payments/billplzClient";
 import { resolveBillplzConfigForTenant } from "@/lib/payments/gatewayConfig";
+import { applyPaidPaymentSideEffects } from "@/lib/payments/paymentSideEffects";
 import {
   getPaymentByBillplzId,
+  getPaymentById,
   recordPaymentEvent,
   updatePayment,
 } from "@/lib/payments/paymentsService";
@@ -13,6 +15,8 @@ import { requireAuthenticatedTenantUser } from "@/lib/requestAuth";
 import {
   canTransitionPaymentStatus,
   expectedPaymentAmountCents,
+  getExpectedCollectionId,
+  getPaymentContext,
   isPaymentOwnedByTenantParent,
   resolveBillplzStatus,
 } from "@/lib/payments/paymentSecurity";
@@ -51,7 +55,8 @@ export async function GET(request: NextRequest, context: RefreshRouteContext) {
       return NextResponse.json({ error: "Payment not found" }, { status: 404 });
     }
 
-    const gatewayConfig = await resolveBillplzConfigForTenant(auth.tenantId);
+    const paymentContext = getPaymentContext(payment);
+    const gatewayConfig = await resolveBillplzConfigForTenant(auth.tenantId, paymentContext);
     const bill = await fetchBillplzBillWithConfig(billId, gatewayConfig);
     const expectedAmountCents = expectedPaymentAmountCents(
       payment.total_amount_cents ?? 0,
@@ -74,6 +79,15 @@ export async function GET(request: NextRequest, context: RefreshRouteContext) {
       }, { tenantId: auth.tenantId });
       return NextResponse.json({ error: "Bill collection mismatch" }, { status: 502 });
     }
+    const expectedCollectionId = getExpectedCollectionId(payment);
+    if (expectedCollectionId && bill.collection_id !== expectedCollectionId) {
+      await recordPaymentEvent(payment.id, "app", "billplz_refresh_expected_collection_mismatch", {
+        billId,
+        expectedCollectionId,
+        receivedCollectionId: bill.collection_id,
+      }, { tenantId: auth.tenantId });
+      return NextResponse.json({ error: "Bill collection mismatch" }, { status: 502 });
+    }
 
     const nextStatus = resolveBillplzStatus(Boolean(bill.paid), bill.state);
     const currentStatus = payment.status;
@@ -91,6 +105,10 @@ export async function GET(request: NextRequest, context: RefreshRouteContext) {
       paidAt: bill.paid ? payment.paid_at ?? bill.paid_at ?? new Date().toISOString() : payment.paid_at ?? null,
       expiresAt: bill.due_at ?? payment.expires_at ?? null,
     });
+    if (updated.status === "paid") {
+      const updatedPayment = await getPaymentById(updated.id);
+      await applyPaidPaymentSideEffects(updatedPayment);
+    }
 
     await recordPaymentEvent(payment.id, "app", "billplz_refresh", {
       billId,

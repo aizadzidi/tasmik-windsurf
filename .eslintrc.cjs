@@ -12,6 +12,7 @@ module.exports = {
     ".next/*",
     "out/*",
     "build/*",
+    "Payment page UI design/*",
     "next-env.d.ts",
   ],
   rules: {

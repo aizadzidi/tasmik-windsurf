@@ -159,6 +159,7 @@ export interface PaymentCartItem {
   quantity: number;
   unitAmountCents: number;
   subtotalCents: number;
+  metadata?: Record<string, unknown>;
 }
 
 export interface PaymentPreview {

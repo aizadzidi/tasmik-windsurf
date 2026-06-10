@@ -23,6 +23,13 @@ type ClaimPreview = {
 export default function StudentJoinPageClient() {
   const searchParams = useSearchParams();
   const claimFromUrl = (searchParams.get("claim") ?? "").trim();
+  const tenantSlugFromUrl = (
+    searchParams.get("tenant") ??
+    searchParams.get("tenantSlug") ??
+    ""
+  )
+    .trim()
+    .toLowerCase();
 
   const [mode, setMode] = useState<Mode>(claimFromUrl ? "claim" : "signup");
   const [name, setName] = useState("");
@@ -36,6 +43,7 @@ export default function StudentJoinPageClient() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const isClaimLinkFlow = Boolean(claimFromUrl);
   const claimNameLocked = mode === "claim" && Boolean(claimPreview?.student.name_locked);
 
   const validateClaimToken = useCallback(async (token: string) => {
@@ -88,6 +96,7 @@ export default function StudentJoinPageClient() {
   }, [claimFromUrl, validateClaimToken]);
 
   const handleModeChange = (nextMode: Mode) => {
+    if (isClaimLinkFlow && nextMode === "signup") return;
     setMode(nextMode);
     setError("");
     if (nextMode === "signup") {
@@ -127,6 +136,7 @@ export default function StudentJoinPageClient() {
           phone: phone.trim() || null,
           password,
           claim_token: mode === "claim" ? claimToken.trim() || null : null,
+          tenant_slug: tenantSlugFromUrl || null,
         }),
       });
 
@@ -166,32 +176,43 @@ export default function StudentJoinPageClient() {
   return (
     <JoinShell
       title="Online Student Signup"
-      description="Create a new online student account or use a claim code from admin to link an existing record."
+      description={
+        isClaimLinkFlow
+          ? "Claim your existing online student record."
+          : "Create a new online student account or use a claim code from admin to link an existing record."
+      }
     >
-      <div className="mb-6 flex rounded-lg bg-slate-100 p-1">
-        <button
-          type="button"
-          onClick={() => handleModeChange("signup")}
-          className={`flex-1 rounded-md py-2.5 text-sm font-semibold transition-all ${
-            mode === "signup"
-              ? "bg-white shadow-sm text-slate-900"
-              : "text-slate-500 hover:text-slate-700"
-          }`}
-        >
-          Create Account
-        </button>
-        <button
-          type="button"
-          onClick={() => handleModeChange("claim")}
-          className={`flex-1 rounded-md py-2.5 text-sm font-semibold transition-all ${
-            mode === "claim"
-              ? "bg-white shadow-sm text-slate-900"
-              : "text-slate-500 hover:text-slate-700"
-          }`}
-        >
-          I Have Claim Code
-        </button>
-      </div>
+      {isClaimLinkFlow ? (
+        <div className="mb-6 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+          This link is tied to an existing student record. Complete this claim to avoid creating
+          a duplicate account.
+        </div>
+      ) : (
+        <div className="mb-6 flex rounded-lg bg-slate-100 p-1">
+          <button
+            type="button"
+            onClick={() => handleModeChange("signup")}
+            className={`flex-1 rounded-md py-2.5 text-sm font-semibold transition-all ${
+              mode === "signup"
+                ? "bg-white shadow-sm text-slate-900"
+                : "text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            Create Account
+          </button>
+          <button
+            type="button"
+            onClick={() => handleModeChange("claim")}
+            className={`flex-1 rounded-md py-2.5 text-sm font-semibold transition-all ${
+              mode === "claim"
+                ? "bg-white shadow-sm text-slate-900"
+                : "text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            I Have Claim Code
+          </button>
+        </div>
+      )}
 
       {error ? (
         <Alert variant="error" className="mb-4">
