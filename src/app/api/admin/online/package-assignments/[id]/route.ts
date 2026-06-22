@@ -33,6 +33,15 @@ type RecurringPackageLinkRow = {
   course_id: string;
   teacher_id: string;
   student_package_assignment_id: string | null;
+  effective_from: string | null;
+  effective_to: string | null;
+};
+
+type LinkedPackageSlotWindowRow = {
+  id: string;
+  package_id: string;
+  effective_from: string | null;
+  effective_to: string | null;
 };
 
 const LINKABLE_RECURRING_STATUSES: OnlineRecurringPackageStatus[] = [
@@ -57,6 +66,14 @@ const adminErrorDetails = (error: unknown, fallback: string) => {
 const normalizeEffectiveDate = (value?: string | null) => {
   const normalized = normalizeDateKey(value ?? null);
   return normalized ? normalized.slice(0, 10) : null;
+};
+
+const isCurrentOrFutureWindow = (
+  row: { effective_to?: string | null },
+  dateKey: string,
+) => {
+  const effectiveTo = normalizeEffectiveDate(row.effective_to);
+  return !effectiveTo || effectiveTo >= dateKey;
 };
 
 const isAllowedStatus = (value: string): value is OnlineStudentPackageAssignmentStatus =>
@@ -126,12 +143,12 @@ const loadRecurringPackagesForAssignment = async (params: {
   const [linkedRes, legacyRes] = await Promise.all([
     params.client
       .from("online_recurring_packages")
-      .select("id, status, student_id, course_id, teacher_id, student_package_assignment_id")
+      .select("id, status, student_id, course_id, teacher_id, student_package_assignment_id, effective_from, effective_to")
       .eq("tenant_id", params.tenantId)
       .eq("student_package_assignment_id", params.assignmentId),
     params.client
       .from("online_recurring_packages")
-      .select("id, status, student_id, course_id, teacher_id, student_package_assignment_id")
+      .select("id, status, student_id, course_id, teacher_id, student_package_assignment_id, effective_from, effective_to")
       .eq("tenant_id", params.tenantId)
       .eq("student_id", params.studentId)
       .eq("teacher_id", params.teacherId)
@@ -148,6 +165,93 @@ const loadRecurringPackagesForAssignment = async (params: {
   });
 
   return Array.from(packageById.values());
+};
+
+const syncLinkedRecurringPackageSlotWindows = async (params: {
+  client: Pick<SupabaseClient, "from">;
+  tenantId: string;
+  packageIds: string[];
+  effectiveFrom: string;
+  effectiveTo: string | null;
+}) => {
+  if (params.packageIds.length === 0) return;
+
+  const timestamp = new Date().toISOString();
+  const slotRes = await params.client
+    .from("online_recurring_package_slots")
+    .select("id, package_id, effective_from, effective_to")
+    .eq("tenant_id", params.tenantId)
+    .eq("status", "active")
+    .in("package_id", params.packageIds);
+  if (slotRes.error) throw slotRes.error;
+
+  const slots = (slotRes.data ?? []) as LinkedPackageSlotWindowRow[];
+  const effectiveTo = normalizeEffectiveDate(params.effectiveTo);
+  const cancelIds = effectiveTo
+    ? slots
+        .filter((slot) => {
+          const slotEffectiveFrom = normalizeEffectiveDate(slot.effective_from) ?? params.effectiveFrom;
+          return slotEffectiveFrom > effectiveTo;
+        })
+        .map((slot) => slot.id)
+    : [];
+  const cancelledIdSet = new Set(cancelIds);
+
+  if (cancelIds.length > 0) {
+    const cancelRes = await params.client
+      .from("online_recurring_package_slots")
+      .update({
+        status: "cancelled",
+        updated_at: timestamp,
+      })
+      .eq("tenant_id", params.tenantId)
+      .in("id", cancelIds);
+    if (cancelRes.error) throw cancelRes.error;
+  }
+
+  const capEndIds = effectiveTo
+    ? slots
+        .filter((slot) => !cancelledIdSet.has(slot.id))
+        .filter((slot) => {
+          const slotEffectiveTo = normalizeEffectiveDate(slot.effective_to);
+          return !slotEffectiveTo || slotEffectiveTo > effectiveTo;
+        })
+        .map((slot) => slot.id)
+    : [];
+  if (capEndIds.length > 0) {
+    const capEndRes = await params.client
+      .from("online_recurring_package_slots")
+      .update({
+        effective_to: effectiveTo,
+        updated_at: timestamp,
+      })
+      .eq("tenant_id", params.tenantId)
+      .in("id", capEndIds);
+    if (capEndRes.error) throw capEndRes.error;
+  }
+
+  const moveStartIds = slots
+    .filter((slot) => !cancelledIdSet.has(slot.id))
+    .filter((slot) => {
+      const slotEffectiveFrom = normalizeEffectiveDate(slot.effective_from);
+      const slotEffectiveTo = normalizeEffectiveDate(slot.effective_to) ?? effectiveTo;
+      return (
+        Boolean(slotEffectiveFrom && slotEffectiveFrom < params.effectiveFrom) &&
+        (!slotEffectiveTo || slotEffectiveTo >= params.effectiveFrom)
+      );
+    })
+    .map((slot) => slot.id);
+  if (moveStartIds.length > 0) {
+    const moveStartRes = await params.client
+      .from("online_recurring_package_slots")
+      .update({
+        effective_from: params.effectiveFrom,
+        updated_at: timestamp,
+      })
+      .eq("tenant_id", params.tenantId)
+      .in("id", moveStartIds);
+    if (moveStartRes.error) throw moveStartRes.error;
+  }
 };
 
 const cancelLinkedRecurringPackages = async (params: {
@@ -247,15 +351,24 @@ export async function PATCH(
 
       let hasActiveSlots = false;
       if (linkedPackageIds.length > 0) {
+        const todayKey = new Date().toISOString().slice(0, 10);
+        const currentOrFuturePackageIds = new Set(
+          linkedPackages
+            .filter((row) => isCurrentOrFutureWindow(row, todayKey))
+            .map((row) => String(row.id)),
+        );
         const linkedSlotRes = await client
           .from("online_recurring_package_slots")
-          .select("id")
+          .select("id, package_id, effective_to")
           .eq("tenant_id", tenantId)
           .eq("status", "active")
-          .in("package_id", linkedPackageIds)
-          .limit(1);
+          .in("package_id", linkedPackageIds);
         if (linkedSlotRes.error) throw linkedSlotRes.error;
-        hasActiveSlots = (linkedSlotRes.data ?? []).length > 0;
+        hasActiveSlots = (linkedSlotRes.data ?? []).some(
+          (row) =>
+            currentOrFuturePackageIds.has(String(row.package_id ?? "")) &&
+            isCurrentOrFutureWindow(row, todayKey),
+        );
       }
 
       if (
@@ -350,6 +463,14 @@ export async function PATCH(
           .eq("tenant_id", tenantId)
           .in("id", linkedPackageIds);
         if (recurringUpdateRes.error) throw recurringUpdateRes.error;
+
+        await syncLinkedRecurringPackageSlotWindows({
+          client,
+          tenantId,
+          packageIds: linkedPackageIds,
+          effectiveFrom: requestedEffectiveFrom,
+          effectiveTo: requestedEffectiveTo,
+        });
       }
 
       const summaryRes = await fetchOnlineStudentPackageAssignments({

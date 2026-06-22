@@ -48,6 +48,7 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
     const routes = ["/teacher", "/teacher/attendance", "/teacher/lesson", "/teacher/exam"];
     if (programScope !== "campus" && programScope !== "unknown") {
       routes.push("/teacher/online-attendance");
+      routes.push("/teacher/online-availability");
     }
     routes.forEach((route) => {
       router.prefetch(route);

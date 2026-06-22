@@ -3,6 +3,7 @@ import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
 import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
 import { requireAdminPermission } from "@/lib/adminPermissions";
 import { isMissingColumnError, isMissingRelationError } from "@/lib/online/db";
+import { fetchAllPagedRows } from "@/lib/online/recurringStore";
 
 type SlotTemplateBody = {
   action?: "create_template" | "toggle_teacher" | "bulk_generate_templates";
@@ -19,6 +20,8 @@ type SlotTemplateBody = {
   is_active?: boolean;
   is_available?: boolean;
 };
+
+const ONLINE_SLOT_DURATION_MINUTES = 30;
 
 const adminErrorDetails = (error: unknown, fallback: string) => {
   const message =
@@ -61,14 +64,13 @@ const timeToMinutes = (value: string) => {
   return hour * 60 + minute;
 };
 
+const isThirtyMinuteStart = (value: string) => {
+  const minutes = timeToMinutes(value);
+  return Number.isFinite(minutes) && minutes % ONLINE_SLOT_DURATION_MINUTES === 0;
+};
+
 const uniqueNumberList = (values: number[]) =>
   Array.from(new Set(values)).filter((value) => Number.isInteger(value));
-
-const toPositiveDuration = (value: unknown, fallback: number) => {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
-  return Math.max(5, Math.trunc(numeric));
-};
 
 export async function POST(request: NextRequest) {
   try {
@@ -89,21 +91,22 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
+      if (!isThirtyMinuteStart(startTime)) {
+        return NextResponse.json(
+          { error: "start_time must be a 30-minute block (:00 or :30)" },
+          { status: 400 }
+        );
+      }
 
       const payload = await adminOperationSimple(async (client) => {
-        const { data: courseRow, error: courseError } = await client
+        const { error: courseError } = await client
           .from("online_courses")
-          .select("default_slot_duration_minutes")
+          .select("id")
           .eq("tenant_id", tenantId)
           .eq("id", courseId)
           .maybeSingle();
-        if (courseError && !isMissingColumnError(courseError, "default_slot_duration_minutes", "online_courses")) {
-          throw courseError;
-        }
-        const durationMinutes = toPositiveDuration(
-          body.duration_minutes,
-          Number(courseRow?.default_slot_duration_minutes ?? 30)
-        );
+        if (courseError) throw courseError;
+        const durationMinutes = ONLINE_SLOT_DURATION_MINUTES;
 
         const { data, error } = await client
           .from("online_slot_templates")
@@ -150,43 +153,51 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
+      if (!isThirtyMinuteStart(startTime) || !isThirtyMinuteStart(endTime)) {
+        return NextResponse.json(
+          { error: "start_time and end_time must be 30-minute blocks (:00 or :30)" },
+          { status: 400 }
+        );
+      }
 
       const startMinutes = timeToMinutes(startTime);
       const endMinutes = timeToMinutes(endTime);
-      if (!Number.isFinite(startMinutes) || !Number.isFinite(endMinutes) || endMinutes <= startMinutes) {
+      if (!Number.isFinite(startMinutes) || !Number.isFinite(endMinutes) || endMinutes < startMinutes) {
         return NextResponse.json(
-          { error: "end_time must be later than start_time" },
+          { error: "end_time must be the same as or later than start_time" },
           { status: 400 }
         );
       }
 
       const payload = await adminOperationSimple(async (client) => {
-        const { data: courseDurationRows, error: courseDurationError } = await client
+        const { data: courseRows, error: courseError } = await client
           .from("online_courses")
-          .select("id, default_slot_duration_minutes")
+          .select("id")
           .eq("tenant_id", tenantId)
           .in("id", courseIds);
-        if (
-          courseDurationError &&
-          !isMissingColumnError(courseDurationError, "default_slot_duration_minutes", "online_courses")
-        ) {
-          throw courseDurationError;
-        }
+        if (courseError) throw courseError;
         const durationByCourseId = new Map(
-          ((courseDurationRows ?? []) as Array<{ id?: string | null; default_slot_duration_minutes?: number | null }>)
+          ((courseRows ?? []) as Array<{ id?: string | null }>)
             .filter((row) => Boolean(row?.id))
-            .map((row) => [
-              String(row.id),
-              toPositiveDuration(row.default_slot_duration_minutes, toPositiveDuration(body.duration_minutes, 30)),
-            ])
+            .map((row) => [String(row.id), ONLINE_SLOT_DURATION_MINUTES])
         );
 
-        const { data: existingRows, error: existingError } = await client
-          .from("online_slot_templates")
-          .select("course_id, day_of_week, start_time, duration_minutes")
-          .eq("tenant_id", tenantId)
-          .in("course_id", courseIds)
-          .in("day_of_week", dayOfWeeks);
+        const { data: existingRows, error: existingError } = await fetchAllPagedRows<{
+          course_id?: string | null;
+          day_of_week?: number | null;
+          start_time?: string | null;
+          duration_minutes?: number | null;
+        }>((from, to) =>
+          client
+            .from("online_slot_templates")
+            .select("course_id, day_of_week, start_time, duration_minutes")
+            .eq("tenant_id", tenantId)
+            .in("course_id", courseIds)
+            .in("day_of_week", dayOfWeeks)
+            .order("day_of_week", { ascending: true })
+            .order("start_time", { ascending: true })
+            .range(from, to),
+        );
 
         if (existingError) throw existingError;
 
@@ -205,11 +216,11 @@ export async function POST(request: NextRequest) {
         const slotsPerDayByCourse = Object.fromEntries(
           courseIds.map((courseId) => {
             const durationMinutes =
-              durationByCourseId.get(courseId) ?? toPositiveDuration(body.duration_minutes, 30);
+              durationByCourseId.get(courseId) ?? ONLINE_SLOT_DURATION_MINUTES;
             let count = 0;
             for (
               let minute = startMinutes;
-              minute + durationMinutes <= endMinutes;
+              minute <= endMinutes;
               minute += durationMinutes
             ) {
               count += 1;
@@ -225,11 +236,11 @@ export async function POST(request: NextRequest) {
 
         const rowsToInsert = courseIds.flatMap((courseId) => {
           const durationMinutes =
-            durationByCourseId.get(courseId) ?? toPositiveDuration(body.duration_minutes, 30);
+            durationByCourseId.get(courseId) ?? ONLINE_SLOT_DURATION_MINUTES;
           const generatedTimes: string[] = [];
           for (
             let minute = startMinutes;
-            minute + durationMinutes <= endMinutes;
+            minute <= endMinutes;
             minute += durationMinutes
           ) {
             generatedTimes.push(
@@ -256,12 +267,12 @@ export async function POST(request: NextRequest) {
 
         let createdCount = 0;
         if (rowsToInsert.length > 0) {
-          const { data, error } = await client
+          const { error } = await client
             .from("online_slot_templates")
             .insert(rowsToInsert)
             .select("id");
           if (error) throw error;
-          createdCount = (data ?? []).length;
+          createdCount = rowsToInsert.length;
         }
 
         return {
@@ -289,20 +300,36 @@ export async function POST(request: NextRequest) {
       }
 
       const payload = await adminOperationSimple(async (client) => {
+        const upsertPayload = {
+          tenant_id: tenantId,
+          slot_template_id: slotTemplateId,
+          teacher_id: teacherId,
+          is_available: body.is_available !== false,
+          availability_source: "manual",
+        };
         const { data, error } = await client
           .from("online_teacher_slot_preferences")
-          .upsert(
-            {
-              tenant_id: tenantId,
-              slot_template_id: slotTemplateId,
-              teacher_id: teacherId,
-              is_available: body.is_available !== false,
-            },
-            { onConflict: "tenant_id,slot_template_id,teacher_id" }
-          )
-          .select("id, slot_template_id, teacher_id, is_available, last_assigned_at")
+          .upsert(upsertPayload, { onConflict: "tenant_id,slot_template_id,teacher_id" })
+          .select("id, slot_template_id, teacher_id, is_available, last_assigned_at, availability_source")
           .single();
-        if (error) throw error;
+        if (error && !isMissingColumnError(error, "availability_source", "online_teacher_slot_preferences")) {
+          throw error;
+        }
+        if (error) {
+          const fallbackPayload = {
+            tenant_id: upsertPayload.tenant_id,
+            slot_template_id: upsertPayload.slot_template_id,
+            teacher_id: upsertPayload.teacher_id,
+            is_available: upsertPayload.is_available,
+          };
+          const fallback = await client
+            .from("online_teacher_slot_preferences")
+            .upsert(fallbackPayload, { onConflict: "tenant_id,slot_template_id,teacher_id" })
+            .select("id, slot_template_id, teacher_id, is_available, last_assigned_at")
+            .single();
+          if (fallback.error) throw fallback.error;
+          return { ...fallback.data, availability_source: "manual" };
+        }
         return data;
       });
 

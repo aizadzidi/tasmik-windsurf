@@ -186,6 +186,18 @@ export const isPackageCurrentForMonth = (
   return true;
 };
 
+const isSlotEffectiveOnDate = (
+  slot: Pick<OnlineRecurringPackageSlot, "status" | "effective_from" | "effective_to">,
+  dateKeyValue: string,
+) => {
+  if (slot.status !== "active") return false;
+  const effectiveFrom = normalizeDateKey(slot.effective_from);
+  const effectiveTo = normalizeDateKey(slot.effective_to);
+  if (effectiveFrom && dateKeyValue < effectiveFrom) return false;
+  if (effectiveTo && dateKeyValue > effectiveTo) return false;
+  return true;
+};
+
 export const buildPlannerDays = (params: {
   selectedTeacherId: string;
   monthKey: string;
@@ -196,16 +208,6 @@ export const buildPlannerDays = (params: {
   coursesById: Map<string, OnlineCourse>;
 }) => {
   const { selectedTeacherId, weekStart, templates, teacherAvailability, packages, coursesById } = params;
-  const packageBySlotTemplateId = new Map<string, OnlinePlannerPackage>();
-  const packageSlotBySlotTemplateId = new Map<string, OnlineRecurringPackageSlot>();
-
-  packages.forEach((pkg) => {
-    pkg.slots.forEach((slot) => {
-      packageBySlotTemplateId.set(slot.slot_template_id, pkg);
-      packageSlotBySlotTemplateId.set(slot.slot_template_id, slot);
-    });
-  });
-
   const teacherAvailableIds = new Set(
     teacherAvailability
       .filter((row) => row.teacher_id === selectedTeacherId && row.is_available)
@@ -229,8 +231,24 @@ export const buildPlannerDays = (params: {
     relevantTemplates
       .filter((template) => template.day_of_week === day)
       .forEach((template) => {
-        const owningPackage = packageBySlotTemplateId.get(template.id);
-        const packageSlot = packageSlotBySlotTemplateId.get(template.id);
+        const nextOccurrenceDate = nextOccurrenceDateByDay.get(day) ?? null;
+        let owningPackage: OnlinePlannerPackage | null = null;
+        let packageSlot: OnlineRecurringPackageSlot | null = null;
+
+        if (nextOccurrenceDate) {
+          for (const pkg of packages) {
+            const matchingSlot = pkg.slots.find(
+              (slot) =>
+                slot.slot_template_id === template.id &&
+                isSlotEffectiveOnDate(slot, nextOccurrenceDate),
+            );
+            if (matchingSlot) {
+              owningPackage = pkg;
+              packageSlot = matchingSlot;
+              break;
+            }
+          }
+        }
 
         if (owningPackage && packageSlot) {
           occupiedPills.push({
@@ -247,7 +265,7 @@ export const buildPlannerDays = (params: {
             start_time: template.start_time,
             duration_minutes: template.duration_minutes,
             effective_month: owningPackage.effective_month,
-            next_occurrence_date: nextOccurrenceDateByDay.get(day) ?? null,
+            next_occurrence_date: nextOccurrenceDate,
             next_month_change_pending: false,
           });
           return;

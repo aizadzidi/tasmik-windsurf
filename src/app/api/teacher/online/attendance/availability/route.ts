@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseService } from "@/lib/supabaseServiceClient";
 import { requireAuthenticatedTenantUser } from "@/lib/requestAuth";
+import { isMissingColumnError } from "@/lib/online/db";
 
 type AvailabilityBody = {
   slot_template_id?: string;
   is_available?: boolean;
 };
+
+const isMissingAvailabilitySourceColumn = (error: { message?: string } | null | undefined) =>
+  isMissingColumnError(error, "availability_source", "online_teacher_slot_preferences");
 
 export async function POST(request: NextRequest) {
   const auth = await requireAuthenticatedTenantUser(request);
@@ -31,21 +35,37 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    const payload = {
+      tenant_id: auth.tenantId,
+      teacher_id: auth.userId,
+      slot_template_id: slotTemplateId,
+      is_available: body.is_available,
+      last_assigned_at: body.is_available ? new Date().toISOString() : null,
+      availability_source: "manual",
+    };
+
     const response = await supabaseService
       .from("online_teacher_slot_preferences")
-      .upsert(
-        {
-          tenant_id: auth.tenantId,
-          teacher_id: auth.userId,
-          slot_template_id: slotTemplateId,
-          is_available: body.is_available,
-          last_assigned_at: body.is_available ? new Date().toISOString() : null,
-        },
-        { onConflict: "tenant_id,slot_template_id,teacher_id" },
-      )
-      .select("id, slot_template_id, teacher_id, is_available, last_assigned_at")
+      .upsert(payload, { onConflict: "tenant_id,slot_template_id,teacher_id" })
+      .select("id, slot_template_id, teacher_id, is_available, last_assigned_at, availability_source")
       .single();
-    if (response.error) throw response.error;
+    if (response.error && !isMissingAvailabilitySourceColumn(response.error)) throw response.error;
+    if (response.error) {
+      const fallbackPayload = {
+        tenant_id: payload.tenant_id,
+        teacher_id: payload.teacher_id,
+        slot_template_id: payload.slot_template_id,
+        is_available: payload.is_available,
+        last_assigned_at: payload.last_assigned_at,
+      };
+      const fallback = await supabaseService
+        .from("online_teacher_slot_preferences")
+        .upsert(fallbackPayload, { onConflict: "tenant_id,slot_template_id,teacher_id" })
+        .select("id, slot_template_id, teacher_id, is_available, last_assigned_at")
+        .single();
+      if (fallback.error) throw fallback.error;
+      return NextResponse.json({ ...fallback.data, availability_source: "manual" });
+    }
 
     return NextResponse.json(response.data);
   } catch (error: unknown) {

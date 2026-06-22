@@ -38,6 +38,32 @@ type SnapshotOptions = {
   includePackageChangeRequests?: boolean;
 };
 
+const SUPABASE_PAGE_SIZE = 1000;
+
+type PagedQueryResponse<T> = {
+  data: T[] | null;
+  error: { message?: string } | null;
+};
+
+export const fetchAllPagedRows = async <T>(
+  buildQuery: (from: number, to: number) => PromiseLike<PagedQueryResponse<T>>,
+) => {
+  const rows: T[] = [];
+
+  for (let from = 0; ; from += SUPABASE_PAGE_SIZE) {
+    const response = await buildQuery(from, from + SUPABASE_PAGE_SIZE - 1);
+    if (response.error) {
+      return { data: [] as T[], error: response.error };
+    }
+
+    const pageRows = response.data ?? [];
+    rows.push(...pageRows);
+    if (pageRows.length < SUPABASE_PAGE_SIZE) {
+      return { data: rows, error: null };
+    }
+  }
+};
+
 const isSafeRecurringFallbackError = (error: { message?: string } | null | undefined, table: string) =>
   isMissingRelationError(error, table) ||
   isMissingColumnError(error, "tenant_id", table) ||
@@ -49,14 +75,19 @@ const isSafeRecurringFallbackError = (error: { message?: string } | null | undef
   isMissingColumnError(error, "hold_expires_at", table) ||
   isMissingColumnError(error, "monthly_fee_cents_snapshot", table) ||
   isMissingColumnError(error, "student_package_assignment_id", "online_recurring_packages") ||
-  isMissingColumnError(error, "default_slot_duration_minutes", "online_courses");
+  isMissingColumnError(error, "default_slot_duration_minutes", "online_courses") ||
+  isMissingColumnError(error, "effective_from", "online_recurring_package_slots") ||
+  isMissingColumnError(error, "effective_to", "online_recurring_package_slots");
 
 const toCourseRows = async (client: SupabaseLike, tenantId: string) => {
-  const response = await client
-    .from("online_courses")
-    .select("*")
-    .eq("tenant_id", tenantId)
-    .order("name", { ascending: true });
+  const response = await fetchAllPagedRows<OnlineCourse>((from, to) =>
+    client
+      .from("online_courses")
+      .select("*")
+      .eq("tenant_id", tenantId)
+      .order("name", { ascending: true })
+      .range(from, to),
+  );
 
   if (response.error) {
     if (isSafeRecurringFallbackError(response.error, "online_courses")) {
@@ -75,12 +106,16 @@ const toCourseRows = async (client: SupabaseLike, tenantId: string) => {
 };
 
 const toTemplateRows = async (client: SupabaseLike, tenantId: string) => {
-  const response = await client
-    .from("online_slot_templates")
-    .select("id, course_id, day_of_week, start_time, duration_minutes, timezone, is_active")
-    .eq("tenant_id", tenantId)
-    .order("day_of_week", { ascending: true })
-    .order("start_time", { ascending: true });
+  const response = await fetchAllPagedRows<OnlineSlotTemplateRow>((from, to) =>
+    client
+      .from("online_slot_templates")
+      .select("id, course_id, day_of_week, start_time, duration_minutes, timezone, is_active")
+      .eq("tenant_id", tenantId)
+      .order("day_of_week", { ascending: true })
+      .order("start_time", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
 
   if (response.error) {
     if (isSafeRecurringFallbackError(response.error, "online_slot_templates")) {
@@ -97,31 +132,43 @@ const toTeacherAvailabilityRows = async (
   tenantId: string,
   teacherId?: string | null,
 ) => {
-  let withAssignedQuery = client
-    .from("online_teacher_slot_preferences")
-    .select("slot_template_id, teacher_id, is_available, last_assigned_at")
-    .eq("tenant_id", tenantId);
-  if (teacherId) {
-    withAssignedQuery = withAssignedQuery.eq("teacher_id", teacherId);
-  }
-  const withAssigned = await withAssignedQuery;
+  const withAssigned = await fetchAllPagedRows<OnlineTeacherAvailabilityRow>((from, to) => {
+    let query = client
+      .from("online_teacher_slot_preferences")
+      .select("slot_template_id, teacher_id, is_available, last_assigned_at")
+      .eq("tenant_id", tenantId)
+      .order("teacher_id", { ascending: true })
+      .order("slot_template_id", { ascending: true });
+    if (teacherId) {
+      query = query.eq("teacher_id", teacherId);
+    }
+    return query.range(from, to);
+  });
 
   if (!withAssigned.error) {
-    return (withAssigned.data ?? []) as OnlineTeacherAvailabilityRow[];
+    return withAssigned.data;
   }
 
   if (!isSafeRecurringFallbackError(withAssigned.error, "online_teacher_slot_preferences")) {
     throw withAssigned.error;
   }
 
-  let fallbackQuery = client
-    .from("online_teacher_slot_preferences")
-    .select("slot_template_id, teacher_id, is_available")
-    .eq("tenant_id", tenantId);
-  if (teacherId) {
-    fallbackQuery = fallbackQuery.eq("teacher_id", teacherId);
-  }
-  const fallback = await fallbackQuery;
+  const fallback = await fetchAllPagedRows<{
+    slot_template_id: string;
+    teacher_id: string;
+    is_available: boolean;
+  }>((from, to) => {
+    let query = client
+      .from("online_teacher_slot_preferences")
+      .select("slot_template_id, teacher_id, is_available")
+      .eq("tenant_id", tenantId)
+      .order("teacher_id", { ascending: true })
+      .order("slot_template_id", { ascending: true });
+    if (teacherId) {
+      query = query.eq("teacher_id", teacherId);
+    }
+    return query.range(from, to);
+  });
   if (fallback.error) {
     if (isSafeRecurringFallbackError(fallback.error, "online_teacher_slot_preferences")) {
       return [] as OnlineTeacherAvailabilityRow[];
@@ -141,18 +188,21 @@ const toRecurringPackages = async (
   tenantId: string,
   teacherId?: string | null,
 ) => {
-  let query = client
-    .from("online_recurring_packages")
-    .select(
-      "id, tenant_id, student_id, course_id, teacher_id, student_package_assignment_id, status, source, effective_month, effective_from, effective_to, sessions_per_week, monthly_fee_cents_snapshot, notes, hold_expires_at, created_by, updated_by, created_at, updated_at"
-    )
-    .eq("tenant_id", tenantId)
-    .order("effective_month", { ascending: false })
-    .order("created_at", { ascending: false });
-  if (teacherId) {
-    query = query.eq("teacher_id", teacherId);
-  }
-  const response = await query;
+  const response = await fetchAllPagedRows<OnlineRecurringPackage>((from, to) => {
+    let query = client
+      .from("online_recurring_packages")
+      .select(
+        "id, tenant_id, student_id, course_id, teacher_id, student_package_assignment_id, status, source, effective_month, effective_from, effective_to, sessions_per_week, monthly_fee_cents_snapshot, notes, hold_expires_at, created_by, updated_by, created_at, updated_at",
+      )
+      .eq("tenant_id", tenantId)
+      .order("effective_month", { ascending: false })
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true });
+    if (teacherId) {
+      query = query.eq("teacher_id", teacherId);
+    }
+    return query.range(from, to);
+  });
 
   if (response.error) {
     if (isSafeRecurringFallbackError(response.error, "online_recurring_packages")) {
@@ -166,15 +216,19 @@ const toRecurringPackages = async (
 
 const toRecurringPackageSlots = async (client: SupabaseLike, tenantId: string, packageIds: string[]) => {
   if (packageIds.length === 0) return [] as OnlineRecurringPackageSlot[];
-  const response = await client
-    .from("online_recurring_package_slots")
-    .select(
-      "id, tenant_id, package_id, slot_template_id, day_of_week_snapshot, start_time_snapshot, duration_minutes_snapshot, status, created_at, updated_at"
-    )
-    .eq("tenant_id", tenantId)
-    .in("package_id", packageIds)
-    .order("day_of_week_snapshot", { ascending: true })
-    .order("start_time_snapshot", { ascending: true });
+  const response = await fetchAllPagedRows<OnlineRecurringPackageSlot>((from, to) =>
+    client
+      .from("online_recurring_package_slots")
+      .select(
+        "id, tenant_id, package_id, slot_template_id, day_of_week_snapshot, start_time_snapshot, duration_minutes_snapshot, status, effective_from, effective_to, created_at, updated_at",
+      )
+      .eq("tenant_id", tenantId)
+      .in("package_id", packageIds)
+      .order("day_of_week_snapshot", { ascending: true })
+      .order("start_time_snapshot", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
 
   if (response.error) {
     if (isSafeRecurringFallbackError(response.error, "online_recurring_package_slots")) {
@@ -187,24 +241,32 @@ const toRecurringPackageSlots = async (client: SupabaseLike, tenantId: string, p
 
 const toStudentsByIds = async (client: SupabaseLike, tenantId: string, studentIds: string[]) => {
   if (studentIds.length === 0) return [] as OnlineStudentLite[];
-  const response = await client
-    .from("students")
-    .select("id, name, parent_name, parent_contact_number")
-    .eq("tenant_id", tenantId)
-    .in("id", studentIds)
-    .order("name", { ascending: true });
+  const response = await fetchAllPagedRows<OnlineStudentLite>((from, to) =>
+    client
+      .from("students")
+      .select("id, name, parent_name, parent_contact_number")
+      .eq("tenant_id", tenantId)
+      .in("id", studentIds)
+      .order("name", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (response.error) throw response.error;
-  return (response.data ?? []) as OnlineStudentLite[];
+  return response.data;
 };
 
 const toPackageChangeRequests = async (client: SupabaseLike, tenantId: string) => {
-  const response = await client
-    .from("online_package_change_requests")
-    .select(
-      "id, tenant_id, student_id, current_package_id, next_package_id_draft, requested_by, effective_month, pricing_delta_cents, billing_status, status, created_at, updated_at"
-    )
-    .eq("tenant_id", tenantId)
-    .order("created_at", { ascending: false });
+  const response = await fetchAllPagedRows<OnlinePackageChangeRequest>((from, to) =>
+    client
+      .from("online_package_change_requests")
+      .select(
+        "id, tenant_id, student_id, current_package_id, next_package_id_draft, requested_by, effective_month, pricing_delta_cents, billing_status, status, created_at, updated_at",
+      )
+      .eq("tenant_id", tenantId)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (response.error) {
     if (isSafeRecurringFallbackError(response.error, "online_package_change_requests")) {
       return [] as OnlinePackageChangeRequest[];
@@ -313,7 +375,17 @@ export const buildOccurrencesForMonth = (params: {
     const sessionDate = date.toISOString().slice(0, 10);
 
     params.packages.forEach((pkg) => {
+      const packageEffectiveFrom = normalizeDateKey(pkg.effective_from) ?? normalizeDateKey(pkg.effective_month);
+      const packageEffectiveTo = normalizeDateKey(pkg.effective_to);
+      if (packageEffectiveFrom && sessionDate < packageEffectiveFrom) return;
+      if (packageEffectiveTo && sessionDate > packageEffectiveTo) return;
+
       pkg.slots.forEach((slot) => {
+        if (slot.status !== "active") return;
+        const slotEffectiveFrom = normalizeDateKey(slot.effective_from);
+        const slotEffectiveTo = normalizeDateKey(slot.effective_to);
+        if (slotEffectiveFrom && sessionDate < slotEffectiveFrom) return;
+        if (slotEffectiveTo && sessionDate > slotEffectiveTo) return;
         if (slot.day_of_week_snapshot !== dayOfWeek) return;
         const template = params.templateById.get(slot.slot_template_id);
         rows.push({

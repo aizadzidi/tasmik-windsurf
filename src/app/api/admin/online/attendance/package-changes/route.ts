@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminPermission } from "@/lib/adminPermissions";
 import { nextMonthKey } from "@/lib/online/recurring";
+import { assertNoTeacherSlotConflict } from "@/lib/online/scheduleConflicts";
 import { fetchRecurringSnapshot } from "@/lib/online/recurringStore";
 import { isMissingRelationError } from "@/lib/online/db";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
@@ -23,6 +24,9 @@ const resolveTenantIdOrThrow = async (request: NextRequest) =>
     if (!data || data.length !== 1) throw new Error("Tenant context missing");
     return data[0].id;
   });
+
+const hasDuplicateWeekday = (templates: Array<{ day_of_week: number }>) =>
+  new Set(templates.map((template) => template.day_of_week)).size !== templates.length;
 
 export async function POST(request: NextRequest) {
   try {
@@ -59,6 +63,9 @@ export async function POST(request: NextRequest) {
       if (templates.some((row) => row.course_id !== nextCourseId)) {
         throw new Error("All next-month slots must belong to the same course.");
       }
+      if (hasDuplicateWeekday(templates)) {
+        throw new Error("A package cannot have more than one slot on the same weekday.");
+      }
 
       const requiredCount = Math.max(course.sessions_per_week ?? templates.length, 1);
       if (slotTemplateIds.length !== requiredCount) {
@@ -80,6 +87,18 @@ export async function POST(request: NextRequest) {
       const pricingDelta = (course.monthly_fee_cents ?? 0) - (currentPackage.monthly_fee_cents_snapshot ?? 0);
       const billingStatus = pricingDelta > 0 ? "pending_payment" : pricingDelta < 0 ? "credit_due" : "not_required";
       const requestStatus = pricingDelta > 0 ? "pending_payment" : "scheduled";
+
+      await assertNoTeacherSlotConflict(client, {
+        tenantId,
+        teacherId,
+        targetSlots: templates.map((template) => ({
+          day_of_week: template.day_of_week,
+          start_time: template.start_time,
+        })),
+        rangeStart: effectiveMonth,
+        rangeEnd: null,
+        excludePackageIds: [currentPackageId],
+      });
 
       const draftPackageRes = await client
         .from("online_recurring_packages")
@@ -113,6 +132,8 @@ export async function POST(request: NextRequest) {
             start_time_snapshot: template.start_time,
             duration_minutes_snapshot: template.duration_minutes,
             status: "active",
+            effective_from: effectiveMonth,
+            effective_to: null,
           })),
         )
         .select("*");

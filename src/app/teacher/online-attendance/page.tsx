@@ -14,6 +14,7 @@ import { getUserWithRecovery } from "@/lib/supabase/clientAuth";
 import { useTeachingModeContext } from "@/contexts/TeachingModeContext";
 import { cn } from "@/lib/utils";
 import type { OnlineTeacherScheduleSlotInput, OnlineTeacherSchedulerOptions } from "@/types/online";
+import { ChevronDown } from "lucide-react";
 
 type PlannerPill = {
   slot_template_id: string;
@@ -93,6 +94,8 @@ type TeacherPayload = {
       start_time_snapshot: string;
       duration_minutes_snapshot: number;
       status: string;
+      effective_from?: string;
+      effective_to?: string | null;
     }>;
   }>;
   weekly_slot_actions: PlannerDay[];
@@ -116,14 +119,16 @@ type FillSlotsResponse = {
   new_slots?: WeeklyPackageSlot[];
 };
 
+const ATTENDANCE_CACHE_VERSION = "v4";
+
 const DAY_OPTIONS = [
-  { value: 1, label: "Monday" },
-  { value: 2, label: "Tuesday" },
-  { value: 3, label: "Wednesday" },
-  { value: 4, label: "Thursday" },
-  { value: 5, label: "Friday" },
-  { value: 6, label: "Saturday" },
-  { value: 0, label: "Sunday" },
+  { value: 1, label: "Monday", shortLabel: "Mon" },
+  { value: 2, label: "Tuesday", shortLabel: "Tue" },
+  { value: 3, label: "Wednesday", shortLabel: "Wed" },
+  { value: 4, label: "Thursday", shortLabel: "Thu" },
+  { value: 5, label: "Friday", shortLabel: "Fri" },
+  { value: 6, label: "Saturday", shortLabel: "Sat" },
+  { value: 0, label: "Sunday", shortLabel: "Sun" },
 ];
 
 const currentMonthKey = () => {
@@ -144,7 +149,7 @@ const attendanceCacheKey = (
   monthKey: string,
   view: "daily" | "monthly",
   dateKey?: string,
-) => `teacher-online-attendance:${teacherId}:${monthKey}:${view}:${dateKey ?? "all"}`;
+) => `teacher-online-attendance:${ATTENDANCE_CACHE_VERSION}:${teacherId}:${monthKey}:${view}:${dateKey ?? "all"}`;
 
 const timeLabel = (value: string) => value.slice(0, 5);
 
@@ -196,21 +201,233 @@ const buildDefaultSlots = (count: number): SlotDraft[] =>
     start_time: "08:00",
   }));
 
+const getMostCommonStartTime = (slots: SlotDraft[], fallback = "08:00") => {
+  const counts = new Map<string, number>();
+  let bestTime = fallback;
+  let bestCount = 0;
+
+  slots.forEach((slot) => {
+    const normalizedTime = normalizeThirtyMinuteTime(slot.start_time);
+    const nextCount = (counts.get(normalizedTime) ?? 0) + 1;
+    counts.set(normalizedTime, nextCount);
+    if (nextCount > bestCount) {
+      bestTime = normalizedTime;
+      bestCount = nextCount;
+    }
+  });
+
+  return bestTime;
+};
+
+const fillMissingDays = (slots: SlotDraft[], requiredCount: number, startTime: string) => {
+  const selectedDays = new Set(slots.map((slot) => slot.day_of_week));
+  const next = slots.slice(0, requiredCount);
+  for (const day of DAY_OPTIONS) {
+    if (next.length >= requiredCount) break;
+    if (selectedDays.has(day.value)) continue;
+    next.push({ day_of_week: day.value, start_time: startTime });
+    selectedDays.add(day.value);
+  }
+  return next;
+};
+
+const parseSlotTime = (value: string) => {
+  const [hourRaw, minuteRaw] = value.split(":");
+  const hour = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return { hour: 8, minute: 0 };
+  return { hour: Math.min(Math.max(hour, 0), 23), minute: Math.min(Math.max(minute, 0), 59) };
+};
+
+const normalizeThirtyMinuteTime = (value: string) => {
+  const { hour, minute } = parseSlotTime(value);
+  const roundedTotal = Math.round((hour * 60 + minute) / 30) * 30;
+  const normalizedTotal = ((roundedTotal % (24 * 60)) + 24 * 60) % (24 * 60);
+  const nextHour = Math.floor(normalizedTotal / 60);
+  const nextMinute = normalizedTotal % 60;
+  return `${String(nextHour).padStart(2, "0")}:${String(nextMinute).padStart(2, "0")}`;
+};
+
+const isThirtyMinuteTime = (value: string) => {
+  const { minute } = parseSlotTime(value);
+  return minute === 0 || minute === 30;
+};
+
+type TimeBlockPickerProps = {
+  value: string;
+  onChange: (value: string) => void;
+  dense?: boolean;
+  grouped?: boolean;
+};
+
+type ScheduleSelectProps = React.SelectHTMLAttributes<HTMLSelectElement> & {
+  compact?: boolean;
+};
+
+const scheduleSelectClassName =
+  "h-10 w-full appearance-none rounded-xl border border-slate-200 bg-white px-3 pr-10 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200 sm:h-11 sm:rounded-2xl sm:px-4 sm:pr-11 sm:shadow-sm";
+
+const ScheduleSelect = ({ className, children, compact = false, ...props }: ScheduleSelectProps) => (
+  <div className="relative min-w-0">
+    <select
+      {...props}
+      className={cn(
+        scheduleSelectClassName,
+        compact && "px-3 pr-8 text-center sm:pr-9",
+        className,
+      )}
+    >
+      {children}
+    </select>
+    <ChevronDown
+      aria-hidden="true"
+      className={cn(
+        "pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500",
+        compact ? "right-2.5 sm:right-3" : "right-3 sm:right-4",
+      )}
+    />
+  </div>
+);
+
+const scheduleSlotRowClassName =
+  "grid grid-cols-[minmax(6.5rem,0.9fr)_minmax(11rem,1.1fr)] items-center gap-1.5 rounded-2xl bg-slate-50 p-2 sm:grid-cols-[minmax(11rem,1.15fr)_minmax(17rem,1fr)] sm:bg-transparent sm:p-0";
+
+const ScheduleDayOptions = () => (
+  <>
+    {DAY_OPTIONS.map((day) => (
+      <option key={day.label} value={day.value}>
+        {day.shortLabel}
+      </option>
+    ))}
+  </>
+);
+
+const TimeBlockPicker = ({ value, onChange, dense = false, grouped = false }: TimeBlockPickerProps) => {
+  const normalized = normalizeThirtyMinuteTime(value);
+  const { hour, minute } = parseSlotTime(normalized);
+  const meridiem = hour >= 12 ? "PM" : "AM";
+  const hour12 = hour % 12 === 0 ? 12 : hour % 12;
+
+  const commit = (nextHour12: number, nextMinute: number, nextMeridiem: "AM" | "PM") => {
+    const nextHour24 =
+      nextMeridiem === "AM"
+        ? nextHour12 === 12
+          ? 0
+          : nextHour12
+        : nextHour12 === 12
+          ? 12
+          : nextHour12 + 12;
+    onChange(`${String(nextHour24).padStart(2, "0")}:${String(nextMinute).padStart(2, "0")}`);
+  };
+
+  if (grouped) {
+    const groupedSelectClassName =
+      "h-9 !rounded-none !border-0 !bg-transparent px-2 pr-7 text-center text-sm !shadow-none !outline-none !ring-0 focus:!border-0 focus:!ring-0 sm:h-9 sm:px-2 sm:pr-7";
+
+    return (
+      <div className="inline-grid w-full max-w-[15.5rem] grid-cols-[1fr_auto_1fr_1fr] items-center rounded-2xl border border-slate-200 bg-white px-2 py-1 shadow-sm transition focus-within:border-slate-300 focus-within:ring-2 focus-within:ring-slate-100">
+        <ScheduleSelect
+          compact
+          className={groupedSelectClassName}
+          value={hour12}
+          onChange={(event) => commit(Number(event.target.value), minute, meridiem)}
+          aria-label="Hour"
+        >
+          {Array.from({ length: 12 }, (_, index) => index + 1).map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </ScheduleSelect>
+        <span className="px-0.5 text-center text-sm font-semibold text-slate-300">:</span>
+        <ScheduleSelect
+          compact
+          className={groupedSelectClassName}
+          value={String(minute).padStart(2, "0")}
+          onChange={(event) => commit(hour12, Number(event.target.value), meridiem)}
+          aria-label="Minute"
+        >
+          <option value="00">00</option>
+          <option value="30">30</option>
+        </ScheduleSelect>
+        <ScheduleSelect
+          compact
+          className={groupedSelectClassName}
+          value={meridiem}
+          onChange={(event) => commit(hour12, minute, event.target.value as "AM" | "PM")}
+          aria-label="AM or PM"
+        >
+          <option value="AM">AM</option>
+          <option value="PM">PM</option>
+        </ScheduleSelect>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        "grid items-center sm:gap-2",
+        dense
+          ? "grid-cols-[minmax(2.75rem,0.85fr)_auto_minmax(3.5rem,1fr)_minmax(3.75rem,1fr)] gap-1 sm:grid-cols-[minmax(4.5rem,1fr)_auto_minmax(4.875rem,1fr)_minmax(5.25rem,1fr)]"
+          : "grid-cols-[minmax(3.875rem,1fr)_auto_minmax(4.25rem,1fr)_minmax(4.5rem,1fr)] gap-1.5 sm:grid-cols-[minmax(4.5rem,1fr)_auto_minmax(4.875rem,1fr)_minmax(5.25rem,1fr)]",
+      )}
+    >
+      <ScheduleSelect
+        compact
+        className={dense ? "px-2 pr-7 sm:px-3 sm:pr-9" : undefined}
+        value={hour12}
+        onChange={(event) => commit(Number(event.target.value), minute, meridiem)}
+        aria-label="Hour"
+      >
+        {Array.from({ length: 12 }, (_, index) => index + 1).map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </ScheduleSelect>
+      <span className="text-center text-sm font-semibold text-slate-400">:</span>
+      <ScheduleSelect
+        compact
+        className={dense ? "px-2 pr-7 sm:px-3 sm:pr-9" : undefined}
+        value={String(minute).padStart(2, "0")}
+        onChange={(event) => commit(hour12, Number(event.target.value), meridiem)}
+        aria-label="Minute"
+      >
+        <option value="00">00</option>
+        <option value="30">30</option>
+      </ScheduleSelect>
+      <ScheduleSelect
+        compact
+        className={dense ? "px-2 pr-7 sm:px-3 sm:pr-9" : undefined}
+        value={meridiem}
+        onChange={(event) => commit(hour12, minute, event.target.value as "AM" | "PM")}
+        aria-label="AM or PM"
+      >
+        <option value="AM">AM</option>
+        <option value="PM">PM</option>
+      </ScheduleSelect>
+    </div>
+  );
+};
+
 const getSlotDraftValidationError = (slots: SlotDraft[], expectedCount?: number) => {
   if (typeof expectedCount === "number" && slots.length !== expectedCount) {
     return `Enter exactly ${expectedCount} valid weekly slot(s).`;
   }
 
-  const keys = new Set<string>();
+  const days = new Set<number>();
   for (const slot of slots) {
     if (!slot.start_time) {
       return "Complete all slot day/time fields.";
     }
-    const key = `${slot.day_of_week}:${slot.start_time}`;
-    if (keys.has(key)) {
-      return "Duplicate day/time slots are not allowed in the same schedule.";
+    if (!isThirtyMinuteTime(slot.start_time)) {
+      return "Slot times must use 30-minute blocks (:00 or :30).";
     }
-    keys.add(key);
+    if (days.has(slot.day_of_week)) {
+      return "A package cannot have more than one slot on the same weekday.";
+    }
+    days.add(slot.day_of_week);
   }
 
   return null;
@@ -322,6 +539,8 @@ export default function TeacherOnlineAttendancePage() {
   const [rescheduleExpanded, setRescheduleExpanded] = useState(false);
   const [rescheduleSlots, setRescheduleSlots] = useState<SlotDraft[]>([]);
   const [rescheduleError, setRescheduleError] = useState<string | null>(null);
+  const [rescheduleSharedTime, setRescheduleSharedTime] = useState("08:00");
+  const [rescheduleHadMixedTimes, setRescheduleHadMixedTimes] = useState(false);
   const [confirmUnassign, setConfirmUnassign] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -427,11 +646,6 @@ export default function TeacherOnlineAttendancePage() {
     });
   }, [classView, selectedDate, teacherId, loadAttendance]);
 
-  const dayById = useMemo(
-    () => new Map((payload?.weekly_slot_actions ?? []).map((day) => [day.day_of_week, day])),
-    [payload?.weekly_slot_actions],
-  );
-
   const underScheduledPackageIds = useMemo(() => {
     if (!payload) return new Set<string>();
     return new Set(
@@ -493,6 +707,8 @@ export default function TeacherOnlineAttendancePage() {
     setRescheduleExpanded(false);
     setRescheduleSlots([]);
     setRescheduleError(null);
+    setRescheduleSharedTime("08:00");
+    setRescheduleHadMixedTimes(false);
     setConfirmUnassign(false);
   }, [selectedPill]);
 
@@ -648,19 +864,34 @@ export default function TeacherOnlineAttendancePage() {
       })
       .map<SlotDraft>((slot) => ({
         day_of_week: slot.day_of_week_snapshot,
-        start_time: slot.start_time_snapshot.slice(0, 5),
+        start_time: normalizeThirtyMinuteTime(slot.start_time_snapshot.slice(0, 5)),
       }));
 
     const required = Math.max(pkg.sessions_per_week, 1);
-    const next = sortedCurrentSlots.slice(0, required);
-    if (next.length < required) {
-      next.push(...buildDefaultSlots(required - next.length));
-    }
+    const sharedStartTime = getMostCommonStartTime(sortedCurrentSlots);
+    const hadMixedTimes = new Set(sortedCurrentSlots.map((slot) => slot.start_time)).size > 1;
+    const sameTimeSlots = sortedCurrentSlots
+      .slice(0, required)
+      .map((slot) => ({ ...slot, start_time: sharedStartTime }));
+    const next = fillMissingDays(sameTimeSlots, required, sharedStartTime);
 
     setSelectedPill(pill);
     setRescheduleSlots(next);
     setRescheduleError(null);
+    setRescheduleSharedTime(sharedStartTime);
+    setRescheduleHadMixedTimes(hadMixedTimes);
+    setConfirmUnassign(false);
     setRescheduleExpanded(true);
+  };
+
+  const closeSelectedPillModal = () => {
+    setSelectedPill(null);
+    setRescheduleExpanded(false);
+    setRescheduleSlots([]);
+    setRescheduleError(null);
+    setRescheduleSharedTime("08:00");
+    setRescheduleHadMixedTimes(false);
+    setConfirmUnassign(false);
   };
 
   const submitReschedule = async () => {
@@ -722,6 +953,8 @@ export default function TeacherOnlineAttendancePage() {
       setRescheduleExpanded(false);
       setRescheduleSlots([]);
       setRescheduleError(null);
+      setRescheduleSharedTime("08:00");
+      setRescheduleHadMixedTimes(false);
       setError(null);
       setSelectedPill(null);
       refreshAttendanceInBackground(silentlyRefreshAttendance);
@@ -1096,6 +1329,12 @@ export default function TeacherOnlineAttendancePage() {
                     )}
                     onClick={() => {
                       setSelectedPill(pill);
+                      setRescheduleExpanded(false);
+                      setRescheduleSlots([]);
+                      setRescheduleError(null);
+                      setRescheduleSharedTime("08:00");
+                      setRescheduleHadMixedTimes(false);
+                      setConfirmUnassign(false);
                     }}
                     onContextMenu={(event) => {
                       event.preventDefault();
@@ -1120,6 +1359,11 @@ export default function TeacherOnlineAttendancePage() {
                             disabled: busyKey === `unassign-package:${pill.package_id}`,
                             onSelect: () => {
                               setSelectedPill(pill);
+                              setRescheduleExpanded(false);
+                              setRescheduleSlots([]);
+                              setRescheduleError(null);
+                              setRescheduleSharedTime("08:00");
+                              setRescheduleHadMixedTimes(false);
                               setConfirmUnassign(true);
                             },
                           },
@@ -1324,13 +1568,12 @@ export default function TeacherOnlineAttendancePage() {
           <div>
             <div>
               <label className="mb-2 block text-sm font-medium text-slate-700">Assigned Package</label>
-              <select
+              <ScheduleSelect
                 value={scheduleAssignmentId}
                 onChange={(event) => {
                   setScheduleAssignmentId(event.target.value);
                   setScheduleError(null);
                 }}
-                className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm"
               >
                 <option value="">Select assigned package</option>
                 {pendingAssignments.map((assignment) => (
@@ -1338,7 +1581,7 @@ export default function TeacherOnlineAttendancePage() {
                     {assignment.student_name} • {assignment.course_name}
                   </option>
                 ))}
-              </select>
+              </ScheduleSelect>
             </div>
           </div>
 
@@ -1369,8 +1612,8 @@ export default function TeacherOnlineAttendancePage() {
 
           <div className="space-y-2">
             {scheduleSlots.map((slot, index) => (
-              <div key={`${index}:${slot.day_of_week}:${slot.start_time}`} className="grid gap-2 sm:grid-cols-2">
-                <select
+              <div key={`${index}:${slot.day_of_week}:${slot.start_time}`} className={scheduleSlotRowClassName}>
+                <ScheduleSelect
                   value={slot.day_of_week}
                   onChange={(event) => {
                     const dayOfWeek = Number(event.target.value);
@@ -1381,19 +1624,13 @@ export default function TeacherOnlineAttendancePage() {
                     );
                     setScheduleError(null);
                   }}
-                  className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm"
                 >
-                  {DAY_OPTIONS.map((day) => (
-                    <option key={day.label} value={day.value}>
-                      {day.label}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="time"
+                  <ScheduleDayOptions />
+                </ScheduleSelect>
+                <TimeBlockPicker
+                  dense
                   value={slot.start_time}
-                  onChange={(event) => {
-                    const startTime = event.target.value;
+                  onChange={(startTime) => {
                     setScheduleSlots((current) =>
                       current.map((item, itemIndex) =>
                         itemIndex === index ? { ...item, start_time: startTime } : item,
@@ -1401,7 +1638,6 @@ export default function TeacherOnlineAttendancePage() {
                     );
                     setScheduleError(null);
                   }}
-                  className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm"
                 />
               </div>
             ))}
@@ -1418,190 +1654,247 @@ export default function TeacherOnlineAttendancePage() {
         open={Boolean(selectedPill)}
         title={selectedPill ? selectedPill.student_name : "Slot details"}
         description={selectedPill ? selectedPill.course_name : undefined}
-        onClose={() => setSelectedPill(null)}
+        onClose={closeSelectedPillModal}
       >
         {selectedPill ? (() => {
           const pillPkg = payload?.weekly_packages.find((p) => p.id === selectedPill.package_id);
           const activeSlotCount = pillPkg?.slots.length ?? 0;
           const requiredSlots = pillPkg?.sessions_per_week ?? 0;
           const isUnderScheduled = pillPkg && activeSlotCount < requiredSlots;
+          const showingActionSection = rescheduleExpanded || confirmUnassign;
+          const rescheduleExpectedCount = Math.max(requiredSlots, 1);
+          const selectedRescheduleDays = new Set(rescheduleSlots.map((slot) => slot.day_of_week));
+          const rescheduleDayCountError =
+            rescheduleExpanded && rescheduleSlots.length < rescheduleExpectedCount
+              ? `Select exactly ${rescheduleExpectedCount} day${rescheduleExpectedCount === 1 ? "" : "s"} for this package.`
+              : null;
           return (
             <div className="space-y-4">
-              {/* Info card */}
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                <div className="flex items-center gap-2">
-                  <span className="text-base">&#128100;</span>
-                  <p className="font-medium text-slate-900">{selectedPill.student_name}</p>
-                </div>
-                <div className="mt-1.5 flex items-center gap-2">
-                  <span className="text-base">&#128214;</span>
-                  <p className="font-medium text-slate-900">{selectedPill.course_name}</p>
-                </div>
-                <div className="mt-1.5 flex items-center gap-2">
-                  <span className="text-base">&#128336;</span>
-                  <p className="text-slate-700">
-                    {dayById.get(selectedPill.day_of_week)?.label ?? selectedPill.day_of_week}
-                    {" \u2022 "}
-                    {timeRangeLabel(selectedPill.start_time, selectedPill.duration_minutes)}
-                  </p>
-                </div>
-                {pillPkg ? (
-                  <div className="mt-1.5 flex items-center gap-2">
-                    <span className="text-base">&#128202;</span>
-                    <p className={cn("font-medium", isUnderScheduled ? "text-amber-700" : "text-slate-700")}>
-                      {activeSlotCount} of {requiredSlots} slots assigned
-                    </p>
-                  </div>
-                ) : null}
-              </div>
-
-              {/* Under-scheduled warning — promoted to top */}
-              {isUnderScheduled ? (
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 transition hover:bg-amber-100"
-                  onClick={() => openFillModal(selectedPill.package_id)}
-                >
-                  <span className="font-semibold">{requiredSlots - activeSlotCount} slot(s) missing</span>
-                  <span className="ml-auto text-amber-600">Fill remaining slots &rarr;</span>
-                </button>
-              ) : null}
-
-              {/* Divider */}
-              <div className="flex items-center gap-3">
-                <div className="h-px flex-1 bg-slate-200" />
-                <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">Actions</span>
-                <div className="h-px flex-1 bg-slate-200" />
-              </div>
-
-              {/* Reschedule action */}
-              <div>
-                {!rescheduleExpanded ? (
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                    disabled={busyKey === `reschedule:${selectedPill.package_id}`}
-                    onClick={() => openRescheduleEditor(selectedPill)}
-                  >
-                    <span>&#128260;</span>
-                    <span>Reschedule weekly slots</span>
-                    <span className="ml-auto text-slate-400">&darr;</span>
-                  </button>
-                ) : (
-                  <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-medium text-slate-700">Adjust weekly schedule</p>
-                      <button
-                        type="button"
-                        className="text-xs text-slate-400 hover:text-slate-600"
-                        onClick={() => {
-                          setRescheduleExpanded(false);
-                          setRescheduleError(null);
-                        }}
-                      >
-                        Cancel
-                      </button>
+              {!showingActionSection ? (
+                <>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">&#128100;</span>
+                      <p className="font-medium text-slate-900">{selectedPill.student_name}</p>
                     </div>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                      Replace the future weekly schedule for this package. Past attendance stays, and today stays if already marked.
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <span className="text-base">&#128214;</span>
+                      <p className="font-medium text-slate-900">{selectedPill.course_name}</p>
                     </div>
-                    <div className="space-y-2">
-                      {rescheduleSlots.map((slot, index) => (
-                        <div key={`reschedule-${index}:${slot.day_of_week}:${slot.start_time}`} className="grid gap-2 sm:grid-cols-2">
-                          <select
-                            value={slot.day_of_week}
-                            onChange={(event) => {
-                              const dayOfWeek = Number(event.target.value);
-                              setRescheduleSlots((current) =>
-                                current.map((item, itemIndex) =>
-                                  itemIndex === index ? { ...item, day_of_week: dayOfWeek } : item,
-                                ),
-                              );
-                              setRescheduleError(null);
-                            }}
-                            className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm"
-                          >
-                            {DAY_OPTIONS.map((day) => (
-                              <option key={day.label} value={day.value}>
-                                {day.label}
-                              </option>
-                            ))}
-                          </select>
-                          <input
-                            type="time"
-                            value={slot.start_time}
-                            onChange={(event) => {
-                              const startTime = event.target.value;
-                              setRescheduleSlots((current) =>
-                                current.map((item, itemIndex) =>
-                                  itemIndex === index ? { ...item, start_time: startTime } : item,
-                                ),
-                              );
-                              setRescheduleError(null);
-                            }}
-                            className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm"
-                          />
-                        </div>
-                      ))}
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <span className="text-base">&#128336;</span>
+                      <p className="text-slate-700">
+                        {DAY_OPTIONS.find((day) => day.value === selectedPill.day_of_week)?.shortLabel ??
+                          selectedPill.day_of_week}
+                        {" \u2022 "}
+                        {timeRangeLabel(selectedPill.start_time, selectedPill.duration_minutes)}
+                      </p>
                     </div>
-                    {rescheduleError ? (
-                      <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                        {rescheduleError}
+                    {pillPkg ? (
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <span className="text-base">&#128202;</span>
+                        <p className={cn("font-medium", isUnderScheduled ? "text-amber-700" : "text-slate-700")}>
+                          {activeSlotCount} of {requiredSlots} slots assigned
+                        </p>
                       </div>
                     ) : null}
-                    <Button
-                      className="w-full"
-                      onClick={() => void submitReschedule()}
-                      disabled={busyKey === `reschedule:${selectedPill.package_id}`}
+                  </div>
+
+                  {isUnderScheduled ? (
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 transition hover:bg-amber-100"
+                      onClick={() => openFillModal(selectedPill.package_id)}
                     >
-                      {busyKey === `reschedule:${selectedPill.package_id}` ? "Saving..." : "Save Schedule"}
+                      <span className="font-semibold">{requiredSlots - activeSlotCount} slot(s) missing</span>
+                      <span className="ml-auto text-amber-600">Fill remaining slots &rarr;</span>
+                    </button>
+                  ) : null}
+
+                  <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 rounded-xl border-rose-200 px-3 text-xs font-semibold text-rose-600 hover:bg-rose-50 sm:px-4 sm:text-sm"
+                      disabled={busyKey === `unassign-package:${selectedPill.package_id}`}
+                      onClick={() => {
+                        setRescheduleExpanded(false);
+                        setRescheduleSlots([]);
+                        setRescheduleError(null);
+                        setRescheduleSharedTime("08:00");
+                        setRescheduleHadMixedTimes(false);
+                        setConfirmUnassign(true);
+                      }}
+                    >
+                      Remove slots
+                    </Button>
+                    <Button
+                      type="button"
+                      className="h-10 rounded-xl bg-slate-950 px-3 text-xs font-semibold text-white hover:bg-slate-800 sm:px-4 sm:text-sm"
+                      disabled={busyKey === `reschedule:${selectedPill.package_id}`}
+                      onClick={() => openRescheduleEditor(selectedPill)}
+                    >
+                      Reschedule
                     </Button>
                   </div>
-                )}
-              </div>
+                </>
+              ) : null}
 
-              {/* Unassign — separated, de-emphasized, with confirmation */}
-              <div className="pt-2">
-                {!confirmUnassign ? (
-                  <button
-                    type="button"
-                    className="w-full text-center text-sm text-rose-500 transition hover:text-rose-700"
-                    onClick={() => setConfirmUnassign(true)}
-                  >
-                    Remove all weekly slots
-                  </button>
-                ) : (
-                  <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-center">
-                    <p className="text-sm text-rose-700">
-                      Remove all weekly slots for <span className="font-semibold">{selectedPill.student_name}</span>?
-                      {pillPkg ? (
-                        <span className="mt-1 block text-xs text-rose-600">
-                          This will remove {activeSlotCount} of {requiredSlots} assigned weekly slot
-                          {activeSlotCount === 1 ? "" : "s"} for this package.
-                        </span>
-                      ) : null}
-                    </p>
-                    <div className="mt-3 flex items-center justify-center gap-2">
-                      <Button
-                        variant="outline"
-                        className="h-9 text-xs"
-                        onClick={() => setConfirmUnassign(false)}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        className="h-9 bg-rose-600 text-xs text-white hover:bg-rose-700"
-                        disabled={busyKey === `unassign-package:${selectedPill.package_id}`}
-                        onClick={() => void unassignAllSlots(selectedPill)}
-                      >
-                        {busyKey === `unassign-package:${selectedPill.package_id}`
-                          ? "Removing..."
-                          : "Yes, Remove All"}
-                      </Button>
+              {rescheduleExpanded ? (
+                <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-3 sm:p-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-slate-800">Adjust weekly schedule</p>
+                    <button
+                      type="button"
+                      className="text-xs text-slate-400 hover:text-slate-600"
+                      onClick={() => {
+                        setRescheduleExpanded(false);
+                        setRescheduleError(null);
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  <p className="text-xs leading-5 text-slate-500">
+                    Replace the future weekly schedule. Past attendance stays.
+                  </p>
+                  {rescheduleHadMixedTimes ? (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                      Current schedule has mixed times. Saving will apply one time to all selected days.
+                    </div>
+                  ) : null}
+
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Class time
+                    </label>
+                    <TimeBlockPicker
+                      grouped
+                      value={rescheduleSharedTime}
+                      onChange={(startTime) => {
+                        const normalizedStartTime = normalizeThirtyMinuteTime(startTime);
+                        setRescheduleSharedTime(normalizedStartTime);
+                        setRescheduleSlots((current) =>
+                          current.map((slot) => ({ ...slot, start_time: normalizedStartTime })),
+                        );
+                        setRescheduleError(null);
+                      }}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Class days
+                      </label>
+                      <span className="text-xs text-slate-400">
+                        {rescheduleSlots.length}/{rescheduleExpectedCount} selected
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
+                      {DAY_OPTIONS.map((day) => {
+                        const isSelected = selectedRescheduleDays.has(day.value);
+                        const isBlocked =
+                          !isSelected && rescheduleSlots.length >= rescheduleExpectedCount;
+                        return (
+                          <button
+                            key={`reschedule-day-${day.value}`}
+                            type="button"
+                            disabled={isBlocked}
+                            className={cn(
+                              "h-9 rounded-xl border px-2 text-sm font-semibold transition",
+                              isSelected
+                                ? "border-slate-950 bg-slate-950 text-white shadow-sm"
+                                : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50",
+                              isBlocked &&
+                                "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300 shadow-none hover:border-slate-100 hover:bg-slate-50",
+                            )}
+                            onClick={() => {
+                              setRescheduleSlots((current) => {
+                                const dayIsSelected = current.some(
+                                  (slot) => slot.day_of_week === day.value,
+                                );
+                                if (!dayIsSelected && current.length >= rescheduleExpectedCount) {
+                                  return current;
+                                }
+                                const next = dayIsSelected
+                                  ? current.filter((slot) => slot.day_of_week !== day.value)
+                                  : [
+                                      ...current,
+                                      { day_of_week: day.value, start_time: rescheduleSharedTime },
+                                    ];
+                                return DAY_OPTIONS.flatMap((option) => {
+                                  const matchingSlot = next.find(
+                                    (slot) => slot.day_of_week === option.value,
+                                  );
+                                  return matchingSlot
+                                    ? [{ ...matchingSlot, start_time: rescheduleSharedTime }]
+                                    : [];
+                                });
+                              });
+                              setRescheduleError(null);
+                            }}
+                          >
+                            {day.shortLabel}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
-                )}
-              </div>
+                  {rescheduleDayCountError ? (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      {rescheduleDayCountError}
+                    </div>
+                  ) : null}
+                  {rescheduleError ? (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      {rescheduleError}
+                    </div>
+                  ) : null}
+                  <Button
+                    className="w-full"
+                    onClick={() => void submitReschedule()}
+                    disabled={
+                      busyKey === `reschedule:${selectedPill.package_id}` ||
+                      Boolean(rescheduleDayCountError)
+                    }
+                  >
+                    {busyKey === `reschedule:${selectedPill.package_id}` ? "Saving..." : "Save Schedule"}
+                  </Button>
+                </div>
+              ) : null}
+
+              {confirmUnassign ? (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-center">
+                  <p className="text-sm text-rose-700">
+                    Remove all weekly slots for <span className="font-semibold">{selectedPill.student_name}</span>?
+                    {pillPkg ? (
+                      <span className="mt-1 block text-xs text-rose-600">
+                        This will remove {activeSlotCount} of {requiredSlots} assigned weekly slot
+                        {activeSlotCount === 1 ? "" : "s"} for this package.
+                      </span>
+                    ) : null}
+                  </p>
+                  <div className="mt-3 flex items-center justify-center gap-2">
+                    <Button
+                      variant="outline"
+                      className="h-9 text-xs"
+                      onClick={() => setConfirmUnassign(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      className="h-9 bg-rose-600 text-xs text-white hover:bg-rose-700"
+                      disabled={busyKey === `unassign-package:${selectedPill.package_id}`}
+                      onClick={() => void unassignAllSlots(selectedPill)}
+                    >
+                      {busyKey === `unassign-package:${selectedPill.package_id}`
+                        ? "Removing..."
+                        : "Yes, Remove All"}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           );
         })() : null}
@@ -1645,8 +1938,8 @@ export default function TeacherOnlineAttendancePage() {
               </label>
               <div className="space-y-2">
                 {fillSlots.map((slot, index) => (
-                  <div key={`fill-${index}`} className="grid gap-2 sm:grid-cols-2">
-                    <select
+                  <div key={`fill-${index}`} className={scheduleSlotRowClassName}>
+                    <ScheduleSelect
                       value={slot.day_of_week}
                       onChange={(event) => {
                         const dayOfWeek = Number(event.target.value);
@@ -1655,25 +1948,18 @@ export default function TeacherOnlineAttendancePage() {
                         );
                         setFillError(null);
                       }}
-                      className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm"
                     >
-                      {DAY_OPTIONS.map((day) => (
-                        <option key={day.label} value={day.value}>
-                          {day.label}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="time"
+                      <ScheduleDayOptions />
+                    </ScheduleSelect>
+                    <TimeBlockPicker
+                      dense
                       value={slot.start_time}
-                      onChange={(event) => {
-                        const startTime = event.target.value;
+                      onChange={(startTime) => {
                         setFillSlots((current) =>
                           current.map((item, i) => (i === index ? { ...item, start_time: startTime } : item)),
                         );
                         setFillError(null);
                       }}
-                      className="h-11 rounded-2xl border border-slate-200 bg-white px-3 text-sm"
                     />
                   </div>
                 ))}

@@ -3,6 +3,7 @@ import {
   buildPlannerDays,
   buildTeacherOptions,
   currentMonthKey,
+  normalizeDateKey,
   parseWeekStart,
 } from "@/lib/online/recurring";
 import {
@@ -11,6 +12,12 @@ import {
   filterPackagesForMonth,
   hydratePlannerPackages,
 } from "@/lib/online/recurringStore";
+import {
+  attendanceOccurrenceKey,
+  attendanceWeekStartKey,
+  canonicalizeAttendanceRows,
+  findStaleUnmarkedOccurrenceIds,
+} from "@/lib/online/attendanceRows";
 import { isMissingRelationError } from "@/lib/online/db";
 import { buildTeacherSchedulerOptions } from "@/lib/online/scheduling";
 import { requireAuthenticatedTenantUser } from "@/lib/requestAuth";
@@ -28,11 +35,16 @@ type TeacherOccurrenceRow = Omit<OnlineRecurringOccurrence, "id" | "created_at" 
 
 type AttendanceViewMode = "daily" | "monthly";
 
+type StaleOccurrenceCandidate = Pick<
+  TeacherOccurrenceRow,
+  "id" | "package_id" | "package_slot_id" | "session_date" | "start_time" | "attendance_status" | "cancelled_at"
+>;
+
 const occurrenceSelectColumns =
   "id, tenant_id, package_id, package_slot_id, student_id, course_id, teacher_id, slot_template_id, session_date, start_time, duration_minutes, attendance_status, attendance_notes, recorded_at, cancelled_at, created_at, updated_at";
 
 const occurrenceSummaryColumns =
-  "id, package_slot_id, session_date, attendance_status, cancelled_at";
+  "id, package_id, package_slot_id, session_date, start_time, attendance_status, cancelled_at";
 
 const monthDateRange = (monthKey: string) => {
   const match = /^(\d{4})-(\d{2})$/.exec(monthKey);
@@ -45,9 +57,6 @@ const monthDateRange = (monthKey: string) => {
   return { start, end };
 };
 
-const occurrenceKey = (occurrence: Pick<TeacherOccurrenceRow, "package_slot_id" | "session_date">) =>
-  `${occurrence.package_slot_id}:${occurrence.session_date}`;
-
 const normalizeTime = (value: string) => value.slice(0, 8);
 
 const occurrenceMatchesDraft = (existing: TeacherOccurrenceRow, draft: TeacherOccurrenceRow) =>
@@ -59,14 +68,45 @@ const occurrenceMatchesDraft = (existing: TeacherOccurrenceRow, draft: TeacherOc
   normalizeTime(existing.start_time) === normalizeTime(draft.start_time) &&
   existing.duration_minutes === draft.duration_minutes;
 
-const activeOccurrences = (rows: TeacherOccurrenceRow[]) =>
-  rows
-    .filter((occurrence) => !occurrence.cancelled_at)
+const activeOccurrences = (
+  rows: TeacherOccurrenceRow[],
+  sessionsPerWeekByPackageId: ReadonlyMap<string, number>,
+  currentDateKey?: string | null,
+) =>
+  canonicalizeAttendanceRows(rows, sessionsPerWeekByPackageId, { currentDateKey })
     .sort((left, right) => {
       const byDate = left.session_date.localeCompare(right.session_date);
       if (byDate !== 0) return byDate;
       return left.start_time.localeCompare(right.start_time);
     });
+
+const filterDraftsForCanonicalWrite = (
+  drafts: TeacherOccurrenceRow[],
+  existingRows: Array<{
+    id?: string | null;
+    package_id: string;
+    package_slot_id: string;
+    session_date: string;
+    start_time: string;
+    attendance_status: "present" | "absent" | null;
+    cancelled_at?: string | null;
+  }>,
+  sessionsPerWeekByPackageId: ReadonlyMap<string, number>,
+  currentDateKey?: string | null,
+) => {
+  if (drafts.length === 0) return drafts;
+
+  const draftKeys = new Set(drafts.map((draft) => attendanceOccurrenceKey(draft)));
+  const canonicalDraftKeys = new Set(
+    canonicalizeAttendanceRows([...existingRows, ...drafts], sessionsPerWeekByPackageId, {
+      currentDateKey,
+    })
+      .filter((row) => !row.id && draftKeys.has(attendanceOccurrenceKey(row)))
+      .map((row) => attendanceOccurrenceKey(row)),
+  );
+
+  return drafts.filter((draft) => canonicalDraftKeys.has(attendanceOccurrenceKey(draft)));
+};
 
 const stripOccurrenceForUpsert = (draft: TeacherOccurrenceRow) => {
   // Strip attendance fields so upsert only touches scheduling columns.
@@ -77,13 +117,21 @@ const stripOccurrenceForUpsert = (draft: TeacherOccurrenceRow) => {
 };
 
 const findDraftsNeedingWrite = (drafts: TeacherOccurrenceRow[], existingRows: TeacherOccurrenceRow[]) => {
-  const existingByKey = new Map(existingRows.map((occurrence) => [occurrenceKey(occurrence), occurrence]));
+  const existingByKey = new Map(
+    existingRows.map((occurrence) => [attendanceOccurrenceKey(occurrence), occurrence]),
+  );
+  const markedPackageDates = new Set(
+    existingRows
+      .filter((occurrence) => occurrence.attendance_status && !occurrence.cancelled_at)
+      .map((occurrence) => `${occurrence.package_id}:${occurrence.session_date}`),
+  );
   const draftsToUpsert = drafts.filter((draft) => {
-    const existing = existingByKey.get(occurrenceKey(draft));
+    if (markedPackageDates.has(`${draft.package_id}:${draft.session_date}`)) return false;
+    const existing = existingByKey.get(attendanceOccurrenceKey(draft));
     return !existing || Boolean(existing.cancelled_at) || !occurrenceMatchesDraft(existing, draft);
   });
   const resurrectIds = draftsToUpsert
-    .map((draft) => existingByKey.get(occurrenceKey(draft)))
+    .map((draft) => existingByKey.get(attendanceOccurrenceKey(draft)))
     .filter(
       (occurrence): occurrence is TeacherOccurrenceRow & { id: string } =>
         Boolean(occurrence?.id && occurrence.cancelled_at),
@@ -115,6 +163,81 @@ const materializeOccurrenceDrafts = async (
       .in("id", resurrectIds);
     if (resurrectRes.error) throw resurrectRes.error;
   }
+};
+
+const markRowsCancelled = <T extends { id?: string | null; cancelled_at?: string | null }>(
+  rows: T[],
+  staleIds: ReadonlySet<string>,
+  cancelledAt: string,
+) =>
+  rows.map((row) =>
+    row.id && staleIds.has(row.id)
+      ? {
+          ...row,
+          cancelled_at: cancelledAt,
+        }
+      : row,
+  );
+
+const cancelStaleUnmarkedOccurrences = async (params: {
+  tenantId: string;
+  rows: StaleOccurrenceCandidate[];
+  forceStaleOccurrenceKeys?: ReadonlySet<string>;
+  validOccurrenceKeys: ReadonlySet<string>;
+  fromDateKey: string;
+}) => {
+  const staleIds = findStaleUnmarkedOccurrenceIds(params.rows, params.validOccurrenceKeys, {
+    forceStaleOccurrenceKeys: params.forceStaleOccurrenceKeys,
+    fromDateKey: params.fromDateKey,
+  });
+  if (staleIds.length === 0) return null;
+
+  const cancelledAt = new Date().toISOString();
+  const cancelRes = await supabaseService
+    .from("online_recurring_occurrences")
+    .update({ cancelled_at: cancelledAt, updated_at: cancelledAt })
+    .eq("tenant_id", params.tenantId)
+    .in("id", staleIds)
+    .is("attendance_status", null)
+    .is("cancelled_at", null)
+    .select("id");
+  if (cancelRes.error) throw cancelRes.error;
+
+  const cancelledIds = new Set((cancelRes.data ?? []).map((row) => String(row.id)).filter(Boolean));
+  if (cancelledIds.size === 0) return null;
+
+  return { staleIds: cancelledIds, cancelledAt };
+};
+
+const buildOutsideActiveSlotWindowKeys = (
+  rows: StaleOccurrenceCandidate[],
+  activeSlotWindows: ReadonlyMap<string, { effective_from?: string | null; effective_to?: string | null }>,
+) => {
+  const keys = new Set<string>();
+  rows.forEach((row) => {
+    const slotWindow = activeSlotWindows.get(row.package_slot_id);
+    if (!slotWindow) return;
+
+    const effectiveFrom = normalizeDateKey(slotWindow.effective_from);
+    const effectiveTo = normalizeDateKey(slotWindow.effective_to);
+    if ((effectiveFrom && row.session_date < effectiveFrom) || (effectiveTo && row.session_date > effectiveTo)) {
+      keys.add(attendanceOccurrenceKey(row));
+    }
+  });
+  return keys;
+};
+
+const slotOverlapsDateWindow = (
+  slot: { status?: string | null; effective_from?: string | null; effective_to?: string | null },
+  rangeStart: string,
+  rangeEndExclusive: string,
+) => {
+  if (slot.status && slot.status !== "active") return false;
+  const effectiveFrom = normalizeDateKey(slot.effective_from);
+  const effectiveTo = normalizeDateKey(slot.effective_to);
+  if (effectiveFrom && effectiveFrom >= rangeEndExclusive) return false;
+  if (effectiveTo && effectiveTo < rangeStart) return false;
+  return true;
 };
 
 const isDateInMonth = (dateKey: string | null, monthKey: string) =>
@@ -196,6 +319,20 @@ export async function GET(request: NextRequest) {
       students: snapshot.students,
       courses: snapshot.courses,
     });
+    const sessionsPerWeekByPackageId = new Map(
+      monthPackages.map((pkg) => [pkg.id, Math.max(Number(pkg.sessions_per_week) || 0, 0)]),
+    );
+    const activeSlotWindows = new Map(
+      monthPackages.flatMap((pkg) =>
+        pkg.slots.map((slot) => [
+          slot.id,
+          {
+            effective_from: slot.effective_from,
+            effective_to: slot.effective_to,
+          },
+        ] as const),
+      ),
+    );
 
     const templateById = new Map(snapshot.templates.map((template) => [template.id, template]));
     const occurrenceDrafts = buildOccurrencesForMonth({
@@ -203,15 +340,19 @@ export async function GET(request: NextRequest) {
       monthKey: requestedMonth,
       templateById,
     });
+    const validOccurrenceKeys = new Set(occurrenceDrafts.map((occurrence) => attendanceOccurrenceKey(occurrence)));
+    const staleCleanupFromDate = attendanceWeekStartKey(todayKey);
 
     let monthlyOccurrences: TeacherOccurrenceRow[] = [];
     let selectedDateOccurrences: TeacherOccurrenceRow[] = [];
     let occurrenceSummaryRows: Array<{
       id?: string;
+      package_id: string;
       package_slot_id: string;
       session_date: string;
       attendance_status: "present" | "absent" | null;
       cancelled_at: string | null;
+      start_time: string;
     }> = [];
 
     if (viewMode === "daily") {
@@ -243,10 +384,36 @@ export async function GET(request: NextRequest) {
         throw selectedDateRes.error;
       }
 
-      const existingSelectedDate = (selectedDateRes.data ?? []) as TeacherOccurrenceRow[];
+      let existingSelectedDate = (selectedDateRes.data ?? []) as TeacherOccurrenceRow[];
+      let existingSummaryRows = (summaryRes.data ?? []) as typeof occurrenceSummaryRows;
+      const staleCancel = await cancelStaleUnmarkedOccurrences({
+        tenantId: auth.tenantId,
+        rows: existingSummaryRows,
+        forceStaleOccurrenceKeys: buildOutsideActiveSlotWindowKeys(existingSummaryRows, activeSlotWindows),
+        validOccurrenceKeys,
+        fromDateKey: staleCleanupFromDate,
+      });
+      if (staleCancel) {
+        existingSummaryRows = markRowsCancelled(
+          existingSummaryRows,
+          staleCancel.staleIds,
+          staleCancel.cancelledAt,
+        );
+        existingSelectedDate = markRowsCancelled(
+          existingSelectedDate,
+          staleCancel.staleIds,
+          staleCancel.cancelledAt,
+        );
+      }
       if (!selectedDateRes.error) {
-        const { draftsToUpsert, resurrectIds } = findDraftsNeedingWrite(
+        const selectedDateDraftsToWrite = filterDraftsForCanonicalWrite(
           selectedDateDrafts,
+          existingSummaryRows,
+          sessionsPerWeekByPackageId,
+          todayKey,
+        );
+        const { draftsToUpsert, resurrectIds } = findDraftsNeedingWrite(
+          selectedDateDraftsToWrite,
           existingSelectedDate,
         );
         if (draftsToUpsert.length > 0 || resurrectIds.length > 0) {
@@ -261,16 +428,38 @@ export async function GET(request: NextRequest) {
           if (refreshedSelectedDateRes.error) throw refreshedSelectedDateRes.error;
           selectedDateOccurrences = activeOccurrences(
             (refreshedSelectedDateRes.data ?? selectedDateDrafts) as TeacherOccurrenceRow[],
+            sessionsPerWeekByPackageId,
+            todayKey,
           );
         } else {
-          selectedDateOccurrences = activeOccurrences(existingSelectedDate);
+          selectedDateOccurrences = activeOccurrences(
+            existingSelectedDate,
+            sessionsPerWeekByPackageId,
+            todayKey,
+          );
         }
       } else {
-        selectedDateOccurrences = selectedDateDrafts;
+        selectedDateOccurrences = activeOccurrences(
+          selectedDateDrafts,
+          sessionsPerWeekByPackageId,
+          todayKey,
+        );
       }
 
-      occurrenceSummaryRows = ((summaryRes.data ?? []) as typeof occurrenceSummaryRows).filter(
-        (occurrence) => !occurrence.cancelled_at,
+      occurrenceSummaryRows = canonicalizeAttendanceRows(
+        [
+          ...existingSummaryRows,
+          ...occurrenceDrafts.map((occurrence) => ({
+            package_id: occurrence.package_id,
+            package_slot_id: occurrence.package_slot_id,
+            session_date: occurrence.session_date,
+            start_time: occurrence.start_time,
+            attendance_status: occurrence.attendance_status,
+            cancelled_at: occurrence.cancelled_at,
+          })),
+        ],
+        sessionsPerWeekByPackageId,
+        { currentDateKey: todayKey },
       );
       monthlyOccurrences = selectedDateOccurrences;
     } else {
@@ -285,9 +474,29 @@ export async function GET(request: NextRequest) {
         .order("start_time", { ascending: true });
 
       if (!existingOccurrencesRes.error) {
-        const existingOccurrences = (existingOccurrencesRes.data ?? []) as TeacherOccurrenceRow[];
-        const { draftsToUpsert, resurrectIds } = findDraftsNeedingWrite(
+        let existingOccurrences = (existingOccurrencesRes.data ?? []) as TeacherOccurrenceRow[];
+        const staleCancel = await cancelStaleUnmarkedOccurrences({
+          tenantId: auth.tenantId,
+          rows: existingOccurrences,
+          forceStaleOccurrenceKeys: buildOutsideActiveSlotWindowKeys(existingOccurrences, activeSlotWindows),
+          validOccurrenceKeys,
+          fromDateKey: staleCleanupFromDate,
+        });
+        if (staleCancel) {
+          existingOccurrences = markRowsCancelled(
+            existingOccurrences,
+            staleCancel.staleIds,
+            staleCancel.cancelledAt,
+          );
+        }
+        const occurrenceDraftsToWrite = filterDraftsForCanonicalWrite(
           occurrenceDrafts,
+          existingOccurrences,
+          sessionsPerWeekByPackageId,
+          todayKey,
+        );
+        const { draftsToUpsert, resurrectIds } = findDraftsNeedingWrite(
+          occurrenceDraftsToWrite,
           existingOccurrences,
         );
 
@@ -304,9 +513,17 @@ export async function GET(request: NextRequest) {
             .order("session_date", { ascending: true })
             .order("start_time", { ascending: true });
           if (selectRes.error) throw selectRes.error;
-          monthlyOccurrences = (selectRes.data ?? occurrenceDrafts) as TeacherOccurrenceRow[];
+          monthlyOccurrences = activeOccurrences(
+            (selectRes.data ?? occurrenceDrafts) as TeacherOccurrenceRow[],
+            sessionsPerWeekByPackageId,
+            todayKey,
+          );
         } else {
-          monthlyOccurrences = activeOccurrences(existingOccurrences);
+          monthlyOccurrences = activeOccurrences(
+            existingOccurrences,
+            sessionsPerWeekByPackageId,
+            todayKey,
+          );
         }
       } else if (!isMissingRelationError(existingOccurrencesRes.error, "online_recurring_occurrences")) {
         throw existingOccurrencesRes.error;
@@ -329,18 +546,24 @@ export async function GET(request: NextRequest) {
             .order("session_date", { ascending: true })
             .order("start_time", { ascending: true });
           if (selectRes.error) throw selectRes.error;
-          monthlyOccurrences = (selectRes.data ?? occurrenceDrafts) as TeacherOccurrenceRow[];
+          monthlyOccurrences = activeOccurrences(
+            (selectRes.data ?? occurrenceDrafts) as TeacherOccurrenceRow[],
+            sessionsPerWeekByPackageId,
+            todayKey,
+          );
         } else if (!isMissingRelationError(upsertRes.error, "online_recurring_occurrences")) {
           throw upsertRes.error;
         } else {
-          monthlyOccurrences = occurrenceDrafts;
+          monthlyOccurrences = activeOccurrences(occurrenceDrafts, sessionsPerWeekByPackageId, todayKey);
         }
       }
 
       occurrenceSummaryRows = monthlyOccurrences.map((occurrence) => ({
         id: occurrence.id,
+        package_id: occurrence.package_id,
         package_slot_id: occurrence.package_slot_id,
         session_date: occurrence.session_date,
+        start_time: occurrence.start_time,
         attendance_status: occurrence.attendance_status,
         cancelled_at: occurrence.cancelled_at,
       }));
@@ -349,6 +572,8 @@ export async function GET(request: NextRequest) {
     const studentById = new Map(snapshot.students.map((student) => [student.id, student]));
     const courseById = new Map(snapshot.courses.map((course) => [course.id, course]));
     const weekStart = parseWeekStart(requestedWeek);
+    const requestedMonthStart = range.start.toISOString().slice(0, 10);
+    const requestedMonthEndExclusive = range.end.toISOString().slice(0, 10);
 
     const weeklySlotActions = buildPlannerDays({
       selectedTeacherId: auth.userId,
@@ -359,6 +584,12 @@ export async function GET(request: NextRequest) {
       packages: monthPackages,
       coursesById: courseById,
     });
+    const currentWeeklyPackages = monthPackages.map((pkg) => ({
+      ...pkg,
+      slots: pkg.slots.filter((slot) =>
+        slotOverlapsDateWindow(slot, requestedMonthStart, requestedMonthEndExclusive),
+      ),
+    }));
 
     const enrichedOccurrences = monthlyOccurrences.map((occurrence: TeacherOccurrenceRow) => ({
       ...occurrence,
@@ -385,13 +616,13 @@ export async function GET(request: NextRequest) {
       occurrence_view: viewMode,
       selected_date: selectedDate,
       summary: {
-        total_sessions: occurrenceDrafts.length,
+        total_sessions: occurrenceSummaryRows.length,
         marked_sessions: markedSessions.length,
         present_count: presentCount,
         absent_count: absentCount,
         attendance_rate_pct: attendanceRatePct,
       },
-      weekly_packages: monthPackages,
+      weekly_packages: currentWeeklyPackages,
       weekly_slot_actions: weeklySlotActions,
       today_queue: selectedDateQueue,
       monthly_occurrences: viewMode === "monthly" ? enrichedOccurrences : [],

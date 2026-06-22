@@ -5,6 +5,11 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { authFetch } from "@/lib/authFetch";
+import {
+  ENROLLMENT_AVAILABILITY_DAY_SEQUENCE,
+  ENROLLMENT_AVAILABILITY_END_TIME,
+  ENROLLMENT_AVAILABILITY_START_TIME,
+} from "@/lib/online/availabilityRanges";
 import { dayOfWeekLabel, startTimeToMinutes } from "@/lib/online/slots";
 import { cn } from "@/lib/utils";
 
@@ -97,7 +102,7 @@ type SlotTone = {
 
 const DEFAULT_TIMEZONE = "Asia/Kuala_Lumpur";
 const ALL_ACTIVE_COURSES = "__all_active__";
-const DEFAULT_WEEKDAYS = [1, 2, 3, 4, 5];
+const DEFAULT_WEEKDAYS = [...ENROLLMENT_AVAILABILITY_DAY_SEQUENCE];
 const TAHFIZ_ONLINE_GROUP_KEY = "course-group:tahfiz-online";
 const WEEKDAY_SEQUENCE = [1, 2, 3, 4, 5, 6, 0];
 
@@ -111,8 +116,8 @@ const defaultFormState = (): SlotFormState => ({
 
 const defaultGeneratorState = (): GeneratorFormState => ({
   courseScope: ALL_ACTIVE_COURSES,
-  startTime: "08:00",
-  endTime: "22:00",
+  startTime: ENROLLMENT_AVAILABILITY_START_TIME.slice(0, 5),
+  endTime: ENROLLMENT_AVAILABILITY_END_TIME.slice(0, 5),
   timezone: DEFAULT_TIMEZONE,
   isActive: true,
 });
@@ -632,7 +637,7 @@ export default function OnlineSlotManager({
           <div className="rounded-[24px] border border-slate-200/60 bg-slate-50/50 p-6 shadow-sm">
             <h3 className="text-lg font-semibold tracking-tight text-slate-900">Generate Slot 30 Minit</h3>
             <p className="mt-1 text-sm text-slate-500">
-              Jana semua slot untuk Isnin hingga Jumaat.
+              Jana slot canonical Isnin hingga Ahad.
             </p>
 
             <div className="mt-5 space-y-4">
@@ -668,7 +673,9 @@ export default function OnlineSlotManager({
                   />
                 </div>
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">Akhir</label>
+                  <label className="mb-2 block text-sm font-medium text-slate-700">
+                    Slot mula terakhir
+                  </label>
                   <Input
                     type="time"
                     value={generator.endTime}
@@ -692,6 +699,7 @@ export default function OnlineSlotManager({
 
               <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
                 Hari dijana: {DEFAULT_WEEKDAYS.map((day) => dayOfWeekLabel(day)).join(", ")}.
+                Slot bermula setiap 30 minit dari {generator.startTime} hingga {generator.endTime}.
               </div>
 
               <label className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">

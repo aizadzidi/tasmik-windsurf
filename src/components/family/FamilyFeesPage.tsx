@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import Navbar from "@/components/Navbar";
 import { authFetch } from "@/lib/authFetch";
 import { dayOfWeekLabel } from "@/lib/online/slots";
+import { ONLINE_SELF_SERVICE_ENROLLMENT_ENABLED } from "@/lib/online/selfService";
 import { supabase } from "@/lib/supabaseClient";
 import { getUserWithRecovery } from "@/lib/supabase/clientAuth";
 import { useProgramScope } from "@/hooks/useProgramScope";
@@ -135,6 +136,8 @@ const pageBackgroundClass = "min-h-screen bg-gradient-to-br from-[#f8fafc] via-[
 const surfaceClass = "rounded-xl bg-white/80 p-6 shadow-lg backdrop-blur-md";
 const mutedSurfaceClass = `${surfaceClass} text-sm text-gray-600`;
 const tableSurfaceClass = "overflow-hidden rounded-xl bg-white/80 shadow-lg backdrop-blur-md";
+// Available plans design is intentionally kept dormant for the future self-service flow.
+const SHOW_SELF_SERVICE_AVAILABLE_PLANS = ONLINE_SELF_SERVICE_ENROLLMENT_ENABLED;
 
 export default function FamilyFeesPage() {
   const [parentId, setParentId] = useState<string | null>(null);
@@ -469,7 +472,8 @@ export default function FamilyFeesPage() {
               </div>
             </div>
 
-            <div>
+            {SHOW_SELF_SERVICE_AVAILABLE_PLANS ? (
+              <div>
               <h2 className="mb-6 text-xl font-semibold text-gray-900">Available plans</h2>
               <div className="space-y-4">
                 {loading ? (
@@ -616,7 +620,8 @@ export default function FamilyFeesPage() {
                   })
                 )}
               </div>
-            </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
 

@@ -31,11 +31,13 @@ export default function Navbar({ programScope }: NavbarProps) {
   const isAdminRoute = pathname.startsWith("/admin");
   const isStaff = pathname.startsWith("/staff");
   const resolvedProgramScope = isTeacher ? teachingProgramScope : programScope;
-  const isOnlineAttendancePath = pathname.startsWith("/teacher/online-attendance");
+  const isOnlineTeacherPath =
+    pathname.startsWith("/teacher/online-attendance") ||
+    pathname.startsWith("/teacher/online-availability");
 
   const isMixedOnline =
     resolvedProgramScope === "mixed" &&
-    (teachingMode === "online" || (teachingMode === null && isOnlineAttendancePath));
+    (teachingMode === "online" || (teachingMode === null && isOnlineTeacherPath));
   const isOnlineOnly = resolvedProgramScope === "online";
   const effectiveOnline = isOnlineOnly || isMixedOnline;
   const hasOnlineScope = resolvedProgramScope === "online" || resolvedProgramScope === "mixed";
@@ -183,6 +185,21 @@ export default function Navbar({ programScope }: NavbarProps) {
               </svg>
             )
           },
+          ...(effectiveOnline
+            ? [
+                {
+                  href: "/teacher/online-availability",
+                  label: "Availability",
+                  icon: (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <rect x="3" y="5" width="18" height="16" rx="2" ry="2" strokeWidth={2} />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 3v4M8 3v4M3 11h18" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 15h3M13 15h3M8 18h3" />
+                    </svg>
+                  ),
+                },
+              ]
+            : []),
           ...(!effectiveOnline
             ? [
                 {

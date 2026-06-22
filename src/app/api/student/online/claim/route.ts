@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { currentMonthKey, normalizeDateKey } from "@/lib/online/recurring";
 import { isMissingRelationError } from "@/lib/online/db";
 import { claimOnlineRecurringPackageAtomic } from "@/lib/online/packageClaims";
+import { ONLINE_SELF_SERVICE_ENROLLMENT_ENABLED } from "@/lib/online/selfService";
 import { requireAuthenticatedStudentTenantUser } from "@/lib/requestAuth";
 import { supabaseService } from "@/lib/supabaseServiceClient";
 
@@ -24,6 +25,13 @@ const toEffectiveMonthStart = (value: string) => {
 export async function POST(request: NextRequest) {
   const auth = await requireAuthenticatedStudentTenantUser(request);
   if (!auth.ok) return auth.response;
+
+  if (!ONLINE_SELF_SERVICE_ENROLLMENT_ENABLED) {
+    return NextResponse.json(
+      { error: "Online self enrollment is currently disabled. Please contact admin." },
+      { status: 403 },
+    );
+  }
 
   try {
     const body = (await request.json()) as ClaimBody;

@@ -36,6 +36,19 @@ const buildAssignmentMatchKey = (row: {
   course_id: string;
 }) => `${row.student_id}:${row.teacher_id}:${row.course_id}`;
 
+const normalizeDateKey = (value: string | null | undefined) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value ?? ""));
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : null;
+};
+
+const isCurrentOrFuturePackage = (
+  row: Pick<OnlineRecurringPackage, "effective_to">,
+  dateKey: string,
+) => {
+  const effectiveTo = normalizeDateKey(row.effective_to);
+  return !effectiveTo || effectiveTo >= dateKey;
+};
+
 export const SCHEDULABLE_ASSIGNMENT_STATUSES: OnlineStudentPackageAssignmentStatus[] = [
   "active",
   "pending_payment",
@@ -128,23 +141,28 @@ export const fetchOnlineStudentPackageAssignments = async (params: {
     }
   }
 
-  const recurringPackages = (recurringPackageRes.data ?? []) as OnlineRecurringPackage[];
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const recurringPackages = ((recurringPackageRes.data ?? []) as OnlineRecurringPackage[]).filter(
+    (row) => isCurrentOrFuturePackage(row, todayKey),
+  );
   const recurringPackageIds = recurringPackages.map((row) => row.id);
   const activeSlotCountByPackageId = new Map<string, number>();
 
   if (recurringPackageIds.length > 0) {
     const slotRes = await client
       .from("online_recurring_package_slots")
-      .select("package_id")
+      .select("package_id, effective_to")
       .eq("tenant_id", tenantId)
       .eq("status", "active")
       .in("package_id", recurringPackageIds);
     if (slotRes.error) throw slotRes.error;
-    (slotRes.data ?? []).forEach((row) => {
-      const packageId = String(row.package_id ?? "");
-      if (!packageId) return;
-      activeSlotCountByPackageId.set(packageId, (activeSlotCountByPackageId.get(packageId) ?? 0) + 1);
-    });
+    (slotRes.data ?? [])
+      .filter((row) => isCurrentOrFuturePackage(row, todayKey))
+      .forEach((row) => {
+        const packageId = String(row.package_id ?? "");
+        if (!packageId) return;
+        activeSlotCountByPackageId.set(packageId, (activeSlotCountByPackageId.get(packageId) ?? 0) + 1);
+      });
   }
 
   const studentById = new Map(

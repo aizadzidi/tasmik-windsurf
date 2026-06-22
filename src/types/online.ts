@@ -61,6 +61,7 @@ export interface OnlineTeacherAvailability {
   slot_template_id: string;
   is_available: boolean;
   last_assigned_at: string | null;
+  availability_source?: "manual" | "auto_schedule" | null;
 }
 
 export interface OnlineSlotClaim {
@@ -154,6 +155,8 @@ export interface OnlineRecurringPackageSlot {
   start_time_snapshot: string;
   duration_minutes_snapshot: number;
   status: OnlineRecurringPackageSlotStatus;
+  effective_from: string;
+  effective_to: string | null;
   created_at: string;
   updated_at: string;
 }

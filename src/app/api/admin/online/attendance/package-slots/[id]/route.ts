@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminPermission } from "@/lib/adminPermissions";
+import { assertNoTeacherSlotConflict } from "@/lib/online/scheduleConflicts";
+import { moveRecurringPackageSlotFromNextOccurrence } from "@/lib/online/scheduling";
 import { nextMonthKey } from "@/lib/online/recurring";
 import { isMissingRelationError } from "@/lib/online/db";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
@@ -9,8 +11,6 @@ type PackageSlotPatchBody = {
   target_slot_template_id?: string;
   effective_mode?: "next_occurrence" | "next_month";
 };
-
-const ACTIVE_PACKAGE_STATUSES = ["active", "pending_payment", "draft"] as const;
 
 const resolveTenantIdOrThrow = async (request: NextRequest) =>
   adminOperationSimple(async (client) => {
@@ -43,7 +43,7 @@ export async function PATCH(
       const packageSlotRes = await client
         .from("online_recurring_package_slots")
         .select(
-          "id, tenant_id, package_id, slot_template_id, day_of_week_snapshot, start_time_snapshot, duration_minutes_snapshot, status"
+          "id, tenant_id, package_id, slot_template_id, day_of_week_snapshot, start_time_snapshot, duration_minutes_snapshot, status, effective_from, effective_to"
         )
         .eq("tenant_id", tenantId)
         .eq("id", id)
@@ -88,86 +88,19 @@ export async function PATCH(
       }
 
       if (effectiveMode === "next_occurrence") {
-        const conflictingSlotRes = await client
-          .from("online_recurring_package_slots")
-          .select("id, package_id")
-          .eq("tenant_id", tenantId)
-          .eq("slot_template_id", targetSlotTemplateId)
-          .eq("status", "active")
-          .neq("id", id);
-        if (conflictingSlotRes.error) throw conflictingSlotRes.error;
+        const result = await moveRecurringPackageSlotFromNextOccurrence(client, {
+          tenantId,
+          packageSlotId: id,
+          targetSlotTemplateId,
+          actorUserId: guard.userId,
+          requireTeacherAvailability: true,
+        });
 
-        const conflictingPackageIds = Array.from(
-          new Set(
-            (conflictingSlotRes.data ?? [])
-              .map((row) => String(row.package_id ?? ""))
-              .filter((value) => value.length > 0),
-          ),
-        );
-
-        if (conflictingPackageIds.length > 0) {
-          const conflictingPackageRes = await client
-            .from("online_recurring_packages")
-            .select("id")
-            .eq("tenant_id", tenantId)
-            .eq("teacher_id", packageRes.data.teacher_id)
-            .in("status", [...ACTIVE_PACKAGE_STATUSES])
-            .in("id", conflictingPackageIds)
-            .limit(1);
-          if (conflictingPackageRes.error) throw conflictingPackageRes.error;
-          if ((conflictingPackageRes.data ?? []).length > 0) {
-            throw new Error("Target slot is already occupied for this teacher.");
-          }
-        }
-
-        const timestamp = new Date().toISOString();
-        const updateRes = await client
-          .from("online_recurring_package_slots")
-          .update({
-            slot_template_id: targetTemplateRes.data.id,
-            day_of_week_snapshot: targetTemplateRes.data.day_of_week,
-            start_time_snapshot: targetTemplateRes.data.start_time,
-            duration_minutes_snapshot: targetTemplateRes.data.duration_minutes,
-            status: "active",
-            updated_at: timestamp,
-          })
-          .eq("tenant_id", tenantId)
-          .eq("id", id)
-          .select("*")
-          .single();
-        if (updateRes.error) throw updateRes.error;
-
-        // Replace future occurrences for this slot so stale times are not shown.
-        const todayKey = timestamp.slice(0, 10);
-        const cancelFutureOccurrenceRes = await client
-          .from("online_recurring_occurrences")
-          .update({
-            cancelled_at: timestamp,
-            updated_at: timestamp,
-          })
-          .eq("tenant_id", tenantId)
-          .eq("package_slot_id", id)
-          .is("cancelled_at", null)
-          .gt("session_date", todayKey);
-        if (cancelFutureOccurrenceRes.error) throw cancelFutureOccurrenceRes.error;
-
-        const cancelTodayUnmarkedOccurrenceRes = await client
-          .from("online_recurring_occurrences")
-          .update({
-            cancelled_at: timestamp,
-            updated_at: timestamp,
-          })
-          .eq("tenant_id", tenantId)
-          .eq("package_slot_id", id)
-          .is("cancelled_at", null)
-          .eq("session_date", todayKey)
-          .is("attendance_status", null);
-        if (cancelTodayUnmarkedOccurrenceRes.error) throw cancelTodayUnmarkedOccurrenceRes.error;
-
-        return { mode: effectiveMode, package_slot: updateRes.data };
+        return { mode: effectiveMode, ...result };
       }
 
       const nextMonth = nextMonthKey(String(packageRes.data.effective_month).slice(0, 7));
+      const nextMonthStart = `${nextMonth}-01`;
       const existingChangeRes = await client
         .from("online_package_change_requests")
         .select("id, next_package_id_draft, effective_month, pricing_delta_cents, billing_status, status")
@@ -181,6 +114,20 @@ export async function PATCH(
       }
 
       let draftPackageId = existingChangeRes.data?.next_package_id_draft ?? null;
+      await assertNoTeacherSlotConflict(client, {
+        tenantId,
+        teacherId: packageRes.data.teacher_id,
+        targetSlots: [
+          {
+            day_of_week: targetTemplateRes.data.day_of_week,
+            start_time: targetTemplateRes.data.start_time,
+          },
+        ],
+        rangeStart: nextMonthStart,
+        rangeEnd: null,
+        excludePackageIds: [packageRes.data.id, draftPackageId ?? ""],
+      });
+
       if (!draftPackageId) {
         const insertDraftRes = await client
           .from("online_recurring_packages")
@@ -206,26 +153,32 @@ export async function PATCH(
 
         const currentSlotsRes = await client
           .from("online_recurring_package_slots")
-          .select("slot_template_id, day_of_week_snapshot, start_time_snapshot, duration_minutes_snapshot, status")
+          .select("slot_template_id, day_of_week_snapshot, start_time_snapshot, duration_minutes_snapshot, status, effective_to")
           .eq("tenant_id", tenantId)
           .eq("package_id", packageRes.data.id)
           .eq("status", "active");
         if (currentSlotsRes.error) throw currentSlotsRes.error;
 
-        const cloneRows = (currentSlotsRes.data ?? []).map((row) => ({
-          tenant_id: tenantId,
-          package_id: draftPackageId,
-          slot_template_id: row.slot_template_id,
-          day_of_week_snapshot: row.day_of_week_snapshot,
-          start_time_snapshot: row.start_time_snapshot,
-          duration_minutes_snapshot: row.duration_minutes_snapshot,
-          status: row.status,
-        }));
-        const insertSlotClones = await client
-          .from("online_recurring_package_slots")
-          .insert(cloneRows)
-          .select("*");
-        if (insertSlotClones.error) throw insertSlotClones.error;
+        const cloneRows = (currentSlotsRes.data ?? [])
+          .filter((row) => !row.effective_to || String(row.effective_to).slice(0, 10) >= nextMonthStart)
+          .map((row) => ({
+            tenant_id: tenantId,
+            package_id: draftPackageId,
+            slot_template_id: row.slot_template_id,
+            day_of_week_snapshot: row.day_of_week_snapshot,
+            start_time_snapshot: row.start_time_snapshot,
+            duration_minutes_snapshot: row.duration_minutes_snapshot,
+            status: row.status,
+            effective_from: nextMonthStart,
+            effective_to: null,
+          }));
+        if (cloneRows.length > 0) {
+          const insertSlotClones = await client
+            .from("online_recurring_package_slots")
+            .insert(cloneRows)
+            .select("*");
+          if (insertSlotClones.error) throw insertSlotClones.error;
+        }
 
         const changeRequestRes = await client
           .from("online_package_change_requests")
@@ -257,6 +210,20 @@ export async function PATCH(
       if (matchingDraftSlotRes.error) throw matchingDraftSlotRes.error;
       if (!matchingDraftSlotRes.data?.id) {
         throw new Error("Unable to locate draft package slot for next-month change.");
+      }
+
+      const sameDayDraftSlotRes = await client
+        .from("online_recurring_package_slots")
+        .select("id")
+        .eq("tenant_id", tenantId)
+        .eq("package_id", draftPackageId)
+        .eq("status", "active")
+        .eq("day_of_week_snapshot", targetTemplateRes.data.day_of_week)
+        .neq("id", matchingDraftSlotRes.data.id)
+        .limit(1);
+      if (sameDayDraftSlotRes.error) throw sameDayDraftSlotRes.error;
+      if ((sameDayDraftSlotRes.data ?? []).length > 0) {
+        throw new Error("A package cannot have more than one slot on the same weekday.");
       }
 
       const updateDraftRes = await client

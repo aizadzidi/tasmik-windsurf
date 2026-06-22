@@ -24,7 +24,8 @@ const getErrorStatus = (message: string) => {
     normalized.includes("required") ||
     normalized.includes("format") ||
     normalized.includes("must be") ||
-    normalized.includes("exactly")
+    normalized.includes("exactly") ||
+    normalized.includes("cannot")
   ) {
     return 400;
   }

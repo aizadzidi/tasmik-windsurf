@@ -228,9 +228,14 @@ export async function POST(request: NextRequest) {
   const phone = asTrimmedText(body.phone, 32);
   const claimToken = asTrimmedText(body.claim_token, 255);
   const claimTokenHash = claimToken ? hashStudentClaimToken(claimToken) : null;
-  const localTenantSlug = normalizeTenantSlugInput(body.tenant_slug);
+  const submittedTenantSlug = normalizeTenantSlugInput(body.tenant_slug);
+  const configuredLocalTenantSlug = normalizeTenantSlugInput(
+    process.env.LOCAL_TENANT_SLUG ?? process.env.NEXT_PUBLIC_LOCAL_TENANT_SLUG
+  );
+  const localTenantSlug =
+    submittedTenantSlug ?? (isLocalHost ? configuredLocalTenantSlug : null);
 
-  if (isPublicSaasRegistrationHost(host) && !(isLocalHost && (claimToken || localTenantSlug))) {
+  if (isPublicSaasRegistrationHost(host) && !isLocalHost) {
     return jsonError(requestId, {
       error: "Student self-signup is only available on tenant subdomains.",
       code: "TENANT_HOST_REQUIRED",

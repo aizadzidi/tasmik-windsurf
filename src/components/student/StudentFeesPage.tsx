@@ -4,10 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import Navbar from "@/components/Navbar";
 import { authFetch } from "@/lib/authFetch";
 import { dayOfWeekLabel } from "@/lib/online/slots";
+import { ONLINE_SELF_SERVICE_ENROLLMENT_ENABLED } from "@/lib/online/selfService";
 import { getUserWithRecovery } from "@/lib/supabase/clientAuth";
 import { supabase } from "@/lib/supabaseClient";
 import { cn } from "@/lib/utils";
-import { Check, ChevronRight, CreditCard, Download } from "lucide-react";
+import { Check, CreditCard, Download } from "lucide-react";
 import type { PaymentLineItem, PaymentRecord } from "@/types/payments";
 
 type StudentRow = { id: string; name: string | null };
@@ -65,6 +66,20 @@ const formatMoney = (value: number | null | undefined) =>
   typeof value === "number" ? `RM ${(value / 100).toFixed(2)}` : "RM 0.00";
 
 const timeLabel = (value: string) => value.slice(0, 5);
+const classHourOptions = Array.from({ length: 12 }, (_, index) => String(index + 1));
+const classMinuteOptions = ["00", "30"] as const;
+const classPeriodOptions = ["AM", "PM"] as const;
+type ClassPeriod = (typeof classPeriodOptions)[number];
+
+const toStartTime = (hourValue: string, minuteValue: string, period: ClassPeriod) => {
+  const hour = Number(hourValue);
+  if (!Number.isInteger(hour) || hour < 1 || hour > 12) return "";
+  const normalizedHour = (hour % 12) + (period === "PM" ? 12 : 0);
+  return `${String(normalizedHour).padStart(2, "0")}:${minuteValue}:00`;
+};
+
+const flexibleTimeLabel = (hourValue: string, minuteValue: string, period: ClassPeriod) =>
+  `${hourValue}:${minuteValue} ${period}`;
 
 const templateSummary = (templates: PackageTemplate[]) =>
   [...templates]
@@ -106,20 +121,19 @@ const statusLabel = (status: PaymentRecord["status"]) => {
   return status.charAt(0).toUpperCase() + status.slice(1);
 };
 
-const planActionLabel = (currentAmount: number | null, optionAmount: number | null | undefined) => {
-  if (currentAmount === null) return "Select plan";
-  return (optionAmount ?? 0) < currentAmount ? "Downgrade" : "Upgrade";
-};
-
 const pageBackgroundClass = "min-h-screen bg-gradient-to-br from-[#f8fafc] via-[#e2e8f0] to-[#f1f5f9]";
 const surfaceClass = "rounded-xl bg-white/80 p-6 shadow-lg backdrop-blur-md";
 const mutedSurfaceClass = `${surfaceClass} text-sm text-gray-600`;
 const tableSurfaceClass = "overflow-hidden rounded-xl bg-white/80 shadow-lg backdrop-blur-md";
+// Available plans design is intentionally kept dormant for the future self-service flow.
+const SHOW_SELF_SERVICE_AVAILABLE_PLANS = ONLINE_SELF_SERVICE_ENROLLMENT_ENABLED;
 
 export default function StudentFeesPage() {
   const [payload, setPayload] = useState<ExplorePayload | null>(null);
-  const [selectedCourseId, setSelectedCourseId] = useState("");
-  const [selectedSlotIds, setSelectedSlotIds] = useState<string[]>([]);
+  const [selectedDays, setSelectedDays] = useState<number[]>([]);
+  const [selectedHour, setSelectedHour] = useState("12");
+  const [selectedMinute, setSelectedMinute] = useState<(typeof classMinuteOptions)[number]>("00");
+  const [selectedPeriod, setSelectedPeriod] = useState<ClassPeriod>("PM");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -148,12 +162,6 @@ export default function StudentFeesPage() {
         payments: data.payments ?? [],
         online_fee_summary: data.online_fee_summary,
         setup_required: Boolean(data.setup_required),
-      });
-      setSelectedCourseId((current) => {
-        if (current && (data.package_options ?? []).some((option) => option.course_id === current)) {
-          return current;
-        }
-        return data.package_options?.[0]?.course_id ?? "";
       });
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load data");
@@ -186,55 +194,130 @@ export default function StudentFeesPage() {
     };
   }, []);
 
-  const selectedCourseOption = useMemo(
-    () => payload?.package_options.find((option) => option.course_id === selectedCourseId) ?? null,
-    [payload?.package_options, selectedCourseId],
+  const packageOptions = useMemo(
+    () =>
+      [...(payload?.package_options ?? [])].sort((left, right) => {
+        const leftSessions = left.sessions_per_week ?? 0;
+        const rightSessions = right.sessions_per_week ?? 0;
+        if (leftSessions !== rightSessions) return leftSessions - rightSessions;
+        return (left.monthly_fee_cents ?? 0) - (right.monthly_fee_cents ?? 0);
+      }),
+    [payload?.package_options],
   );
-  const requiredSlots = Math.max(selectedCourseOption?.sessions_per_week ?? 1, 1);
+
+  const supportedDayCounts = useMemo(
+    () =>
+      new Set(
+        packageOptions
+          .map((option) => option.sessions_per_week ?? 0)
+          .filter((count) => count > 0),
+      ),
+    [packageOptions],
+  );
+
+  const maxSelectableDays = useMemo(
+    () => Math.max(0, ...Array.from(supportedDayCounts)),
+    [supportedDayCounts],
+  );
+
+  const selectedCourseOption = useMemo(() => {
+    if (selectedDays.length === 0) return null;
+    return (
+      packageOptions.find((option) => (option.sessions_per_week ?? 0) === selectedDays.length) ??
+      null
+    );
+  }, [packageOptions, selectedDays.length]);
+
+  const availableDayOptions = useMemo(() => {
+    const days = new Map<number, boolean>();
+    packageOptions.forEach((option) => {
+      option.templates.forEach((template) => {
+        const hasAvailableTeacher = template.available_teachers > 0;
+        days.set(template.day_of_week, (days.get(template.day_of_week) ?? false) || hasAvailableTeacher);
+      });
+    });
+
+    return Array.from(days.entries())
+      .sort((left, right) => left[0] - right[0])
+      .map(([day, hasAvailableTemplate]) => ({
+        day,
+        hasAvailableTemplate,
+        label: dayOfWeekLabel(day),
+      }));
+  }, [packageOptions]);
 
   useEffect(() => {
-    if (!selectedCourseOption) {
-      setSelectedSlotIds([]);
-      return;
-    }
-    const allowedIds = new Set(selectedCourseOption.templates.map((template) => template.slot_template_id));
-    setSelectedSlotIds((current) => current.filter((id) => allowedIds.has(id)).slice(0, requiredSlots));
-  }, [requiredSlots, selectedCourseOption]);
-
-  const templatesByDay = useMemo(() => {
-    if (!selectedCourseOption) return [] as Array<{ day: number; label: string; templates: PackageTemplate[] }>;
-    const grouped = new Map<number, PackageTemplate[]>();
-    selectedCourseOption.templates.forEach((template) => {
-      const list = grouped.get(template.day_of_week) ?? [];
-      list.push(template);
-      grouped.set(template.day_of_week, list);
+    const allowedDays = new Set(availableDayOptions.map((option) => option.day));
+    setSelectedDays((current) => {
+      const next = current
+        .filter((day) => allowedDays.has(day))
+        .slice(0, maxSelectableDays);
+      if (next.length === current.length && next.every((day, index) => day === current[index])) {
+        return current;
+      }
+      return next;
     });
-    return Array.from(grouped.entries())
-      .sort((left, right) => left[0] - right[0])
-      .map(([day, templates]) => ({
-        day,
-        label: dayOfWeekLabel(day),
-        templates: [...templates].sort((left, right) => left.start_time.localeCompare(right.start_time)),
-      }));
-  }, [selectedCourseOption]);
+  }, [availableDayOptions, maxSelectableDays]);
+
+  const selectedStartTime = useMemo(
+    () => toStartTime(selectedHour, selectedMinute, selectedPeriod),
+    [selectedHour, selectedMinute, selectedPeriod],
+  );
 
   const pendingPayment = useMemo(
     () => payload?.payments.find((payment) => payment.status === "pending" || payment.status === "initiated") ?? null,
     [payload?.payments],
   );
 
-  const handleToggleSlot = (slotTemplateId: string) => {
-    setSelectedSlotIds((current) => {
-      if (current.includes(slotTemplateId)) return current.filter((value) => value !== slotTemplateId);
-      if (current.length >= requiredSlots) return [...current.slice(1), slotTemplateId];
-      return [...current, slotTemplateId];
+  const selectedSlotIds = useMemo(() => {
+    if (!selectedCourseOption || selectedDays.length === 0 || !selectedStartTime) return [];
+
+    const templates = selectedDays.map((day) =>
+      selectedCourseOption.templates.find(
+        (template) =>
+          template.day_of_week === day &&
+          template.start_time === selectedStartTime &&
+          template.available_teachers > 0,
+      ),
+    );
+
+    if (templates.some((template) => !template)) return [];
+    return templates.map((template) => template!.slot_template_id);
+  }, [selectedCourseOption, selectedDays, selectedStartTime]);
+  const selectedTemplates = useMemo(() => {
+    if (!selectedCourseOption || selectedSlotIds.length === 0) return [] as PackageTemplate[];
+    const selectedIds = new Set(selectedSlotIds);
+    return selectedCourseOption.templates.filter((template) =>
+      selectedIds.has(template.slot_template_id),
+    );
+  }, [selectedCourseOption, selectedSlotIds]);
+  const selectedDayCount = selectedDays.length;
+  const displayDuration = selectedCourseOption?.duration_minutes ?? packageOptions[0]?.duration_minutes ?? 30;
+  const displayPlanTitle =
+    selectedCourseOption?.course_name ??
+    (selectedDayCount > 0 ? `${selectedDayCount}x - Custom` : "Custom weekly plan");
+  const canHoldPackage =
+    !loading &&
+    busyKey !== "hold" &&
+    Boolean(selectedCourseOption) &&
+    selectedDayCount > 0 &&
+    selectedSlotIds.length === selectedDayCount;
+
+  const handleToggleDay = (day: number) => {
+    setSelectedDays((current) => {
+      if (current.includes(day)) return current.filter((value) => value !== day);
+      if (!supportedDayCounts.has(current.length + 1)) return current;
+      return [...current, day].sort((left, right) => left - right);
     });
   };
 
   const handleHoldPackage = async () => {
-    if (!selectedCourseOption) return;
-    if (selectedSlotIds.length !== requiredSlots) {
-      setError(`Select exactly ${requiredSlots} weekly slot(s) before continuing.`);
+    if (!selectedCourseOption || selectedDayCount === 0) {
+      setError("Select at least one class day before continuing.");
+      return;
+    }
+    if (selectedSlotIds.length !== selectedDayCount) {
+      setError("Select a class time that is available for every selected day.");
       return;
     }
     setBusyKey("hold");
@@ -250,7 +333,10 @@ export default function StudentFeesPage() {
       });
       const data = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(data.error || "Failed to hold weekly package");
-      setSelectedSlotIds([]);
+      setSelectedDays([]);
+      setSelectedHour("12");
+      setSelectedMinute("00");
+      setSelectedPeriod("PM");
       await loadExplore();
     } catch (claimError) {
       setError(claimError instanceof Error ? claimError.message : "Failed to hold weekly package");
@@ -380,153 +466,178 @@ export default function StudentFeesPage() {
               </div>
             </div>
 
-            <div>
+            {SHOW_SELF_SERVICE_AVAILABLE_PLANS ? (
+              <div>
               <h2 className="mb-6 text-xl font-semibold text-gray-900">Available plans</h2>
               <div className="space-y-4">
                 {loading ? (
                   <div className={mutedSurfaceClass}>
                     Loading package options...
                   </div>
-                ) : (payload?.package_options ?? []).length === 0 ? (
+                ) : packageOptions.length === 0 ? (
                   <div className={mutedSurfaceClass}>
                     No recurring package options available yet.
                   </div>
                 ) : (
-                  payload?.package_options.map((option) => {
-                    const isSelected = option.course_id === selectedCourseId;
-                    const isCurrent = currentPackage?.course_id === option.course_id;
-                    const isPending = pendingPackage?.course_id === option.course_id;
-                    return (
-                      <div
-                        key={option.course_id}
-                        className={cn(
-                          `${surfaceClass} transition-colors`,
-                          isSelected ? "ring-1 ring-gray-300" : "hover:bg-white",
-                        )}
-                      >
+                  <div className={`${surfaceClass} ring-1 ring-gray-200`}>
+                    <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="flex-1">
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <h3 className="text-lg font-semibold text-gray-900">{displayPlanTitle}</h3>
+                          {selectedCourseOption &&
+                          currentPackage?.course_id === selectedCourseOption.course_id ? (
+                            <span className="rounded-full border border-gray-200 px-2 py-0.5 text-xs text-gray-600">
+                              Current
+                            </span>
+                          ) : null}
+                          {selectedCourseOption &&
+                          pendingPackage?.course_id === selectedCourseOption.course_id ? (
+                            <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800">
+                              Pending payment
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="mb-4 text-gray-600">
+                          {selectedDayCount} {selectedDayCount === 1 ? "class" : "classes"} per week
+                        </p>
+                        <ul className="space-y-2">
+                          <li className="flex items-center gap-2 text-sm text-gray-600">
+                            <Check className="h-4 w-4 text-gray-900" />
+                            {selectedDayCount} live {selectedDayCount === 1 ? "session" : "sessions"} per week
+                          </li>
+                          <li className="flex items-center gap-2 text-sm text-gray-600">
+                            <Check className="h-4 w-4 text-gray-900" />
+                            {displayDuration} minutes per session
+                          </li>
+                          <li className="flex items-center gap-2 text-sm text-gray-600">
+                            <Check className="h-4 w-4 text-gray-900" />
+                            Progress tracking
+                          </li>
+                        </ul>
+                      </div>
+                      <div className="lg:text-right">
+                        <div>
+                          <span className="text-2xl font-semibold text-gray-900">
+                            {formatMoney(selectedCourseOption?.monthly_fee_cents)}
+                          </span>
+                          <span className="text-gray-600">/month</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-6 border-t border-gray-200 pt-5">
+                      <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-gray-900">Weekly slots</p>
+                          <p className="text-sm text-gray-600">
+                            {selectedDayCount}/{maxSelectableDays} days selected
+                          </p>
+                        </div>
                         <button
                           type="button"
-                          onClick={() => setSelectedCourseId(option.course_id)}
-                          className="flex w-full items-start justify-between gap-8 text-left"
+                          onClick={() => void handleHoldPackage()}
+                          disabled={!canHoldPackage}
+                          className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          <div className="flex-1">
-                            <div className="mb-2 flex flex-wrap items-center gap-2">
-                              <h3 className="text-lg font-semibold text-gray-900">{option.course_name}</h3>
-                              {isCurrent ? (
-                                <span className="rounded-full border border-gray-200 px-2 py-0.5 text-xs text-gray-600">
-                                  Current
-                                </span>
-                              ) : null}
-                              {isPending ? (
-                                <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800">
-                                  Pending payment
-                                </span>
-                              ) : null}
-                            </div>
-                            <p className="mb-4 text-gray-600">
-                              {option.sessions_per_week ?? 0} classes per week
-                            </p>
-                            <ul className="space-y-2">
-                              <li className="flex items-center gap-2 text-sm text-gray-600">
-                                <Check className="h-4 w-4 text-gray-900" />
-                                {option.sessions_per_week ?? 0} live sessions per week
-                              </li>
-                              <li className="flex items-center gap-2 text-sm text-gray-600">
-                                <Check className="h-4 w-4 text-gray-900" />
-                                {option.duration_minutes} minutes per session
-                              </li>
-                              <li className="flex items-center gap-2 text-sm text-gray-600">
-                                <Check className="h-4 w-4 text-gray-900" />
-                                Progress tracking
-                              </li>
-                            </ul>
-                          </div>
-                          <div className="text-right">
-                            <div className="mb-2">
-                              <span className="text-2xl font-semibold text-gray-900">
-                                {formatMoney(option.monthly_fee_cents)}
-                              </span>
-                              <span className="text-gray-600">/month</span>
-                            </div>
-                            {!isCurrent ? (
-                              <span className="flex items-center justify-end gap-1 text-sm font-medium text-gray-600">
-                                {planActionLabel(currentAmount, option.monthly_fee_cents)}
-                                <ChevronRight className="h-4 w-4" />
-                              </span>
-                            ) : null}
-                          </div>
+                          {busyKey === "hold" ? "Holding..." : "Hold Package"}
                         </button>
-
-                        {isSelected ? (
-                          <div className="mt-6 border-t border-gray-200 pt-5">
-                            <div className="mb-4 flex items-center justify-between gap-4">
-                              <div>
-                                <p className="text-sm font-semibold text-gray-900">Weekly slots</p>
-                                <p className="text-sm text-gray-600">
-                                  {selectedSlotIds.length}/{requiredSlots} selected
-                                </p>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => void handleHoldPackage()}
-                                disabled={
-                                  loading ||
-                                  busyKey === "hold" ||
-                                  !selectedCourseOption ||
-                                  selectedSlotIds.length !== requiredSlots
-                                }
-                                className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {busyKey === "hold" ? "Holding..." : "Hold Package"}
-                              </button>
-                            </div>
-                            <div className="space-y-4">
-                              {templatesByDay.map((day) => (
-                                <div key={day.day}>
-                                  <p className="mb-2 text-sm font-medium text-gray-600">{day.label}</p>
-                                  <div className="flex flex-wrap gap-2">
-                                    {day.templates.map((template) => {
-                                      const isSlotSelected = selectedSlotIds.includes(template.slot_template_id);
-                                      const isDisabled = template.available_teachers <= 0 && !isSlotSelected;
-                                      return (
-                                        <button
-                                          key={template.slot_template_id}
-                                          type="button"
-                                          disabled={isDisabled}
-                                          onClick={() => handleToggleSlot(template.slot_template_id)}
-                                          className={cn(
-                                            "rounded-lg border px-3 py-2 text-sm transition-colors",
-                                            isSlotSelected
-                                              ? "border-gray-900 bg-gray-900 text-white"
-                                              : "border-gray-200 text-gray-600 hover:border-gray-300",
-                                            isDisabled && "cursor-not-allowed opacity-40",
-                                          )}
-                                        >
-                                          {timeLabel(template.start_time)}
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                            <p className="mt-4 text-sm text-gray-600">
-                              {selectedSlotIds.length === 0
-                                ? "No weekly slots selected yet."
-                                : templateSummary(
-                                    selectedCourseOption?.templates.filter((template) =>
-                                      selectedSlotIds.includes(template.slot_template_id),
-                                    ) ?? [],
-                                  )}
-                            </p>
-                          </div>
-                        ) : null}
                       </div>
-                    );
-                  })
+
+                      <div className="grid gap-5 lg:grid-cols-[1fr_260px]">
+                        <div>
+                          <p className="mb-2 text-sm font-medium text-gray-700">Class days</p>
+                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                            {availableDayOptions.map((day) => {
+                              const isChecked = selectedDays.includes(day.day);
+                              const cannotAddMore = !supportedDayCounts.has(selectedDayCount + 1);
+                              const isDisabled =
+                                !isChecked && (!day.hasAvailableTemplate || cannotAddMore);
+
+                              return (
+                                <label
+                                  key={day.day}
+                                  className={cn(
+                                    "flex h-10 items-center gap-2 rounded-md border px-3 text-sm transition-colors",
+                                    isChecked
+                                      ? "border-gray-900 bg-gray-50 text-gray-900"
+                                      : "border-gray-200 text-gray-600 hover:border-gray-300",
+                                    isDisabled && "cursor-not-allowed opacity-40 hover:border-gray-200",
+                                  )}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    disabled={isDisabled}
+                                    onChange={() => handleToggleDay(day.day)}
+                                    className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
+                                  />
+                                  <span>{day.label}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="text-sm font-medium text-gray-700">Class time</p>
+                          <div className="mt-2 grid grid-cols-[1fr_auto_1fr_1fr] items-center gap-2">
+                            <select
+                              value={selectedHour}
+                              onChange={(event) => setSelectedHour(event.target.value)}
+                              className="h-10 rounded-md border border-gray-200 bg-white px-3 text-sm font-normal text-gray-900 outline-none transition focus:border-gray-400"
+                            >
+                              {classHourOptions.map((hour) => (
+                                <option key={hour} value={hour}>
+                                  {hour}
+                                </option>
+                              ))}
+                            </select>
+                            <span className="text-center text-sm font-semibold text-gray-500">:</span>
+                            <select
+                              value={selectedMinute}
+                              onChange={(event) =>
+                                setSelectedMinute(event.target.value as (typeof classMinuteOptions)[number])
+                              }
+                              className="h-10 rounded-md border border-gray-200 bg-white px-3 text-sm font-normal text-gray-900 outline-none transition focus:border-gray-400"
+                            >
+                              {classMinuteOptions.map((minute) => (
+                                <option key={minute} value={minute}>
+                                  {minute}
+                                </option>
+                              ))}
+                            </select>
+                            <select
+                              value={selectedPeriod}
+                              onChange={(event) => setSelectedPeriod(event.target.value as ClassPeriod)}
+                              className="h-10 rounded-md border border-gray-200 bg-white px-3 text-sm font-normal text-gray-900 outline-none transition focus:border-gray-400"
+                            >
+                              {classPeriodOptions.map((period) => (
+                                <option key={period} value={period}>
+                                  {period}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+
+                      <p className="mt-4 text-sm text-gray-600">
+                        {selectedDayCount === 0
+                          ? "No weekly slots selected yet."
+                          : selectedTemplates.length === selectedDayCount
+                            ? templateSummary(selectedTemplates)
+                            : `${flexibleTimeLabel(
+                                selectedHour,
+                                selectedMinute,
+                                selectedPeriod,
+                              )} is not available for every selected day yet.`}
+                      </p>
+                    </div>
+                  </div>
                 )}
               </div>
-            </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
 

@@ -47,6 +47,32 @@ const isPackageActiveForMonth = (
   return true;
 };
 
+const hasDuplicateWeekday = (templates: Array<{ day_of_week: number }>) =>
+  new Set(templates.map((template) => template.day_of_week)).size !== templates.length;
+
+const monthEndDateKey = (monthStart: string) => {
+  const parsed = new Date(`${monthStart}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) return monthStart;
+  parsed.setUTCMonth(parsed.getUTCMonth() + 1, 0);
+  return parsed.toISOString().slice(0, 10);
+};
+
+const templateDayTimeKey = (template: { day_of_week: number; start_time: string }) =>
+  `${template.day_of_week}:${template.start_time.slice(0, 8)}`;
+
+const isSlotEffectiveForMonth = (
+  slot: { status: string; effective_from: string; effective_to: string | null },
+  monthStart: string,
+  monthEnd: string,
+) => {
+  if (slot.status !== "active") return false;
+  const effectiveFrom = normalizeDateKey(slot.effective_from);
+  const effectiveTo = normalizeDateKey(slot.effective_to);
+  if (effectiveFrom && effectiveFrom > monthEnd) return false;
+  if (effectiveTo && effectiveTo < monthStart) return false;
+  return true;
+};
+
 export async function POST(request: NextRequest) {
   try {
     const guard = await requireAdminPermission(request, ["admin:online"]);
@@ -90,6 +116,9 @@ export async function POST(request: NextRequest) {
       if (templates.some((template) => template.course_id !== courseId)) {
         throw new Error("All selected slots must belong to the same course.");
       }
+      if (hasDuplicateWeekday(templates)) {
+        throw new Error("A package cannot have more than one slot on the same weekday.");
+      }
 
       const requiredCount = Math.max(course.sessions_per_week ?? templates.length, 1);
       if (slotTemplateIds.length !== requiredCount) {
@@ -121,16 +150,17 @@ export async function POST(request: NextRequest) {
           .filter((pkg) => pkg.teacher_id === teacherId)
           .map((pkg) => pkg.id),
       );
-      const occupiedTemplateIds = new Set(
+      const effectiveMonthEnd = monthEndDateKey(effectiveMonthStart);
+      const occupiedDayTimeKeys = new Set(
         snapshot.packageSlots
           .filter(
             (slot) =>
-              slot.status === "active" &&
+              isSlotEffectiveForMonth(slot, effectiveMonthStart, effectiveMonthEnd) &&
               teacherActivePackageIds.has(slot.package_id),
           )
-          .map((slot) => slot.slot_template_id),
+          .map((slot) => `${slot.day_of_week_snapshot}:${slot.start_time_snapshot.slice(0, 8)}`),
       );
-      if (templates.some((template) => occupiedTemplateIds.has(template.id))) {
+      if (templates.some((template) => occupiedDayTimeKeys.has(templateDayTimeKey(template)))) {
         throw new Error("One or more selected slot times are already scheduled for this teacher.");
       }
 
@@ -169,6 +199,8 @@ export async function POST(request: NextRequest) {
         start_time_snapshot: template.start_time,
         duration_minutes_snapshot: template.duration_minutes,
         status: "active",
+        effective_from: effectiveMonthStart,
+        effective_to: null,
       }));
 
       const insertSlots = await client
