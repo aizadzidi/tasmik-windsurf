@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   buildPlannerDays,
   buildTeacherOptions,
+  currentDateKey,
   currentMonthKey,
   normalizeDateKey,
   parseWeekStart,
@@ -16,6 +17,7 @@ import {
   attendanceOccurrenceKey,
   attendanceWeekStartKey,
   canonicalizeAttendanceRows,
+  filterAttendanceRowsToDate,
   findStaleUnmarkedOccurrenceIds,
 } from "@/lib/online/attendanceRows";
 import { isMissingRelationError } from "@/lib/online/db";
@@ -268,7 +270,7 @@ export async function GET(request: NextRequest) {
   const requestedMonth = searchParams.get("month") || currentMonthKey();
   const requestedWeek = searchParams.get("week");
   const viewMode: AttendanceViewMode = searchParams.get("view") === "daily" ? "daily" : "monthly";
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayKey = currentDateKey();
   const requestedDate = searchParams.get("date");
   const selectedDate = isDateInMonth(requestedDate, requestedMonth) ? requestedDate! : todayKey;
 
@@ -600,7 +602,8 @@ export async function GET(request: NextRequest) {
     const selectedDateQueue = enrichedOccurrences.filter(
       (occurrence: TeacherOccurrenceRow) => occurrence.session_date === selectedDate,
     );
-    const markedSessions = occurrenceSummaryRows.filter((occurrence) =>
+    const summaryOccurrences = filterAttendanceRowsToDate(occurrenceSummaryRows, todayKey);
+    const markedSessions = summaryOccurrences.filter((occurrence) =>
       Boolean(occurrence.attendance_status),
     );
     const presentCount = markedSessions.filter(
@@ -616,7 +619,7 @@ export async function GET(request: NextRequest) {
       occurrence_view: viewMode,
       selected_date: selectedDate,
       summary: {
-        total_sessions: occurrenceSummaryRows.length,
+        total_sessions: summaryOccurrences.length,
         marked_sessions: markedSessions.length,
         present_count: presentCount,
         absent_count: absentCount,

@@ -1,13 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminPermission } from "@/lib/adminPermissions";
 import { filterTeachersByTeachingScope } from "@/lib/adminTeacherScope";
-import { buildTeacherOptions, currentMonthKey } from "@/lib/online/recurring";
+import { buildTeacherOptions, currentDateKey, currentMonthKey } from "@/lib/online/recurring";
 import {
   buildOccurrencesForMonth,
   fetchRecurringSnapshot,
   filterPackagesForMonth,
   hydratePlannerPackages,
 } from "@/lib/online/recurringStore";
+import {
+  attendanceOccurrenceKey,
+  canonicalizeAttendanceRows,
+  filterAttendanceRowsForValidSchedule,
+  filterAttendanceRowsToDate,
+} from "@/lib/online/attendanceRows";
 import { isMissingRelationError } from "@/lib/online/db";
 import { adminOperationSimple } from "@/lib/supabaseServiceClientSimple";
 import { resolveTenantIdFromRequest } from "@/lib/tenantProvisioning";
@@ -39,8 +45,12 @@ const emptySummary = (): MonthlySummary => ({
   attendance_rate_pct: 0,
 });
 
-const buildSummary = (occurrences: AdminMonthlyOccurrence[]): MonthlySummary => {
-  const markedSessions = occurrences.filter((occurrence) => Boolean(occurrence.attendance_status));
+const buildSummary = (
+  occurrences: AdminMonthlyOccurrence[],
+  currentDateKey: string,
+): MonthlySummary => {
+  const summaryOccurrences = filterAttendanceRowsToDate(occurrences, currentDateKey);
+  const markedSessions = summaryOccurrences.filter((occurrence) => Boolean(occurrence.attendance_status));
   const presentCount = markedSessions.filter((occurrence) => occurrence.attendance_status === "present").length;
   const absentCount = markedSessions.filter((occurrence) => occurrence.attendance_status === "absent").length;
   const attendanceRatePct =
@@ -48,7 +58,7 @@ const buildSummary = (occurrences: AdminMonthlyOccurrence[]): MonthlySummary => 
 
   return {
     total_attendance: presentCount,
-    total_sessions: occurrences.length,
+    total_sessions: summaryOccurrences.length,
     marked_sessions: markedSessions.length,
     present_count: presentCount,
     absent_count: absentCount,
@@ -56,7 +66,10 @@ const buildSummary = (occurrences: AdminMonthlyOccurrence[]): MonthlySummary => 
   };
 };
 
-const buildStudentSummaries = (occurrences: AdminMonthlyOccurrence[]) => {
+const buildStudentSummaries = (
+  occurrences: AdminMonthlyOccurrence[],
+  currentDateKey: string,
+) => {
   const byStudent = new Map<string, AdminMonthlyOccurrence[]>();
   occurrences.forEach((occurrence) => {
     const list = byStudent.get(occurrence.student_id) ?? [];
@@ -68,10 +81,22 @@ const buildStudentSummaries = (occurrences: AdminMonthlyOccurrence[]) => {
     .map(([studentId, studentOccurrences]) => ({
       student_id: studentId,
       student_name: studentOccurrences[0]?.student_name ?? "Student",
-      summary: buildSummary(studentOccurrences),
+      summary: buildSummary(studentOccurrences, currentDateKey),
     }))
     .sort((left, right) => left.student_name.localeCompare(right.student_name));
 };
+
+const activeOccurrences = (
+  rows: AdminOccurrenceRow[],
+  sessionsPerWeekByPackageId: ReadonlyMap<string, number>,
+  currentDateKey: string,
+) =>
+  canonicalizeAttendanceRows(rows, sessionsPerWeekByPackageId, { currentDateKey })
+    .sort((left, right) => {
+      const byDate = left.session_date.localeCompare(right.session_date);
+      if (byDate !== 0) return byDate;
+      return left.start_time.localeCompare(right.start_time);
+    });
 
 const resolveTenantIdOrThrow = async (request: NextRequest) =>
   adminOperationSimple(async (client) => {
@@ -105,6 +130,7 @@ export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const requestedMonth = url.searchParams.get("month") || currentMonthKey();
   const teacherIdParam = (url.searchParams.get("teacher_id") ?? "").trim();
+  const todayKey = currentDateKey();
 
   try {
     const guard = await requireAdminPermission(request, ["admin:online", "admin:dashboard"]);
@@ -190,11 +216,19 @@ export async function GET(request: NextRequest) {
         monthKey: requestedMonth,
         templateById,
       });
-      const currentMonthPackageSlotIds = Array.from(
-        new Set(occurrenceDrafts.map((draft) => draft.package_slot_id)),
+      const currentMonthPackageIds = Array.from(new Set(monthPackages.map((pkg) => pkg.id)));
+      const sessionsPerWeekByPackageId = new Map(
+        monthPackages.map((pkg) => [pkg.id, Math.max(Number(pkg.sessions_per_week) || 0, 0)]),
+      );
+      const validOccurrenceKeys = new Set(
+        occurrenceDrafts.map((occurrence) => attendanceOccurrenceKey(occurrence)),
       );
 
-      let monthlyOccurrences: AdminOccurrenceRow[] = occurrenceDrafts;
+      let monthlyOccurrences: AdminOccurrenceRow[] = activeOccurrences(
+        occurrenceDrafts,
+        sessionsPerWeekByPackageId,
+        todayKey,
+      );
 
       if (occurrenceDrafts.length > 0) {
         const upsertSafeDrafts = occurrenceDrafts.map(
@@ -208,9 +242,7 @@ export async function GET(request: NextRequest) {
           throw upsertRes.error;
         }
 
-        if (upsertRes.error) {
-          monthlyOccurrences = occurrenceDrafts;
-        } else {
+        if (!upsertRes.error) {
           const timestamp = new Date().toISOString();
           const draftDatesBySlotId = new Map<string, Set<string>>();
 
@@ -230,21 +262,36 @@ export async function GET(request: NextRequest) {
               .not("cancelled_at", "is", null);
             if (resurrectRes.error) throw resurrectRes.error;
           }
+        }
+      }
 
-          const selectRes = await client
-            .from("online_recurring_occurrences")
-            .select(
-              "id, tenant_id, package_id, package_slot_id, student_id, course_id, teacher_id, slot_template_id, session_date, start_time, duration_minutes, attendance_status, attendance_notes, recorded_at, cancelled_at, created_at, updated_at",
-            )
-            .eq("tenant_id", tenantId)
-            .in("package_slot_id", currentMonthPackageSlotIds)
-            .is("cancelled_at", null)
-            .gte("session_date", range.start.toISOString().slice(0, 10))
-            .lt("session_date", range.end.toISOString().slice(0, 10))
-            .order("session_date", { ascending: true })
-            .order("start_time", { ascending: true });
-          if (selectRes.error) throw selectRes.error;
-          monthlyOccurrences = selectRes.data ?? occurrenceDrafts;
+      if (currentMonthPackageIds.length > 0) {
+        const selectRes = await client
+          .from("online_recurring_occurrences")
+          .select(
+            "id, tenant_id, package_id, package_slot_id, student_id, course_id, teacher_id, slot_template_id, session_date, start_time, duration_minutes, attendance_status, attendance_notes, recorded_at, cancelled_at, created_at, updated_at",
+          )
+          .eq("tenant_id", tenantId)
+          .in("package_id", currentMonthPackageIds)
+          .is("cancelled_at", null)
+          .gte("session_date", range.start.toISOString().slice(0, 10))
+          .lt("session_date", range.end.toISOString().slice(0, 10))
+          .order("session_date", { ascending: true })
+          .order("start_time", { ascending: true });
+
+        if (selectRes.error && !isMissingRelationError(selectRes.error, "online_recurring_occurrences")) {
+          throw selectRes.error;
+        }
+
+        if (!selectRes.error) {
+          monthlyOccurrences = activeOccurrences(
+            filterAttendanceRowsForValidSchedule(
+              (selectRes.data ?? []) as AdminOccurrenceRow[],
+              validOccurrenceKeys,
+            ),
+            sessionsPerWeekByPackageId,
+            todayKey,
+          );
         }
       }
 
@@ -266,8 +313,8 @@ export async function GET(request: NextRequest) {
         const teacherOccurrences = occurrencesByTeacherId.get(teacher.id) ?? [];
         return {
           ...teacher,
-          summary: buildSummary(teacherOccurrences),
-          students: buildStudentSummaries(teacherOccurrences),
+          summary: buildSummary(teacherOccurrences, todayKey),
+          students: buildStudentSummaries(teacherOccurrences, todayKey),
           monthly_occurrences: teacherOccurrences,
         };
       });
@@ -277,8 +324,8 @@ export async function GET(request: NextRequest) {
         month: requestedMonth,
         selected_teacher: selectedTeacher,
         teachers: teacherOptions,
-        overall_summary: buildSummary(enrichedOccurrences),
-        summary: buildSummary(selectedTeacherOccurrences),
+        overall_summary: buildSummary(enrichedOccurrences, todayKey),
+        summary: buildSummary(selectedTeacherOccurrences, todayKey),
         teacher_summaries: teacherSummaries,
         monthly_occurrences: selectedTeacherOccurrences,
       };

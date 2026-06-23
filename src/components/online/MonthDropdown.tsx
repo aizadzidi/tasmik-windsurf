@@ -77,7 +77,7 @@ export default function MonthDropdown({ value, onChange, className }: Props) {
         <button
           type="button"
           className={cn(
-            "flex h-10 min-w-[152px] items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-900 shadow-sm transition hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-300",
+            "flex min-h-11 min-w-[152px] cursor-pointer items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-900 shadow-sm transition-colors hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-300",
             className,
           )}
         >
@@ -94,7 +94,7 @@ export default function MonthDropdown({ value, onChange, className }: Props) {
           <select
             value={String(parsed.year)}
             onChange={(event) => updateYear(event.target.value)}
-            className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none transition focus:ring-2 focus:ring-slate-300"
+            className="min-h-11 cursor-pointer rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none transition focus:ring-2 focus:ring-slate-300"
           >
             {years.map((year) => (
               <option key={year} value={year}>
@@ -113,7 +113,7 @@ export default function MonthDropdown({ value, onChange, className }: Props) {
                 type="button"
                 onClick={() => updateMonth(month.value)}
                 className={cn(
-                  "h-10 rounded-xl border text-sm font-semibold transition",
+                  "min-h-11 cursor-pointer rounded-xl border text-sm font-semibold transition-colors",
                   selected
                     ? "border-slate-900 bg-slate-900 text-white shadow-sm"
                     : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50",

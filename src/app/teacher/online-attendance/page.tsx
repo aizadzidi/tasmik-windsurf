@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Modal } from "@/components/ui/Modal";
 import { authFetch } from "@/lib/authFetch";
+import { filterAttendanceRowsToDate } from "@/lib/online/attendanceRows";
 import { supabase } from "@/lib/supabaseClient";
 import { getUserWithRecovery } from "@/lib/supabase/clientAuth";
 import { useTeachingModeContext } from "@/contexts/TeachingModeContext";
@@ -119,7 +120,7 @@ type FillSlotsResponse = {
   new_slots?: WeeklyPackageSlot[];
 };
 
-const ATTENDANCE_CACHE_VERSION = "v4";
+const ATTENDANCE_CACHE_VERSION = "v5";
 
 const DAY_OPTIONS = [
   { value: 1, label: "Monday", shortLabel: "Mon" },
@@ -445,8 +446,12 @@ const formatDateHeading = (dateStr: string) => {
   });
 };
 
-const buildAttendanceSummary = (occurrences: OccurrenceRow[]): TeacherPayload["summary"] => {
-  const markedSessions = occurrences.filter((occurrence) => Boolean(occurrence.attendance_status));
+const buildAttendanceSummary = (
+  occurrences: OccurrenceRow[],
+  todayKey = currentDateKey(),
+): TeacherPayload["summary"] => {
+  const summaryOccurrences = filterAttendanceRowsToDate(occurrences, todayKey);
+  const markedSessions = summaryOccurrences.filter((occurrence) => Boolean(occurrence.attendance_status));
   const presentCount = markedSessions.filter(
     (occurrence) => occurrence.attendance_status === "present",
   ).length;
@@ -455,7 +460,7 @@ const buildAttendanceSummary = (occurrences: OccurrenceRow[]): TeacherPayload["s
   ).length;
 
   return {
-    total_sessions: occurrences.length,
+    total_sessions: summaryOccurrences.length,
     marked_sessions: markedSessions.length,
     present_count: presentCount,
     absent_count: absentCount,
@@ -807,7 +812,10 @@ export default function TeacherOnlineAttendancePage() {
 
       return {
         ...prev,
-        summary: updateAttendanceSummaryForChange(prev.summary, fromStatus, nextStatus),
+        summary:
+          occurrence.session_date <= currentDateKey()
+            ? updateAttendanceSummaryForChange(prev.summary, fromStatus, nextStatus)
+            : prev.summary,
         today_queue: prev.today_queue.map(updateOcc),
         monthly_occurrences: monthlyOccurrences,
       };

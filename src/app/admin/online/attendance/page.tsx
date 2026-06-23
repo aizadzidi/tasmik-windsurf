@@ -73,6 +73,9 @@ const emptySummary: MonthlySummary = {
   attendance_rate_pct: 0,
 };
 
+const unmarkedCount = (summary: MonthlySummary) =>
+  Math.max(summary.total_sessions - summary.marked_sessions, 0);
+
 const currentMonthKey = () => {
   const now = new Date();
   return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
@@ -146,11 +149,13 @@ function SummaryCard({
   value,
   icon: Icon,
   tone,
+  loading = false,
 }: {
   label: string;
   value: string | number;
   icon: React.ElementType;
   tone: "emerald" | "slate" | "rose";
+  loading?: boolean;
 }) {
   const toneClass = {
     emerald: "border-emerald-200 bg-emerald-50 text-emerald-700",
@@ -159,12 +164,16 @@ function SummaryCard({
   }[tone];
 
   return (
-    <div className={cn("rounded-xl border px-4 py-4 shadow-sm", toneClass)}>
+    <div className={cn("rounded-xl border px-4 py-4 shadow-sm", toneClass)} aria-busy={loading}>
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</p>
         <Icon className="h-4 w-4 opacity-75" />
       </div>
-      <p className="mt-3 text-3xl font-semibold tracking-tight">{value}</p>
+      {loading ? (
+        <div className="mt-3 h-9 w-24 animate-pulse rounded-md bg-slate-200/70" />
+      ) : (
+        <p className="mt-3 text-3xl font-semibold tracking-tight">{value}</p>
+      )}
     </div>
   );
 }
@@ -181,7 +190,7 @@ function StudentMonthlyCalendar({
   const calendarGrid = React.useMemo(() => buildCalendarGrid(month), [month]);
 
   return (
-    <div className="border-t border-slate-100 bg-slate-50 px-4 py-4 sm:px-6">
+    <div className="border-t border-slate-100 bg-slate-50 px-3 py-4 sm:px-6">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-sm font-semibold text-slate-900">{studentData.student_name}</p>
@@ -193,8 +202,8 @@ function StudentMonthlyCalendar({
         </div>
       </div>
 
-      <div className="mx-auto max-w-md rounded-xl border border-slate-200 bg-white p-3">
-        <div className="mb-2 grid grid-cols-7 gap-1 text-center">
+      <div className="mx-auto w-full max-w-md rounded-xl border border-slate-200 bg-white p-2 sm:p-3">
+        <div className="mb-2 grid grid-cols-7 gap-px text-center sm:gap-1">
           {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => (
             <div key={day} className="pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               {day}
@@ -202,9 +211,9 @@ function StudentMonthlyCalendar({
           ))}
         </div>
 
-        <div className="space-y-1">
+        <div className="space-y-px sm:space-y-1">
           {calendarGrid.map((weekRow, weekIndex) => (
-            <div key={weekIndex} className="grid grid-cols-7 gap-1">
+            <div key={weekIndex} className="grid grid-cols-7 gap-px sm:gap-1">
               {weekRow.map((cell, cellIndex) => {
                 if (!cell.inMonth) return <div key={cellIndex} className="aspect-square" />;
 
@@ -232,24 +241,37 @@ function StudentMonthlyCalendar({
                 );
                 const primaryCourse = dayOccurrences[0].course_name;
                 const multiSession = dayOccurrences.length > 1;
+                const presentCount = dayOccurrences.filter(
+                  (occurrence) => occurrence.attendance_status === "present",
+                ).length;
+                const absentCount = dayOccurrences.filter(
+                  (occurrence) => occurrence.attendance_status === "absent",
+                ).length;
+                const unmarkedCount = dayOccurrences.filter(
+                  (occurrence) => occurrence.attendance_status === null,
+                ).length;
+                const dayLabel = `${formatDateHeading(cell.dateStr)}: ${dayOccurrences.length} session${
+                  dayOccurrences.length === 1 ? "" : "s"
+                }, ${presentCount} present, ${absentCount} absent, ${unmarkedCount} unmarked`;
 
                 return (
                   <button
                     key={cellIndex}
                     type="button"
+                    aria-label={dayLabel}
                     className={cn(
-                      "relative flex aspect-square items-center justify-center rounded-lg text-[11px] font-semibold",
-                      "transition-all duration-200 hover:scale-[1.03]",
+                      "relative flex aspect-square min-h-11 cursor-pointer items-center justify-center rounded-lg text-[11px] font-semibold",
+                      "transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-slate-300",
                       allPresent
                         ? getCourseCalendarFill(primaryCourse)
                         : somePresent
                           ? "border border-emerald-300 bg-emerald-50 text-emerald-700"
                           : allAbsent
                             ? "border border-rose-200 bg-rose-50 text-rose-700"
-                            : "border border-slate-200 bg-white text-slate-600 hover:border-emerald-300",
+                            : "border border-slate-200 bg-white text-slate-600 hover:border-emerald-300 hover:bg-emerald-50",
                     )}
                     onClick={() => onDayClick(dayOccurrences)}
-                    title={multiSession ? `${dayOccurrences.length} sessions - click to review` : undefined}
+                    title={dayLabel}
                   >
                     {cell.day}
                     {multiSession ? (
@@ -353,20 +375,42 @@ export default function AdminOnlineAttendancePage() {
           <AdminScopeSwitch />
         </header>
 
-        <section className="grid gap-3 sm:grid-cols-3">
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <SummaryCard
-            label="Total Attendance"
+            label="Present"
             value={overallSummary.total_attendance}
             icon={CheckCircle2}
             tone="emerald"
+            loading={loading}
+          />
+          <SummaryCard
+            label="Marked"
+            value={`${overallSummary.marked_sessions}/${overallSummary.total_sessions}`}
+            icon={CalendarDays}
+            tone="slate"
+            loading={loading}
+          />
+          <SummaryCard
+            label="Unmarked"
+            value={unmarkedCount(overallSummary)}
+            icon={CalendarDays}
+            tone="slate"
+            loading={loading}
           />
           <SummaryCard
             label="Total Sessions"
             value={overallSummary.total_sessions}
             icon={CalendarDays}
             tone="slate"
+            loading={loading}
           />
-          <SummaryCard label="Absent" value={overallSummary.absent_count} icon={XCircle} tone="rose" />
+          <SummaryCard
+            label="Absent"
+            value={overallSummary.absent_count}
+            icon={XCircle}
+            tone="rose"
+            loading={loading}
+          />
         </section>
 
         <section className="mt-6 rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -374,7 +418,7 @@ export default function AdminOnlineAttendancePage() {
             <MonthDropdown value={month} onChange={setMonth} />
             <Button
               variant="outline"
-              className="rounded-xl border-slate-200"
+              className="h-11 cursor-pointer rounded-xl border-slate-200"
               onClick={() => void refreshData(false)}
               disabled={refreshing}
             >
@@ -410,12 +454,13 @@ export default function AdminOnlineAttendancePage() {
               {teacherSummaries.map((teacher) => {
                 const isExpanded = expandedTeacherId === teacher.id;
                 const hasStudents = teacher.students.length > 0;
+                const teacherUnmarked = unmarkedCount(teacher.summary);
 
                 return (
                   <div key={teacher.id}>
                     <button
                       type="button"
-                      className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left hover:bg-slate-50"
+                      className="flex w-full cursor-pointer items-center justify-between gap-3 px-4 py-4 text-left transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-slate-300"
                       onClick={() => {
                         setExpandedTeacherId((current) => (current === teacher.id ? null : teacher.id));
                         setSelectedStudentId(null);
@@ -434,9 +479,19 @@ export default function AdminOnlineAttendancePage() {
                       </div>
 
                       <div className="flex shrink-0 items-center gap-3">
-                        <span className="text-2xl font-semibold tabular-nums text-slate-950">
-                          {teacher.summary.total_attendance}
-                        </span>
+                        <div className="text-right">
+                          <p className="text-2xl font-semibold tabular-nums text-slate-950">
+                            {teacher.summary.marked_sessions}/{teacher.summary.total_sessions}
+                          </p>
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                            sessions marked
+                          </p>
+                          {teacherUnmarked > 0 ? (
+                            <p className="text-[10px] font-medium text-amber-600">
+                              {teacherUnmarked} unmarked
+                            </p>
+                          ) : null}
+                        </div>
                         <ChevronDown
                           className={cn("h-5 w-5 text-slate-400 transition-transform", isExpanded && "rotate-180")}
                         />
@@ -445,16 +500,24 @@ export default function AdminOnlineAttendancePage() {
 
                     {isExpanded ? (
                       <div className="border-t border-slate-100 bg-white">
-                        <div className="grid gap-2 px-4 py-3 sm:grid-cols-4">
+                        <div className="grid gap-2 px-4 py-3 sm:grid-cols-2 lg:grid-cols-5">
+                          <div className="rounded-lg bg-slate-50 px-3 py-2">
+                            <p className="text-xs text-slate-500">Marked Sessions</p>
+                            <p className="text-lg font-semibold text-slate-900">
+                              {teacher.summary.marked_sessions} of {teacher.summary.total_sessions}
+                            </p>
+                          </div>
+                          <div className="rounded-lg bg-amber-50 px-3 py-2">
+                            <p className="text-xs text-amber-700">Unmarked</p>
+                            <p className="text-lg font-semibold text-amber-800">
+                              {teacherUnmarked}
+                            </p>
+                          </div>
                           <div className="rounded-lg bg-emerald-50 px-3 py-2">
-                            <p className="text-xs text-emerald-700">Attendance</p>
+                            <p className="text-xs text-emerald-700">Present</p>
                             <p className="text-lg font-semibold text-emerald-800">
                               {teacher.summary.total_attendance}
                             </p>
-                          </div>
-                          <div className="rounded-lg bg-slate-50 px-3 py-2">
-                            <p className="text-xs text-slate-500">Sessions</p>
-                            <p className="text-lg font-semibold text-slate-900">{teacher.summary.total_sessions}</p>
                           </div>
                           <div className="rounded-lg bg-rose-50 px-3 py-2">
                             <p className="text-xs text-rose-700">Absent</p>
@@ -481,13 +544,14 @@ export default function AdminOnlineAttendancePage() {
                             <div className="overflow-hidden rounded-xl border border-slate-200">
                               {teacher.students.map((student) => {
                                 const isSelected = selectedStudentId === student.student_id;
+                                const studentUnmarked = unmarkedCount(student.summary);
 
                                 return (
                                   <div key={student.student_id} className="border-b border-slate-100 last:border-b-0">
                                     <button
                                       type="button"
                                       className={cn(
-                                        "flex w-full items-center justify-between gap-3 px-4 py-3 text-left",
+                                        "flex w-full cursor-pointer items-center justify-between gap-3 px-4 py-3 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-slate-300",
                                         isSelected ? "bg-sky-50" : "bg-white hover:bg-slate-50",
                                       )}
                                       onClick={() => {
@@ -501,8 +565,13 @@ export default function AdminOnlineAttendancePage() {
                                           {student.student_name}
                                         </p>
                                         <p className="text-xs text-slate-500">
-                                          {student.summary.total_attendance}/{student.summary.total_sessions} sessions
-                                          - {student.summary.attendance_rate_pct}%
+                                          Marked {student.summary.marked_sessions}/{student.summary.total_sessions}
+                                          {" "}-
+                                          {" "}unmarked {studentUnmarked}
+                                          {" "}-
+                                          {" "}present {student.summary.present_count}
+                                          {" "}-
+                                          {" "}absent {student.summary.absent_count}
                                         </p>
                                       </div>
                                       <ChevronDown

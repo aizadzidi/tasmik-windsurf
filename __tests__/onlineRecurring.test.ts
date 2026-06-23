@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { nextMonthKey } from "@/lib/online/recurring";
+import { dateKeyInTimeZone, nextMonthKey } from "@/lib/online/recurring";
 import {
   buildAvailabilityDayRanges,
   buildCanonicalEnrollmentStartTimes,
@@ -9,6 +9,8 @@ import {
 import {
   attendanceOccurrenceKey,
   canonicalizeAttendanceRows,
+  filterAttendanceRowsForValidSchedule,
+  filterAttendanceRowsToDate,
   findStaleUnmarkedOccurrenceIds,
 } from "@/lib/online/attendanceRows";
 import { buildOccurrencesForMonth, fetchAllPagedRows } from "@/lib/online/recurringStore";
@@ -145,6 +147,12 @@ describe("nextMonthKey", () => {
 
   it("increments regular months without changing the year", () => {
     expect(nextMonthKey("2026-03")).toBe("2026-04");
+  });
+});
+
+describe("dateKeyInTimeZone", () => {
+  it("uses the online app timezone instead of UTC for current-day summaries", () => {
+    expect(dateKeyInTimeZone(new Date("2026-06-22T16:30:00.000Z"))).toBe("2026-06-23");
   });
 });
 
@@ -786,6 +794,71 @@ describe("online attendance row canonicalization", () => {
         },
       ),
     ).toEqual(["stale-current", "stale-past"]);
+  });
+
+  it("filters unmarked rows that are no longer in the valid schedule", () => {
+    const validRow = {
+      id: "valid",
+      package_id: "package-1",
+      package_slot_id: "slot-valid",
+      session_date: "2026-06-12",
+      start_time: "09:00:00",
+      attendance_status: null,
+    };
+    const staleUnmarked = {
+      id: "stale-unmarked",
+      package_id: "package-1",
+      package_slot_id: "slot-old",
+      session_date: "2026-06-13",
+      start_time: "09:00:00",
+      attendance_status: null,
+    };
+    const staleMarked = {
+      id: "stale-marked",
+      package_id: "package-1",
+      package_slot_id: "slot-old",
+      session_date: "2026-06-14",
+      start_time: "09:00:00",
+      attendance_status: "present" as const,
+    };
+
+    expect(
+      filterAttendanceRowsForValidSchedule(
+        [validRow, staleUnmarked, staleMarked],
+        new Set([attendanceOccurrenceKey(validRow)]),
+      ).map((row) => row.id),
+    ).toEqual(["valid", "stale-marked"]);
+  });
+
+  it("keeps attendance summary rows only up to the current date", () => {
+    const rows = [
+      {
+        id: "past",
+        package_id: "package-1",
+        session_date: "2026-06-21",
+        start_time: "09:00:00",
+        attendance_status: "present" as const,
+      },
+      {
+        id: "today",
+        package_id: "package-1",
+        session_date: "2026-06-22",
+        start_time: "09:00:00",
+        attendance_status: null,
+      },
+      {
+        id: "future",
+        package_id: "package-1",
+        session_date: "2026-06-23",
+        start_time: "09:00:00",
+        attendance_status: null,
+      },
+    ];
+
+    expect(filterAttendanceRowsToDate(rows, "2026-06-22").map((row) => row.id)).toEqual([
+      "past",
+      "today",
+    ]);
   });
 });
 

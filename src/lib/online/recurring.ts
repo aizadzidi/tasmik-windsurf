@@ -72,6 +72,20 @@ export const nextMonthKey = (monthKey: string) => {
 
 export const toDateKey = (date: Date) => date.toISOString().slice(0, 10);
 
+export const dateKeyInTimeZone = (date: Date, timeZone = DEFAULT_TIMEZONE) => {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const byType = new Map(parts.map((part) => [part.type, part.value]));
+  return `${byType.get("year")}-${byType.get("month")}-${byType.get("day")}`;
+};
+
+export const currentDateKey = (timeZone = DEFAULT_TIMEZONE) =>
+  dateKeyInTimeZone(new Date(), timeZone);
+
 export const normalizeDateKey = (value: string | null | undefined) => {
   const input = `${value ?? ""}`.trim();
   if (!input) return null;

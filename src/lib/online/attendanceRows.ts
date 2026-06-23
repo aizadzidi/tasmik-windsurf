@@ -59,6 +59,19 @@ export const findStaleUnmarkedOccurrenceIds = <T extends AttendanceOccurrenceRow
     })
     .map((row) => row.id as string);
 
+export const filterAttendanceRowsForValidSchedule = <T extends AttendanceOccurrenceRow>(
+  rows: T[],
+  validOccurrenceKeys: ReadonlySet<string>,
+) =>
+  rows.filter(
+    (row) => row.attendance_status || validOccurrenceKeys.has(attendanceOccurrenceKey(row)),
+  );
+
+export const filterAttendanceRowsToDate = <T extends Pick<AttendanceCanonicalRow, "session_date">>(
+  rows: T[],
+  currentDateKey: string,
+) => rows.filter((row) => row.session_date <= currentDateKey);
+
 const pickOnePerPackageDate = <T extends AttendanceCanonicalRow>(rows: T[]) => {
   const byPackageDate = new Map<string, T[]>();
   rows.forEach((row) => {
