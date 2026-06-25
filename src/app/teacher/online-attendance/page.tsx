@@ -620,10 +620,25 @@ export default function TeacherOnlineAttendancePage() {
         throw new Error(data.error || "Failed to fetch online attendance");
       }
       setPayload(data);
-      window.sessionStorage.setItem(
-        attendanceCacheKey(teacherId, month, view, view === "daily" ? date : undefined),
-        JSON.stringify(data),
-      );
+      const cacheKey = attendanceCacheKey(teacherId, month, view, view === "daily" ? date : undefined);
+      const serialized = JSON.stringify(data);
+      try {
+        window.sessionStorage.setItem(cacheKey, serialized);
+      } catch {
+        // Quota exceeded — evict this teacher's older cache entries, then retry once.
+        try {
+          const prefix = `teacher-online-attendance:${ATTENDANCE_CACHE_VERSION}:${teacherId}:`;
+          for (let i = window.sessionStorage.length - 1; i >= 0; i--) {
+            const existingKey = window.sessionStorage.key(i);
+            if (existingKey && existingKey !== cacheKey && existingKey.startsWith(prefix)) {
+              window.sessionStorage.removeItem(existingKey);
+            }
+          }
+          window.sessionStorage.setItem(cacheKey, serialized);
+        } catch {
+          // Still over quota — data is still displayed, cache is skipped.
+        }
+      }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load attendance");
       if (!preservePayloadOnError) {
